@@ -1,0 +1,6 @@
+/frontend/node_modules/
+.gradle
+build/
+/.intellijPlatform/
+/src/main/resources/webview/
+.idea

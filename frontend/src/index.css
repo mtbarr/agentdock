@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Base Colors */
+    --background: var(--ide-bg);
+    --foreground: var(--ide-fg);
+    
+    /* Surfaces */
+    --surface: var(--ide-Panel-background);
+    --surface-hover: var(--ide-List-hoverBackground);
+    
+    /* Primary (Action) */
+    --primary: var(--ide-Button-default-startBackground);
+    --primary-foreground: var(--ide-Button-default-foreground);
+    --primary-border: var(--ide-Button-default-borderColor);
+    
+    /* Secondary (Passive/Neutral) */
+    --secondary: var(--ide-Button-startBackground);
+    --secondary-foreground: var(--ide-Button-foreground);
+    --secondary-border: var(--ide-Button-borderColor);
+    
+    /* Selection / Accents */
+    --accent: var(--ide-List-selectionBackground);
+    --accent-foreground: var(--ide-List-selectionForeground);
+    
+    /* Status & Feedback */
+    --border: var(--ide-Borders-color);
+    --input: var(--ide-TextField-background);
+    --ring: var(--ide-Button-default-focusColor);
+    --error: var(--ide-Notification-errorForeground, #ff5252);
+    
+    /* Editor Styles */
+    --editor-bg: var(--ide-editor-bg);
+    --editor-fg: var(--ide-editor-fg);
+  }
+}

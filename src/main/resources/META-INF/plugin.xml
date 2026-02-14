@@ -1,0 +1,16 @@
+<idea-plugin>
+    <id>unified.llm.plugin</id>
+    <name>Unified LLM Plugin</name>
+    <vendor>E</vendor>
+
+    <description><![CDATA[
+    Unified LLM Plugin - A high-performance AI coding assistant for JetBrains IDEs.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="UnifiedLLM" icon="AllIcons.General.Modified" anchor="right"
+                    factoryClass="unified.llm.UnifiedLlmToolWindowFactory"/>
+    </extensions>
+</idea-plugin>
