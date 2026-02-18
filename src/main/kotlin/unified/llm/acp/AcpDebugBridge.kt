@@ -6,8 +6,12 @@ import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.cef.browser.CefBrowser
 
 private val log = Logger.getInstance(AcpDebugBridge::class.java)
@@ -23,7 +27,12 @@ class AcpDebugBridge(
 ) {
     private var sendPromptQuery: JBCefJSQuery? = null
     private var startAgentQuery: JBCefJSQuery? = null
+    private var setModelQuery: JBCefJSQuery? = null
+    private var listAdaptersQuery: JBCefJSQuery? = null
+    private var cancelPromptQuery: JBCefJSQuery? = null
     private var readyQuery: JBCefJSQuery? = null
+
+    private var currentPromptJob: Job? = null
 
     companion object {
         const val START_AGENT_TIMEOUT_MS = 45_000L
@@ -34,18 +43,22 @@ class AcpDebugBridge(
 
         readyQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler {
-                runOnEdt { injectDebugApi(browser.cefBrowser) }
+                runOnEdt {
+                    injectDebugApi(browser.cefBrowser)
+                    pushAdapters()
+                }
                 JBCefJSQuery.Response("ok")
             }
         }
 
         startAgentQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
-            addHandler {
+            addHandler { payload ->
+                val (adapterName, modelId) = parseStartPayload(payload)
                 scope.launch(Dispatchers.Default) {
                     pushStatus("initializing")
                     try {
                         withTimeout(START_AGENT_TIMEOUT_MS) {
-                            service.startAgent()
+                            service.startAgent(adapterName, modelId)
                         }
                         pushStatus(service.status().name.lowercase())
                         pushSessionId(service.sessionId())
@@ -59,10 +72,33 @@ class AcpDebugBridge(
             }
         }
 
+        setModelQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { modelId ->
+                val requestedModelId = modelId?.trim().orEmpty()
+                scope.launch(Dispatchers.Default) {
+                    if (requestedModelId.isEmpty()) return@launch
+                    val ok = service.setModel(requestedModelId)
+                    if (!ok) {
+                        pushAgentText("[Error: Failed to set model '$requestedModelId']")
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        listAdaptersQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler {
+                pushAdapters()
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
         sendPromptQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { text ->
                 val message = text?.takeIf { it.isNotBlank() } ?: ""
-                scope.launch(Dispatchers.Default) {
+                // Cancel any previous prompt job if it's still running
+                currentPromptJob?.cancel()
+                currentPromptJob = scope.launch(Dispatchers.Default) {
                     pushStatus("prompting")
                     try {
                         service.prompt(message).collect { event ->
@@ -76,11 +112,28 @@ class AcpDebugBridge(
                             }
                         }
                     } catch (e: Exception) {
-                        log.error("[AcpDebugBridge] Send prompt failed", e)
-                        pushAgentText("[Error: ${e.message ?: e.toString()}]")
-                        pushStatus(service.status().name.lowercase())
+                        if (e is kotlinx.coroutines.CancellationException) {
+                            log.info("[AcpDebugBridge] Prompt cancelled")
+                            pushAgentText("[Cancelled]")
+                            pushStatus("ready")
+                        } else {
+                            log.error("[AcpDebugBridge] Send prompt failed", e)
+                            pushAgentText("[Error: ${e.message ?: e.toString()}]")
+                            pushStatus(service.status().name.lowercase())
+                        }
+                    } finally {
+                        currentPromptJob = null
                     }
                 }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        cancelPromptQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler {
+                currentPromptJob?.cancel()
+                currentPromptJob = null
+                pushStatus("ready")
                 JBCefJSQuery.Response("ok")
             }
         }
@@ -92,12 +145,24 @@ class AcpDebugBridge(
      */
     fun injectDebugApi(cefBrowser: CefBrowser) {
         val startAgentInject = decorateQueryInject(
-            startAgentQuery?.inject("") ?: "",
+            startAgentQuery?.inject("JSON.stringify({ adapterId: (adapterId || ''), modelId: (modelId || '') })") ?: "",
             "startAgent"
+        )
+        val setModelInject = decorateQueryInject(
+            setModelQuery?.inject("modelId") ?: "",
+            "setModel"
+        )
+        val listAdaptersInject = decorateQueryInject(
+            listAdaptersQuery?.inject("") ?: "",
+            "listAdapters"
         )
         val sendPromptInject = decorateQueryInject(
             sendPromptQuery?.inject("message") ?: "",
             "sendPrompt"
+        )
+        val cancelPromptInject = decorateQueryInject(
+            cancelPromptQuery?.inject("") ?: "",
+            "cancelPrompt"
         )
         val script = """
             (function() {
@@ -105,13 +170,29 @@ class AcpDebugBridge(
                 window.__onAgentText = window.__onAgentText || function(text) {};
                 window.__onStatus = window.__onStatus || function(status) {};
                 window.__onSessionId = window.__onSessionId || function(id) {};
-                window.__startAgent = function() {
+                window.__onAdapters = window.__onAdapters || function(adapters) {};
+                window.__requestAdapters = function() {
+                    try {
+                        $listAdaptersInject
+                    } catch (e) {
+                        console.error('[UnifiedLLM] List adapters bridge error', e);
+                    }
+                };
+                window.__startAgent = function(adapterId, modelId) {
                     try {
                         if (window.__onStatus) window.__onStatus('initializing');
                         $startAgentInject
                     } catch (e) {
                         console.error('[UnifiedLLM] Start Agent bridge error', e);
                         if (window.__onStatus) window.__onStatus('error');
+                        if (window.__onAgentText) window.__onAgentText('[Bridge error: ' + e.message + ']');
+                    }
+                };
+                window.__setModel = function(modelId) {
+                    try {
+                        $setModelInject
+                    } catch (e) {
+                        console.error('[UnifiedLLM] Set model bridge error', e);
                         if (window.__onAgentText) window.__onAgentText('[Bridge error: ' + e.message + ']');
                     }
                 };
@@ -125,6 +206,15 @@ class AcpDebugBridge(
                         if (window.__onAgentText) window.__onAgentText('[Bridge error: ' + e.message + ']');
                     }
                 };
+                window.__cancelPrompt = function() {
+                    try {
+                        $cancelPromptInject
+                    } catch (e) {
+                        console.error('[UnifiedLLM] Cancel Prompt bridge error', e);
+                    }
+                };
+                // Prime adapter list automatically after bridge injection.
+                try { window.__requestAdapters(); } catch (e) {}
             })();
         """.trimIndent()
         cefBrowser.executeJavaScript(script, cefBrowser.url, 0)
@@ -138,6 +228,8 @@ class AcpDebugBridge(
             window.__onAgentText = window.__onAgentText || function(text) {};
             window.__onStatus = window.__onStatus || function(status) {};
             window.__onSessionId = window.__onSessionId || function(id) {};
+            window.__onAdapters = window.__onAdapters || function(adapters) {};
+            window.__setModel = window.__setModel || function(modelId) {};
             window.__notifyReady = function() {
                 try { $readyInject } catch (e) { console.error('[UnifiedLLM] notifyReady error', e); }
             };
@@ -210,6 +302,50 @@ class AcpDebugBridge(
         }
     }
 
+    fun pushAdapters() {
+        try {
+            val defaultName = try {
+                AcpAdapterConfig.getDefaultAdapterName()
+            } catch (e: Exception) {
+                log.warn("Failed to resolve default adapter", e)
+                ""
+            }
+            val unique = linkedMapOf<String, AcpAdapterConfig.AdapterInfo>()
+            AcpAdapterConfig.getAllAdapters().values.forEach { info ->
+                unique[info.name] = info
+            }
+            val payload = unique.values
+                .sortedBy { it.displayName.lowercase() }
+                .joinToString(prefix = "[", postfix = "]") { info ->
+                    val id = escapeJsonStringValue(info.name)
+                    val displayName = escapeJsonStringValue(info.displayName)
+                    val isDefault = if (info.name == defaultName) "true" else "false"
+                    val defaultModelId = escapeJsonStringValue(info.defaultModelId ?: "")
+                    val modelsJson = info.models.joinToString(prefix = "[", postfix = "]") { model ->
+                        val modelId = escapeJsonStringValue(model.id)
+                        val modelDisplayName = escapeJsonStringValue(model.displayName)
+                        """{"id":"$modelId","displayName":"$modelDisplayName"}"""
+                    }
+                    """{"id":"$id","displayName":"$displayName","isDefault":$isDefault,"defaultModelId":"$defaultModelId","models":$modelsJson}"""
+                }
+            val escaped = payload
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+            runOnEdt {
+                browser.cefBrowser.executeJavaScript(
+                    "if(window.__onAdapters) window.__onAdapters(JSON.parse('$escaped'));",
+                    browser.cefBrowser.url,
+                    0
+                )
+            }
+        } catch (e: Exception) {
+            log.error("Failed to push adapters to frontend", e)
+            pushAgentText("[Bridge error: Failed to load adapter list]")
+        }
+    }
+
     private fun runOnEdt(action: () -> Unit) {
         ApplicationManager.getApplication().invokeLater(action)
     }
@@ -235,4 +371,23 @@ class AcpDebugBridge(
     private fun escapeJsonString(s: String): String {
         return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\""
     }
+
+    private fun escapeJsonStringValue(s: String): String {
+        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")
+    }
+
+    private fun parseStartPayload(payload: String?): Pair<String?, String?> {
+        val raw = payload?.trim().orEmpty()
+        if (raw.isEmpty()) return null to null
+        return try {
+            val obj = Json.parseToJsonElement(raw).jsonObject
+            val adapterId = obj["adapterId"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { null }
+            val modelId = obj["modelId"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { null }
+            adapterId to modelId
+        } catch (_: Exception) {
+            // Backward compatibility for old payload format that sent adapterId directly.
+            raw.ifBlank { null } to null
+        }
+    }
+
 }

@@ -14,6 +14,8 @@ import java.util.Properties
  * adapter.<name>.npmVersion=<npm-package-version>
  * adapter.<name>.launchPath=<relative-path-to-node-entrypoint>
  * adapter.<name>.defaultModelId=<model-id> (optional)
+ * adapter.<name>.models=<comma-separated-model-ids> (optional)
+ * adapter.<name>.model.<model-id>.displayName=<display-name> (optional)
  * adapter.<name>.patch.<n>.file=<relative-path>
  * adapter.<name>.patch.<n>.find=<text-to-find>
  * adapter.<name>.patch.<n>.replace=<replacement-text>
@@ -22,6 +24,7 @@ object AcpAdapterConfig {
     private const val CONFIG_FILE = "/acp-adapters.properties"
 
     data class Patch(val file: String, val find: String, val replace: String)
+    data class ModelInfo(val id: String, val displayName: String)
 
     data class AdapterInfo(
         val name: String,
@@ -31,6 +34,7 @@ object AcpAdapterConfig {
         val npmVersion: String? = null,
         val launchPath: String,
         val defaultModelId: String? = null,
+        val models: List<ModelInfo> = emptyList(),
         val args: String? = null,
         val patches: List<Patch> = emptyList()
     )
@@ -98,6 +102,7 @@ object AcpAdapterConfig {
 
     private fun buildAdapterInfo(props: Properties, name: String): AdapterInfo {
         val patches = mutableListOf<Patch>()
+        val models = mutableListOf<ModelInfo>()
         var i = 1
         while (true) {
             val file = props.getProperty("adapter.$name.patch.$i.file") ?: break
@@ -106,6 +111,19 @@ object AcpAdapterConfig {
             patches.add(Patch(file, find, replace))
             i++
         }
+        props.getProperty("adapter.$name.models")
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.forEach { modelId ->
+                val displayName = props.getProperty("adapter.$name.model.$modelId.displayName", modelId)
+                models.add(ModelInfo(modelId, displayName))
+            }
+
+        val defaultModelId = props.getProperty("adapter.$name.defaultModelId")
+        if (!defaultModelId.isNullOrBlank() && models.none { it.id == defaultModelId }) {
+            models.add(0, ModelInfo(defaultModelId, defaultModelId))
+        }
         return AdapterInfo(
             name = name,
             resourceName = props.getProperty("adapter.$name.resource", name),
@@ -113,7 +131,8 @@ object AcpAdapterConfig {
             npmPackage = props.getProperty("adapter.$name.npmPackage"),
             npmVersion = props.getProperty("adapter.$name.npmVersion"),
             launchPath = props.getProperty("adapter.$name.launchPath"),
-            defaultModelId = props.getProperty("adapter.$name.defaultModelId"),
+            defaultModelId = defaultModelId,
+            models = models,
             args = props.getProperty("adapter.$name.args"),
             patches = patches
         )

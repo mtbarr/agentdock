@@ -10,6 +10,7 @@ import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.AcpCreatedSessionResponse
 import com.agentclientprotocol.model.ClientCapabilities
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.ModelId
 import com.agentclientprotocol.model.PermissionOption
 import com.agentclientprotocol.model.RequestPermissionOutcome
 import com.agentclientprotocol.model.RequestPermissionResponse
@@ -26,12 +27,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.io.asSource
 import kotlinx.io.buffered
 import kotlinx.io.asSink
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicReference
 
@@ -57,8 +58,11 @@ class AcpClientService(private val project: Project) {
     enum class Status { NotStarted, Initializing, Ready, Prompting, Error }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lifecycleMutex = Mutex()
     private val statusRef = AtomicReference(Status.NotStarted)
     private val sessionIdRef = AtomicReference<String?>(null)
+    private val activeAdapterNameRef = AtomicReference<String?>(null)
+    private val activeModelIdRef = AtomicReference<String?>(null)
 
     @Volatile private var process: Process? = null
     @Volatile private var client: Client? = null
@@ -67,15 +71,37 @@ class AcpClientService(private val project: Project) {
 
     fun status(): Status = statusRef.get()
     fun sessionId(): String? = sessionIdRef.get()
+    fun activeAdapterName(): String? = activeAdapterNameRef.get()
+    fun activeModelId(): String? = activeModelIdRef.get()
 
-    suspend fun startAgent() {
-        if (statusRef.get() != Status.NotStarted) return
-        statusRef.set(Status.Initializing)
+    fun getAvailableModels(adapterName: String? = null): List<AcpAdapterConfig.ModelInfo> {
+        return AcpAdapterPaths.getAdapterInfo(adapterName).models
+    }
+
+    @Suppress("OPT_IN_USAGE")
+    suspend fun startAgent(adapterName: String? = null, preferredModelId: String? = null) {
         withContext(Dispatchers.IO) {
+            lifecycleMutex.withLock {
+                val requestedAdapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
+                val requestedAdapterName = requestedAdapterInfo.name
+                val currentAdapterName = activeAdapterNameRef.get()
+                val currentStatus = statusRef.get()
+
+                if (currentStatus == Status.Ready && currentAdapterName == requestedAdapterName) {
+                    return@withLock
+                }
+
+                if (currentStatus != Status.NotStarted) {
+                    log.info("Restarting ACP agent: $currentAdapterName -> $requestedAdapterName")
+                    stopAgentInternal()
+                }
+
+                statusRef.set(Status.Initializing)
+
             try {
                 val cwd = project.basePath ?: System.getProperty("user.dir")
-                val adapterInfo = AcpAdapterPaths.getAdapterInfo()
-                val adapterRoot = AcpAdapterPaths.getAdapterRoot()
+                val adapterInfo = requestedAdapterInfo
+                val adapterRoot = AcpAdapterPaths.getAdapterRoot(requestedAdapterName)
                 if (adapterRoot == null || !adapterRoot.isDirectory) {
                     statusRef.set(Status.Error)
                     throw IllegalStateException(
@@ -96,7 +122,7 @@ class AcpClientService(private val project: Project) {
                     // Simple split by space, handles most cases like --experimental-acp
                     command.addAll(argsString.split(" ").filter { it.isNotBlank() })
                 }
-                
+
                 val processBuilder = ProcessBuilder(command)
                     .directory(adapterRoot)
                     .redirectErrorStream(false)
@@ -141,49 +167,56 @@ class AcpClientService(private val project: Project) {
                 session = sess
                 sessionIdRef.set(sess.sessionId.value)
 
-                // Set default model if configured
-                // NOTE: ACP SDK 0.14.1 doesn't expose setModel on ClientSession yet,
-                // so we need to send the JSON-RPC request manually through the transport layer.
-                // This is a temporary workaround until the SDK adds proper support.
-                val defaultModelId = try {
-                    AcpAdapterConfig.getDefaultModelId()
-                } catch (e: Exception) {
-                    log.warn("Failed to get default model ID from config", e)
-                    null
-                }
+                val selectedModelId = resolveModelToApply(
+                    preferredModelId = preferredModelId,
+                    availableModels = adapterInfo.models,
+                    defaultModelId = adapterInfo.defaultModelId
+                )
 
-                if (defaultModelId != null) {
+                if (selectedModelId != null) {
                     try {
-                        log.info("Setting default model to: $defaultModelId")
-                        // Send session/set_model request
-                        // Using a high ID to avoid collision with protocol's internal requests
-                        val requestJson = buildJsonObject {
-                            put("jsonrpc", "2.0")
-                            put("id", 999999)  // High ID to avoid collision
-                            put("method", "session/set_model")
-                            put("params", buildJsonObject {
-                                put("sessionId", sess.sessionId.value)
-                                put("modelId", defaultModelId)
-                            })
-                        }
-                        val requestLine = requestJson.toString() + "\n"
-                        withContext(Dispatchers.IO) {
-                            output.write(requestLine.toByteArray(Charsets.UTF_8))
-                            output.flush()
-                        }
-                        log.info("Default model set successfully")
+                        log.info("Setting startup model to: $selectedModelId")
+                        sess.setModel(ModelId(selectedModelId))
+                        activeModelIdRef.set(selectedModelId)
+                        log.info("Startup model set successfully")
                     } catch (e: Exception) {
-                        log.warn("Failed to set default model to $defaultModelId: ${e.message}", e)
+                        log.warn("Failed to set startup model to $selectedModelId: ${e.message}", e)
                         // Don't fail agent startup if model setting fails
                     }
                 }
 
+                activeAdapterNameRef.set(requestedAdapterName)
                 statusRef.set(Status.Ready)
             } catch (e: Exception) {
                 log.error(e)
+                stopAgentInternal()
                 statusRef.set(Status.Error)
                 throw e
             }
+            }
+        }
+    }
+
+    @Suppress("OPT_IN_USAGE")
+    suspend fun setModel(modelId: String): Boolean {
+        val trimmedModelId = modelId.trim()
+        if (trimmedModelId.isEmpty()) return false
+        val sess = session ?: return false
+        val adapterName = activeAdapterNameRef.get()
+        val availableModels = getAvailableModels(adapterName)
+        if (availableModels.isNotEmpty() && availableModels.none { it.id == trimmedModelId }) {
+            log.warn("Model '$trimmedModelId' is not configured for adapter '$adapterName'")
+            return false
+        }
+        return try {
+            withContext(Dispatchers.IO) {
+                sess.setModel(ModelId(trimmedModelId))
+            }
+            activeModelIdRef.set(trimmedModelId)
+            true
+        } catch (e: Exception) {
+            log.warn("Failed to set model '$trimmedModelId': ${e.message}", e)
+            false
         }
     }
 
@@ -217,6 +250,10 @@ class AcpClientService(private val project: Project) {
 
     fun dispose() {
         scope.coroutineContext[Job]?.cancel()
+        stopAgentInternal()
+    }
+
+    private fun stopAgentInternal() {
         process?.destroyForcibly()
         process = null
         client = null
@@ -224,6 +261,21 @@ class AcpClientService(private val project: Project) {
         protocol = null
         statusRef.set(Status.NotStarted)
         sessionIdRef.set(null)
+        activeAdapterNameRef.set(null)
+        activeModelIdRef.set(null)
+    }
+
+    private fun resolveModelToApply(
+        preferredModelId: String?,
+        availableModels: List<AcpAdapterConfig.ModelInfo>,
+        defaultModelId: String?
+    ): String? {
+        val preferred = preferredModelId?.trim().takeUnless { it.isNullOrEmpty() }
+        if (preferred != null) {
+            if (availableModels.isEmpty() || availableModels.any { it.id == preferred }) return preferred
+            log.warn("Preferred model '$preferred' not configured for adapter; falling back")
+        }
+        return defaultModelId
     }
 
     private class MinimalSessionOperations : ClientSessionOperations {

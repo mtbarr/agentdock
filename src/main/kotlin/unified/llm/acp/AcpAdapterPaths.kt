@@ -2,6 +2,7 @@ package unified.llm.acp
 
 import com.intellij.openapi.diagnostic.Logger
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 private val log = Logger.getInstance("unified.llm.acp.AcpAdapterPaths")
 
@@ -14,38 +15,26 @@ private val log = Logger.getInstance("unified.llm.acp.AcpAdapterPaths")
  * adapters to coexist with their own dependencies.
  * 
  * The adapter is configured via acp-adapters.properties file with npmPackage and npmVersion.
- * System property "unified.llm.acp.adapter.name" can override the default adapter.
+ * System property "unified.llm.acp.adapter.name" can override the default adapter when
+ * an explicit adapter name is not provided.
  */
 object AcpAdapterPaths {
-    private val ADAPTER_NAME: String = System.getProperty("unified.llm.acp.adapter.name")
-        ?: try {
-            AcpAdapterConfig.getDefaultAdapterName()
-        } catch (e: Exception) {
-            log.error("Failed to load adapter configuration", e)
-            throw IllegalStateException(
-                "ACP adapter not configured. " +
-                    "Either set system property 'unified.llm.acp.adapter.name' or " +
-                    "configure adapters in acp-adapters.properties file.",
-                e
-            )
-        }
-
-    private val ADAPTER_INFO: AcpAdapterConfig.AdapterInfo = try {
-        AcpAdapterConfig.getAdapterInfo(ADAPTER_NAME)
-    } catch (e: Exception) {
-        log.error("Failed to resolve adapter '$ADAPTER_NAME' from configuration", e)
-        throw IllegalStateException("ACP adapter '$ADAPTER_NAME' not found in configuration.", e)
-    }
+    private const val ADAPTER_NAME_OVERRIDE_PROPERTY = "unified.llm.acp.adapter.name"
 
     /**
      * Gets the adapter resource prefix from configuration.
      * First checks system property (for runtime override), then falls back to config file.
      * This ensures the ACP client is completely agnostic of which adapter is used.
      */
-    private val RESOURCE_PREFIX: String = ADAPTER_INFO.resourceName
-    private val LAUNCH_PATH: String = ADAPTER_INFO.launchPath
-
-    fun getAdapterInfo(): AcpAdapterConfig.AdapterInfo = ADAPTER_INFO
+    fun getAdapterInfo(adapterName: String? = null): AcpAdapterConfig.AdapterInfo {
+        val resolvedName = resolveAdapterName(adapterName)
+        return try {
+            AcpAdapterConfig.getAdapterInfo(resolvedName)
+        } catch (e: Exception) {
+            log.error("Failed to resolve adapter '$resolvedName' from configuration", e)
+            throw IllegalStateException("ACP adapter '$resolvedName' not found in configuration.", e)
+        }
+    }
     
     /**
      * Base directory for all unified-llm runtime data.
@@ -61,10 +50,7 @@ object AcpAdapterPaths {
      * Runtime directory for the current adapter.
      * Format: ~/.unified-llm/adapters/<adapter-resource-name>/
      */
-    private val RUNTIME_DIR = File(ADAPTERS_DIR, RESOURCE_PREFIX)
-
-    @Volatile
-    private var cachedRoot: File? = null
+    private val cachedRoots = ConcurrentHashMap<String, File>()
 
     /**
      * Returns the base runtime directory (~/.unified-llm).
@@ -87,31 +73,38 @@ object AcpAdapterPaths {
      * Returns the adapter root directory (dist/ + package.json + node_modules/).
      * Downloads adapter from npm to ~/.unified-llm/adapters/<adapter-name>/ if needed and runs npm install.
      */
-    fun getAdapterRoot(): File? {
-        cachedRoot?.let { root ->
-            if (root.isDirectory && File(root, "node_modules").isDirectory && File(root, LAUNCH_PATH).isFile) {
+    fun getAdapterRoot(adapterName: String? = null): File? {
+        val adapterInfo = getAdapterInfo(adapterName)
+        val runtimeDir = File(ADAPTERS_DIR, adapterInfo.resourceName)
+        val cacheKey = runtimeDir.absolutePath
+        cachedRoots[cacheKey]?.let { root ->
+            if (root.isDirectory && File(root, "node_modules").isDirectory && File(root, adapterInfo.launchPath).isFile) {
                 return root
             }
         }
-        val root = ensureRuntimeDir()
-        if (root != null) cachedRoot = root
+        val root = ensureRuntimeDir(runtimeDir, adapterInfo)
+        if (root != null) cachedRoots[cacheKey] = root
         return root
     }
 
-    private fun ensureRuntimeDir(): File? {
-        RUNTIME_DIR.mkdirs()
-        val needInstall = !File(RUNTIME_DIR, "node_modules").isDirectory ||
-            !File(RUNTIME_DIR, LAUNCH_PATH).isFile
+    private fun ensureRuntimeDir(runtimeDir: File, adapterInfo: AcpAdapterConfig.AdapterInfo): File? {
+        runtimeDir.mkdirs()
+        val needInstall = !File(runtimeDir, "node_modules").isDirectory ||
+            !File(runtimeDir, adapterInfo.launchPath).isFile
         if (needInstall) {
-            if (!downloadFromNpm(RUNTIME_DIR)) return null
-            if (!runNpmInstall(RUNTIME_DIR)) return null
-            applyPatches(RUNTIME_DIR)
+            if (!downloadFromNpm(runtimeDir, adapterInfo)) return null
+            if (!runNpmInstall(runtimeDir)) return null
         }
-        return RUNTIME_DIR.takeIf { File(it, LAUNCH_PATH).isFile && File(it, "node_modules").isDirectory }
+        // Re-apply patches on each startup so config changes are picked up
+        // without forcing a re-install of the adapter runtime directory.
+        applyPatches(runtimeDir, adapterInfo)
+        return runtimeDir.takeIf {
+            File(it, adapterInfo.launchPath).isFile && File(it, "node_modules").isDirectory
+        }
     }
 
-    private fun applyPatches(adapterRoot: File) {
-        for (patch in ADAPTER_INFO.patches) {
+    private fun applyPatches(adapterRoot: File, adapterInfo: AcpAdapterConfig.AdapterInfo) {
+        for (patch in adapterInfo.patches) {
             val target = File(adapterRoot, patch.file)
             if (!target.isFile) {
                 log.warn("Patch target not found: ${target.absolutePath}")
@@ -128,12 +121,12 @@ object AcpAdapterPaths {
         }
     }
 
-    private fun downloadFromNpm(targetDir: File): Boolean {
+    private fun downloadFromNpm(targetDir: File, adapterInfo: AcpAdapterConfig.AdapterInfo): Boolean {
         return try {
-            val npmPackage = ADAPTER_INFO.npmPackage
-                ?: throw IllegalStateException("Adapter '${ADAPTER_INFO.name}' missing npmPackage in configuration")
-            val npmVersion = ADAPTER_INFO.npmVersion
-                ?: throw IllegalStateException("Adapter '${ADAPTER_INFO.name}' missing npmVersion in configuration")
+            val npmPackage = adapterInfo.npmPackage
+                ?: throw IllegalStateException("Adapter '${adapterInfo.name}' missing npmPackage in configuration")
+            val npmVersion = adapterInfo.npmVersion
+                ?: throw IllegalStateException("Adapter '${adapterInfo.name}' missing npmVersion in configuration")
             
             log.info("Downloading adapter $npmPackage@$npmVersion to ${targetDir.absolutePath}")
             
@@ -200,6 +193,24 @@ object AcpAdapterPaths {
         } catch (e: Exception) {
             log.error("Failed to download adapter from npm", e)
             false
+        }
+    }
+
+    private fun resolveAdapterName(adapterName: String?): String {
+        val explicit = adapterName?.trim().takeUnless { it.isNullOrEmpty() }
+        if (explicit != null) return explicit
+        val override = System.getProperty(ADAPTER_NAME_OVERRIDE_PROPERTY)?.trim()
+        if (!override.isNullOrEmpty()) return override
+        return try {
+            AcpAdapterConfig.getDefaultAdapterName()
+        } catch (e: Exception) {
+            log.error("Failed to load adapter configuration", e)
+            throw IllegalStateException(
+                "ACP adapter not configured. " +
+                    "Either set system property '$ADAPTER_NAME_OVERRIDE_PROPERTY' or " +
+                    "configure adapters in acp-adapters.properties file.",
+                e
+            )
         }
     }
 
