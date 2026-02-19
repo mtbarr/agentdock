@@ -18,6 +18,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.add
 import org.cef.browser.CefBrowser
+import java.util.concurrent.ConcurrentHashMap
 
 private val log = Logger.getInstance(AcpDebugBridge::class.java)
 
@@ -36,10 +37,11 @@ class AcpDebugBridge(
     private var setModeQuery: JBCefJSQuery? = null
     private var listAdaptersQuery: JBCefJSQuery? = null
     private var cancelPromptQuery: JBCefJSQuery? = null
+    private var stopAgentQuery: JBCefJSQuery? = null
     private var respondPermissionQuery: JBCefJSQuery? = null
     private var readyQuery: JBCefJSQuery? = null
 
-    private var currentPromptJob: Job? = null
+    private val promptJobs = ConcurrentHashMap<String, Job>()
 
     companion object {
         const val START_AGENT_TIMEOUT_MS = 45_000L
@@ -61,20 +63,22 @@ class AcpDebugBridge(
 
         startAgentQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { payload ->
-                val (adapterName, modelId) = parseStartPayload(payload)
-                scope.launch(Dispatchers.Default) {
-                    pushStatus("initializing")
-                    try {
-                        withTimeout(START_AGENT_TIMEOUT_MS) {
-                            service.startAgent(adapterName, modelId)
+                val (chatId, adapterName, modelId) = parseStartPayload(payload)
+                if (chatId != null) {
+                    scope.launch(Dispatchers.Default) {
+                        pushStatus(chatId, "initializing")
+                        try {
+                            withTimeout(START_AGENT_TIMEOUT_MS) {
+                                service.startAgent(chatId, adapterName, modelId)
+                            }
+                            pushStatus(chatId, service.status(chatId).name.lowercase())
+                            pushSessionId(chatId, service.sessionId(chatId))
+                            pushMode(chatId, service.activeModeId(chatId))
+                        } catch (e: Exception) {
+                            log.error("[AcpDebugBridge] Start agent failed for $chatId", e)
+                            pushStatus(chatId, "error")
+                            pushAgentText(chatId, "[Error: ${e.message ?: e.toString()}]")
                         }
-                        pushStatus(service.status().name.lowercase())
-                        pushSessionId(service.sessionId())
-                        pushMode(service.activeModeId())
-                    } catch (e: Exception) {
-                        log.error("[AcpDebugBridge] Start agent failed", e)
-                        pushStatus("error")
-                        pushAgentText("[Error: ${e.message ?: e.toString()}]")
                     }
                 }
                 JBCefJSQuery.Response("ok")
@@ -82,13 +86,18 @@ class AcpDebugBridge(
         }
 
         setModelQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
-            addHandler { modelId ->
-                val requestedModelId = modelId?.trim().orEmpty()
+            addHandler { payload ->
+                val (chatId, modelId) = parseIdPayload(payload, "modelId")
                 scope.launch(Dispatchers.Default) {
-                    if (requestedModelId.isEmpty()) return@launch
-                    val ok = service.setModel(requestedModelId)
-                    if (!ok) {
-                        pushAgentText("[Error: Failed to set model '$requestedModelId']")
+                    if (chatId == null || modelId == null) return@launch
+                    pushStatus(chatId, "initializing")
+                    try {
+                        val ok = service.setModel(chatId, modelId)
+                        if (!ok) {
+                            pushAgentText(chatId, "[Error: Failed to set model '$modelId']")
+                        }
+                    } finally {
+                        pushStatus(chatId, service.status(chatId).name.lowercase())
                     }
                 }
                 JBCefJSQuery.Response("ok")
@@ -96,13 +105,18 @@ class AcpDebugBridge(
         }
 
         setModeQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
-            addHandler { modeId ->
-                val requestedModeId = modeId?.trim().orEmpty()
+            addHandler { payload ->
+                val (chatId, modeId) = parseIdPayload(payload, "modeId")
                 scope.launch(Dispatchers.Default) {
-                    if (requestedModeId.isEmpty()) return@launch
-                    val ok = service.setMode(requestedModeId)
-                    if (!ok) {
-                        pushAgentText("[Error: Failed to set mode '$requestedModeId']")
+                    if (chatId == null || modeId == null) return@launch
+                    pushStatus(chatId, "initializing")
+                    try {
+                        val ok = service.setMode(chatId, modeId)
+                        if (!ok) {
+                            pushAgentText(chatId, "[Error: Failed to set mode '$modeId']")
+                        }
+                    } finally {
+                        pushStatus(chatId, service.status(chatId).name.lowercase())
                     }
                 }
                 JBCefJSQuery.Response("ok")
@@ -117,55 +131,74 @@ class AcpDebugBridge(
         }
 
         sendPromptQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
-            addHandler { text ->
-                val message = text?.takeIf { it.isNotBlank() } ?: ""
-                // Cancel any previous prompt job if it's still running
-                currentPromptJob?.cancel()
-                currentPromptJob = scope.launch(Dispatchers.Default) {
-                    pushStatus("prompting")
-                    try {
-                        service.prompt(message).collect { event ->
-                            when (event) {
-                                is AcpEvent.AgentText -> pushAgentText(event.text)
-                                is AcpEvent.PromptDone -> pushStatus("ready")
-                                is AcpEvent.Error -> {
-                                    log.warn("[AcpDebugBridge] Prompt error: ${event.message}")
-                                    pushAgentText("[Error: ${event.message}]")
+            addHandler { payload ->
+                val (chatId, text) = parseTextPayload(payload)
+                if (chatId != null) {
+                    val message = text?.takeIf { it.isNotBlank() } ?: ""
+                    val job = scope.launch(Dispatchers.Default) {
+                        // Cancel any previous prompt via ACP protocol before starting a new one
+                        service.cancel(chatId)
+                        
+                        pushStatus(chatId, "prompting")
+                        try {
+                            service.prompt(chatId, message).collect { event ->
+                                when (event) {
+                                    is AcpEvent.AgentText -> pushAgentText(chatId, event.text)
+                                    is AcpEvent.PromptDone -> pushStatus(chatId, "ready")
+                                    is AcpEvent.Error -> {
+                                        log.warn("[AcpDebugBridge] Prompt error: ${event.message}")
+                                        pushAgentText(chatId, "[Error: ${event.message}]")
+                                    }
                                 }
                             }
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) {
+                                log.info("[AcpDebugBridge] Prompt cancelled for $chatId")
+                                pushAgentText(chatId, "[Cancelled]")
+                                pushStatus(chatId, "ready")
+                            } else {
+                                log.error("[AcpDebugBridge] Send prompt failed", e)
+                                pushAgentText(chatId, "[Error: ${e.message ?: e.toString()}]")
+                                pushStatus(chatId, service.status(chatId).name.lowercase())
+                            }
+                        } finally {
+                            promptJobs.remove(chatId)
                         }
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) {
-                            log.info("[AcpDebugBridge] Prompt cancelled")
-                            pushAgentText("[Cancelled]")
-                            pushStatus("ready")
-                        } else {
-                            log.error("[AcpDebugBridge] Send prompt failed", e)
-                            pushAgentText("[Error: ${e.message ?: e.toString()}]")
-                            pushStatus(service.status().name.lowercase())
-                        }
-                    } finally {
-                        currentPromptJob = null
                     }
+                    promptJobs[chatId] = job
                 }
                 JBCefJSQuery.Response("ok")
             }
         }
 
         cancelPromptQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
-            addHandler {
-                currentPromptJob?.cancel()
-                currentPromptJob = null
-                pushStatus("ready")
+            addHandler { chatIdPayload ->
+                val chatId = chatIdPayload?.trim().orEmpty()
+                if (chatId.isNotEmpty()) {
+                    scope.launch(Dispatchers.Default) {
+                        service.cancel(chatId)
+                        pushStatus(chatId, "ready")
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        stopAgentQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { chatIdPayload ->
+                val chatId = chatIdPayload?.trim().orEmpty()
+                if (chatId.isNotEmpty()) {
+                    log.info("[AcpDebugBridge] stopAgent requested for $chatId")
+                    scope.launch(Dispatchers.Default) {
+                        service.stopAgent(chatId)
+                    }
+                }
                 JBCefJSQuery.Response("ok")
             }
         }
 
         respondPermissionQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { payload ->
-                // payload: "requestId|decision" or JSON
-                // Let's assume simple string with separator or JSON. 
-                // Using JSON for robustness.
                 try {
                      val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
                      val requestId = obj["requestId"]?.jsonPrimitive?.content ?: ""
@@ -185,19 +218,19 @@ class AcpDebugBridge(
 
     /**
      * First call (from onLoadEnd): inject no-op callbacks and __notifyReady so React can signal when it has set its callbacks.
-     * Second call (from ready handler): inject real __startAgent and __sendPrompt so they work after React is mounted.
+     * Second call (from ready handler): inject real API.
      */
     fun injectDebugApi(cefBrowser: CefBrowser) {
         val startAgentInject = decorateQueryInject(
-            startAgentQuery?.inject("JSON.stringify({ adapterId: (adapterId || ''), modelId: (modelId || '') })") ?: "",
+            startAgentQuery?.inject("JSON.stringify({ chatId: chatId, adapterId: (adapterId || ''), modelId: (modelId || '') })") ?: "",
             "startAgent"
         )
         val setModelInject = decorateQueryInject(
-            setModelQuery?.inject("modelId") ?: "",
+            setModelQuery?.inject("JSON.stringify({ chatId: chatId, modelId: modelId })") ?: "",
             "setModel"
         )
         val setModeInject = decorateQueryInject(
-            setModeQuery?.inject("modeId") ?: "",
+            setModeQuery?.inject("JSON.stringify({ chatId: chatId, modeId: modeId })") ?: "",
             "setMode"
         )
         val listAdaptersInject = decorateQueryInject(
@@ -205,104 +238,82 @@ class AcpDebugBridge(
             "listAdapters"
         )
         val sendPromptInject = decorateQueryInject(
-            sendPromptQuery?.inject("message") ?: "",
+            sendPromptQuery?.inject("JSON.stringify({ chatId: chatId, text: message })") ?: "",
             "sendPrompt"
         )
         val cancelPromptInject = decorateQueryInject(
-            cancelPromptQuery?.inject("") ?: "",
+            cancelPromptQuery?.inject("chatId") ?: "",
             "cancelPrompt"
+        )
+        val stopAgentInject = decorateQueryInject(
+            stopAgentQuery?.inject("chatId") ?: "",
+            "stopAgent"
         )
         val respondPermissionInject = decorateQueryInject(
             respondPermissionQuery?.inject("JSON.stringify({ requestId: requestId, decision: decision })") ?: "",
             "respondPermission"
         )
+        
         val script = """
             (function() {
-                window.__onAcpLog = window.__onAcpLog || function(payload) {};
-                window.__onAgentText = window.__onAgentText || function(text) {};
-                window.__onStatus = window.__onStatus || function(status) {};
-                window.__onSessionId = window.__onSessionId || function(id) {};
-                window.__onAdapters = window.__onAdapters || function(adapters) {};
-                window.__onMode = window.__onMode || function(modeId) {};
-                window.__onPermissionRequest = window.__onPermissionRequest || function(request) {};
                 window.__requestAdapters = function() {
-                    try {
-                        $listAdaptersInject
-                    } catch (e) {
-                        console.error('[UnifiedLLM] List adapters bridge error', e);
-                    }
+                    try { $listAdaptersInject } catch (e) { console.error('[UnifiedLLM] listAdapters', e); }
                 };
-                window.__startAgent = function(adapterId, modelId) {
+                window.__startAgent = function(chatId, adapterId, modelId) {
                     try {
-                        if (window.__onStatus) window.__onStatus('initializing');
+                        if (window.__onStatus) window.__onStatus(chatId, 'initializing');
                         $startAgentInject
                     } catch (e) {
-                        console.error('[UnifiedLLM] Start Agent bridge error', e);
-                        if (window.__onStatus) window.__onStatus('error');
-                        if (window.__onAgentText) window.__onAgentText('[Bridge error: ' + e.message + ']');
+                        console.error('[UnifiedLLM] startAgent error', e);
+                        if (window.__onStatus) window.__onStatus(chatId, 'error');
                     }
                 };
-                window.__setModel = function(modelId) {
-                    try {
-                        $setModelInject
-                    } catch (e) {
-                        console.error('[UnifiedLLM] Set model bridge error', e);
-                        if (window.__onAgentText) window.__onAgentText('[Bridge error: ' + e.message + ']');
-                    }
+                window.__setModel = function(chatId, modelId) {
+                    try { $setModelInject } catch (e) { console.error('[UnifiedLLM] setModel error', e); }
                 };
-                window.__setMode = function(modeId) {
-                    try {
-                        $setModeInject
-                    } catch (e) {
-                        console.error('[UnifiedLLM] Set mode bridge error', e);
-                        if (window.__onAgentText) window.__onAgentText('[Bridge error: ' + e.message + ']');
-                    }
+                window.__setMode = function(chatId, modeId) {
+                    try { $setModeInject } catch (e) { console.error('[UnifiedLLM] setMode error', e); }
                 };
-                window.__sendPrompt = function(message) {
+                window.__sendPrompt = function(chatId, message) {
                     try {
-                        if (window.__onStatus) window.__onStatus('prompting');
+                        if (window.__onStatus) window.__onStatus(chatId, 'prompting');
                         $sendPromptInject
                     } catch (e) {
-                        console.error('[UnifiedLLM] Send Prompt bridge error', e);
-                        if (window.__onStatus) window.__onStatus('error');
-                        if (window.__onAgentText) window.__onAgentText('[Bridge error: ' + e.message + ']');
+                         console.error('[UnifiedLLM] sendPrompt error', e);
+                         if (window.__onStatus) window.__onStatus(chatId, 'error');
                     }
                 };
-                window.__cancelPrompt = function() {
-                    try {
-                        $cancelPromptInject
-                    } catch (e) {
-                        console.error('[UnifiedLLM] Cancel Prompt bridge error', e);
-                    }
+                window.__cancelPrompt = function(chatId) {
+                    try { $cancelPromptInject } catch (e) { console.error('[UnifiedLLM] cancelPrompt error', e); }
+                };
+                window.__stopAgent = function(chatId) {
+                    try { $stopAgentInject } catch (e) { console.error('[UnifiedLLM] stopAgent error', e); }
                 };
                 window.__respondPermission = function(requestId, decision) {
-                    try {
-                        $respondPermissionInject
-                    } catch (e) {
-                         console.error('[UnifiedLLM] Respond Permission bridge error', e);
-                    }
+                    try { $respondPermissionInject } catch (e) { console.error('[UnifiedLLM] respondPermission error', e); }
                 };
-                // Prime adapter list automatically after bridge injection.
+                
+                // Try prime
                 try { window.__requestAdapters(); } catch (e) {}
             })();
         """.trimIndent()
         cefBrowser.executeJavaScript(script, cefBrowser.url, 0)
     }
 
-    /** Call from onLoadEnd: inject only notifyReady so React can call it when mounted; then we re-inject the real API. */
     fun injectReadySignal(cefBrowser: CefBrowser) {
         val readyInject = readyQuery?.inject("") ?: ""
         val script = """
+            // Define stubs that accept optional chatId
             window.__onAcpLog = window.__onAcpLog || function(payload) {};
-            window.__onAgentText = window.__onAgentText || function(text) {};
-            window.__onStatus = window.__onStatus || function(status) {};
-            window.__onSessionId = window.__onSessionId || function(id) {};
+            window.__onAgentText = window.__onAgentText || function(chatId, text) {};
+            window.__onStatus = window.__onStatus || function(chatId, status) {};
+            window.__onSessionId = window.__onSessionId || function(chatId, id) {};
             window.__onAdapters = window.__onAdapters || function(adapters) {};
-            window.__setModel = window.__setModel || function(modelId) {};
-            window.__setMode = window.__setMode || function(modeId) {};
-            window.__onMode = window.__onMode || function(modeId) {};
+            window.__onMode = window.__onMode || function(chatId, modeId) {};
             window.__onPermissionRequest = window.__onPermissionRequest || function(request) {};
             window.__respondPermission = window.__respondPermission || function(requestId, decision) {};
+            window.__stopAgent = window.__stopAgent || function(chatId) {};
+            
             window.__notifyReady = function() {
                 try { $readyInject } catch (e) { console.error('[UnifiedLLM] notifyReady error', e); }
             };
@@ -311,12 +322,12 @@ class AcpDebugBridge(
     }
 
     fun pushLogEntry(entry: AcpLogEntry) {
+        // Global logs don't have chatId yet.
         val payload = """{"direction":"${entry.direction}","json":${escapeJsonString(entry.json)},"timestamp":${entry.timestampMillis}}"""
         val escaped = payload.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
         val directionLabel = if (entry.direction == AcpLogEntry.Direction.SENT) "SENT" else "RECEIVED"
         val jsonEscaped = entry.json.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
         runOnEdt {
-            // Log JSON to console for Chromium Developer Tools
             browser.cefBrowser.executeJavaScript(
                 """
                 (function() {
@@ -324,74 +335,66 @@ class AcpDebugBridge(
                         const jsonStr = `${jsonEscaped}`;
                         const jsonObj = JSON.parse(jsonStr);
                         console.log('[ACP $directionLabel]', jsonObj);
-                    } catch(e) {
-                        console.log('[ACP $directionLabel]', `${jsonEscaped}`);
-                    }
+                    } catch(e) { console.log('[ACP $directionLabel]', `${jsonEscaped}`); }
                 })();
+                if(window.__onAcpLog) window.__onAcpLog(JSON.parse('$escaped'));
                 """.trimIndent(),
-                browser.cefBrowser.url,
-                0
-            )
-            // Also call the callback for React component
-            browser.cefBrowser.executeJavaScript(
-                "if(window.__onAcpLog) window.__onAcpLog(JSON.parse('$escaped'));",
-                browser.cefBrowser.url,
-                0
+                browser.cefBrowser.url, 0
             )
         }
     }
 
-    fun pushAgentText(text: String) {
+    fun pushAgentText(chatId: String, text: String) {
         val escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
+        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onAgentText) window.__onAgentText('$escaped');",
-                browser.cefBrowser.url,
-                0
+                "if(window.__onAgentText) window.__onAgentText('$id', '$escaped');",
+                browser.cefBrowser.url, 0
             )
         }
     }
 
-    fun pushStatus(status: String) {
+    fun pushStatus(chatId: String, status: String) {
         val escaped = status.replace("\\", "\\\\").replace("'", "\\'")
+        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onStatus) window.__onStatus('$escaped');",
-                browser.cefBrowser.url,
-                0
+                "if(window.__onStatus) window.__onStatus('$id', '$escaped');",
+                browser.cefBrowser.url, 0
             )
         }
     }
 
-    fun pushMode(modeId: String?) {
+    fun pushMode(chatId: String, modeId: String?) {
         val value = modeId ?: ""
         val escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onMode) window.__onMode('$escaped');",
-                browser.cefBrowser.url,
-                0
+                "if(window.__onMode) window.__onMode('$id', '$escaped');",
+                browser.cefBrowser.url, 0
             )
         }
     }
 
-    fun pushSessionId(id: String?) {
-        val value = id ?: ""
+    fun pushSessionId(chatId: String, sid: String?) {
+        val value = sid ?: ""
         val escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onSessionId) window.__onSessionId('$escaped');",
-                browser.cefBrowser.url,
-                0
+                "if(window.__onSessionId) window.__onSessionId('$id', '$escaped');",
+                browser.cefBrowser.url, 0
             )
         }
 
     }
-
 
     fun pushPermissionRequest(request: PermissionRequest) {
         val jsonObject = buildJsonObject {
             put("requestId", request.requestId)
+            put("chatId", request.chatId)
             put("description", request.description)
             put("options", buildJsonArray {
                 request.options.forEach { opt ->
@@ -403,34 +406,22 @@ class AcpDebugBridge(
             })
         }
         val jsonString = Json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), jsonObject)
-        
-        // Escape for JS string injection
         val escaped = jsonString.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
 
         runOnEdt {
              browser.cefBrowser.executeJavaScript(
                 "if(window.__onPermissionRequest) window.__onPermissionRequest(JSON.parse('$escaped'));",
-                browser.cefBrowser.url,
-                0
+                browser.cefBrowser.url, 0
             )           
         }
     }
 
     fun pushAdapters() {
         try {
-            val defaultName = try {
-                AcpAdapterConfig.getDefaultAdapterName()
-            } catch (e: Exception) {
-                log.warn("Failed to resolve default adapter", e)
-                ""
-            }
+            val defaultName = try { AcpAdapterConfig.getDefaultAdapterName() } catch (e: Exception) { "" }
             val unique = linkedMapOf<String, AcpAdapterConfig.AdapterInfo>()
-            AcpAdapterConfig.getAllAdapters().values.forEach { info ->
-                unique[info.name] = info
-            }
-            val payload = unique.values
-                .sortedBy { it.displayName.lowercase() }
-                .joinToString(prefix = "[", postfix = "]") { info ->
+            AcpAdapterConfig.getAllAdapters().values.forEach { info -> unique[info.name] = info }
+            val payload = unique.values.sortedBy { it.displayName.lowercase() }.joinToString(prefix = "[", postfix = "]") { info ->
                     val id = escapeJsonStringValue(info.name)
                     val displayName = escapeJsonStringValue(info.displayName)
                     val isDefault = if (info.name == defaultName) "true" else "false"
@@ -448,66 +439,60 @@ class AcpDebugBridge(
                     val defaultModeId = escapeJsonStringValue(info.defaultModeId ?: "")
                     """{"id":"$id","displayName":"$displayName","isDefault":$isDefault,"defaultModelId":"$defaultModelId","models":$modelsJson,"defaultModeId":"$defaultModeId","modes":$modesJson}"""
                 }
-            val escaped = payload
-                .replace("\\", "\\\\")
-                .replace("'", "\\'")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
+            val escaped = payload.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
             runOnEdt {
                 browser.cefBrowser.executeJavaScript(
                     "if(window.__onAdapters) window.__onAdapters(JSON.parse('$escaped'));",
-                    browser.cefBrowser.url,
-                    0
+                    browser.cefBrowser.url, 0
                 )
             }
         } catch (e: Exception) {
             log.error("Failed to push adapters to frontend", e)
-            pushAgentText("[Bridge error: Failed to load adapter list]")
         }
     }
 
-    private fun runOnEdt(action: () -> Unit) {
-        ApplicationManager.getApplication().invokeLater(action)
-    }
+    private fun runOnEdt(action: () -> Unit) = ApplicationManager.getApplication().invokeLater(action)
 
-    /**
-     * JBCefJSQuery.inject() generates onSuccess/onFailure stubs that swallow failures.
-     * Replace no-op failure handler so bridge/query failures are visible in UI + DevTools.
-     */
     private fun decorateQueryInject(injectCode: String, actionName: String): String {
-        val failureHandler = """
-            onFailure: function(error_code, error_message) {
-                console.error('[UnifiedLLM] Bridge query failed ($actionName)', error_code, error_message);
-                if (window.__onStatus) window.__onStatus('error');
-                if (window.__onAgentText) window.__onAgentText('[Bridge query failure][$actionName] ' + error_code + ': ' + error_message);
-            }
-        """.trimIndent().replace("\n", " ")
-        val successHandler = "onSuccess: function(response) { console.debug('[UnifiedLLM] Bridge query ok ($actionName)', response); }"
         return injectCode
-            .replace("onSuccess: function(response) {}", successHandler)
-            .replace("onFailure: function(error_code, error_message) {}", failureHandler)
+            .replace("onSuccess: function(response) {}", "onSuccess: function(response) { console.debug('[UnifiedLLM] $actionName ok', response); }")
+            .replace("onFailure: function(error_code, error_message) {}", "onFailure: function(e, m) { console.error('[UnifiedLLM] $actionName failed', e, m); }")
     }
 
-    private fun escapeJsonString(s: String): String {
-        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\""
-    }
+    private fun escapeJsonString(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\""
+    private fun escapeJsonStringValue(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")
 
-    private fun escapeJsonStringValue(s: String): String {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")
-    }
-
-    private fun parseStartPayload(payload: String?): Pair<String?, String?> {
+    private fun parseStartPayload(payload: String?): Triple<String?, String?, String?> {
         val raw = payload?.trim().orEmpty()
-        if (raw.isEmpty()) return null to null
+        if (raw.isEmpty()) return Triple(null, null, null)
         return try {
             val obj = Json.parseToJsonElement(raw).jsonObject
-            val adapterId = obj["adapterId"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { null }
-            val modelId = obj["modelId"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { null }
-            adapterId to modelId
-        } catch (_: Exception) {
-            // Backward compatibility for old payload format that sent adapterId directly.
-            raw.ifBlank { null } to null
-        }
+            val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            val adapterId = obj["adapterId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            val modelId = obj["modelId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            Triple(chatId, adapterId, modelId)
+        } catch (_: Exception) { Triple(null, null, null) }
     }
 
+    private fun parseIdPayload(payload: String?, idKey: String): Pair<String?, String?> {
+         val raw = payload?.trim().orEmpty()
+         if (raw.isEmpty()) return null to null
+         return try {
+             val obj = Json.parseToJsonElement(raw).jsonObject
+             val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+             val idVal = obj[idKey]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+             chatId to idVal
+         } catch (_: Exception) { null to null }
+    }
+    
+    private fun parseTextPayload(payload: String?): Pair<String?, String?> {
+         val raw = payload?.trim().orEmpty()
+         if (raw.isEmpty()) return null to null
+         return try {
+             val obj = Json.parseToJsonElement(raw).jsonObject
+             val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+             val text = obj["text"]?.jsonPrimitive?.content
+             chatId to text
+         } catch (_: Exception) { null to null }
+    }
 }

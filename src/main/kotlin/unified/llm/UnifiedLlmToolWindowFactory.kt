@@ -125,7 +125,7 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
         })
         Disposer.register(content, object : Disposable {
             override fun dispose() {
-                service.dispose()
+                service.shutdown()
             }
         })
 

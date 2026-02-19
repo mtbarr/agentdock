@@ -12,13 +12,13 @@ import com.agentclientprotocol.model.ClientCapabilities
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.ModelId
 import com.agentclientprotocol.model.SessionModeId
-
 import com.agentclientprotocol.model.PermissionOption
 import com.agentclientprotocol.model.PermissionOptionId
 import com.agentclientprotocol.model.RequestPermissionOutcome
 import com.agentclientprotocol.model.RequestPermissionResponse
 import com.agentclientprotocol.model.SessionId
 import com.agentclientprotocol.model.SessionUpdate
+import com.agentclientprotocol.model.LATEST_PROTOCOL_VERSION
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.transport.StdioTransport
 import com.intellij.openapi.diagnostic.Logger
@@ -46,15 +46,11 @@ private val log = Logger.getInstance(AcpClientService::class.java)
 
 data class PermissionRequest(
     val requestId: String,
+    val chatId: String,
     val description: String,
     val options: List<PermissionOption>
 )
 
-/**
- * Minimal ACP client service: spawns the configured ACP adapter process, runs protocol with raw message logging.
- * No auth UI, no capabilities advertised, auto-allow all permissions.
- * The adapter name is configurable via system property "unified.llm.acp.adapter.name".
- */
 class AcpClientService(private val project: Project) {
     @Volatile
     private var logCallback: ((AcpLogEntry) -> Unit)? = null
@@ -76,226 +72,260 @@ class AcpClientService(private val project: Project) {
 
     enum class Status { NotStarted, Initializing, Ready, Prompting, Error }
 
+    private inner class SharedProcess(val adapterName: String) {
+        val mutex = Mutex()
+        @Volatile var process: Process? = null
+        @Volatile var client: Client? = null
+        @Volatile var protocol: Protocol? = null
+        @Volatile var isInitialized: Boolean = false
+
+        fun stop() {
+            process?.destroyForcibly()
+            process = null
+            client = null
+            protocol = null
+            isInitialized = false
+        }
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lifecycleMutex = Mutex()
-    private val statusRef = AtomicReference(Status.NotStarted)
-    private val sessionIdRef = AtomicReference<String?>(null)
-    private val activeAdapterNameRef = AtomicReference<String?>(null)
-    private val activeModelIdRef = AtomicReference<String?>(null)
-
-    private val activeModeIdRef = AtomicReference<String?>(null)
+    private val sessions = ConcurrentHashMap<String, AgentContext>()
+    private val activeProcesses = ConcurrentHashMap<String, SharedProcess>()
     
-    // Map of requestId -> Deferred response
-    private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<RequestPermissionResponse>>()
-
-    @Volatile private var process: Process? = null
-    @Volatile private var client: Client? = null
-    @Volatile private var session: ClientSession? = null
-    @Volatile private var protocol: Protocol? = null
-
-    fun status(): Status = statusRef.get()
-    fun sessionId(): String? = sessionIdRef.get()
-    fun activeAdapterName(): String? = activeAdapterNameRef.get()
-    fun activeModelId(): String? = activeModelIdRef.get()
-    fun activeModeId(): String? = activeModeIdRef.get()
+    fun status(chatId: String): Status = sessions[chatId]?.statusRef?.get() ?: Status.NotStarted
+    fun sessionId(chatId: String): String? = sessions[chatId]?.sessionIdRef?.get()
+    fun activeModeId(chatId: String): String? = sessions[chatId]?.activeModeIdRef?.get()
 
     fun getAvailableModels(adapterName: String? = null): List<AcpAdapterConfig.ModelInfo> {
         return AcpAdapterPaths.getAdapterInfo(adapterName).models
     }
 
-    @Suppress("OPT_IN_USAGE")
-    suspend fun startAgent(adapterName: String? = null, preferredModelId: String? = null, resumeSessionId: String? = null, forceRestart: Boolean = false) {
-        withContext(Dispatchers.IO) {
-            lifecycleMutex.withLock {
-                val requestedAdapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
-                val requestedAdapterName = requestedAdapterInfo.name
-                val currentAdapterName = activeAdapterNameRef.get()
-                val currentStatus = statusRef.get()
+    private inner class AgentContext(val chatId: String) {
+        val lifecycleMutex = Mutex()
+        val statusRef = AtomicReference(Status.NotStarted)
+        val sessionIdRef = AtomicReference<String?>(null)
+        val activeAdapterNameRef = AtomicReference<String?>(null)
+        val activeModelIdRef = AtomicReference<String?>(null)
+        val activeModeIdRef = AtomicReference<String?>(null)
+        
+        val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<RequestPermissionResponse>>()
 
-                // Skip restart if same adapter is already ready and no forced restart or session resume is requested
-                if (currentStatus == Status.Ready && currentAdapterName == requestedAdapterName && resumeSessionId == null && !forceRestart) {
+        @Volatile var sharedProcess: SharedProcess? = null
+        @Volatile var session: ClientSession? = null
+        
+        fun stop() {
+            session = null
+            sharedProcess = null
+            statusRef.set(Status.NotStarted)
+            sessionIdRef.set(null)
+            activeAdapterNameRef.set(null)
+            activeModelIdRef.set(null)
+            activeModeIdRef.set(null)
+            pendingRequests.values.forEach { 
+                it.complete(RequestPermissionResponse(RequestPermissionOutcome.Cancelled)) 
+            }
+            pendingRequests.clear()
+        }
+    }
+
+    @Suppress("OPT_IN_USAGE")
+    suspend fun startAgent(
+        chatId: String,
+        adapterName: String? = null,
+        preferredModelId: String? = null,
+        resumeSessionId: String? = null,
+        forceRestart: Boolean = false
+    ) {
+        val context = sessions.computeIfAbsent(chatId) { AgentContext(chatId) }
+
+        withContext(Dispatchers.IO) {
+            context.lifecycleMutex.withLock {
+                val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
+                val requestedAdapterName = adapterInfo.name
+                val currentStatus = context.statusRef.get()
+
+                if (currentStatus == Status.Ready && context.activeAdapterNameRef.get() == requestedAdapterName && resumeSessionId == null && !forceRestart) {
                     return@withLock
                 }
 
                 if (currentStatus != Status.NotStarted) {
-                    log.info("Restarting ACP agent: $currentAdapterName -> $requestedAdapterName")
-                    stopAgentInternal()
+                    context.stop()
                 }
 
-                statusRef.set(Status.Initializing)
+                context.statusRef.set(Status.Initializing)
 
-            try {
-                val cwd = project.basePath ?: System.getProperty("user.dir")
-                val adapterInfo = requestedAdapterInfo
-                val adapterRoot = AcpAdapterPaths.getAdapterRoot(requestedAdapterName)
-                if (adapterRoot == null || !adapterRoot.isDirectory) {
-                    statusRef.set(Status.Error)
-                    throw IllegalStateException(
-                        "ACP adapter failed to prepare. Check IDE log. Adapter is downloaded to ~/.unified-llm/adapters/<adapter-name>/ and npm install is run on first start."
-                    )
-                }
-                val launchFile = java.io.File(adapterRoot, adapterInfo.launchPath)
-                if (!launchFile.isFile) {
-                    statusRef.set(Status.Error)
-                    throw IllegalStateException(
-                        "ACP adapter missing launch path '${adapterInfo.launchPath}' at ${adapterRoot.absolutePath}. Check IDE log for npm install errors."
-                    )
-                }
+                try {
+                    val sharedProc = activeProcesses.computeIfAbsent(requestedAdapterName) { SharedProcess(requestedAdapterName) }
+                    context.sharedProcess = sharedProc
+                    
+                    sharedProc.mutex.withLock {
+                        if (sharedProc.process == null || !sharedProc.process!!.isAlive || forceRestart) {
+                            if (forceRestart && sharedProc.process != null) {
+                                sharedProc.stop()
+                            }
+                            
+                            log.info("[$chatId] Starting NEW shared process for $requestedAdapterName")
+                            val adapterRoot = AcpAdapterPaths.getAdapterRoot(requestedAdapterName)
+                                ?: throw IllegalStateException("ACP adapter directory not found: $requestedAdapterName")
+                            
+                            val launchFile = java.io.File(adapterRoot, adapterInfo.launchPath)
+                            if (!launchFile.isFile) throw IllegalStateException("Missing launch path: ${adapterInfo.launchPath}")
 
-                val nodeCmd = if (System.getProperty("os.name").lowercase().contains("win")) "node.exe" else "node"
-                val command = mutableListOf(nodeCmd, adapterInfo.launchPath)
-                command.addAll(adapterInfo.args)
+                            val nodeCmd = if (System.getProperty("os.name").lowercase().contains("win")) "node.exe" else "node"
+                            val command = mutableListOf(nodeCmd, adapterInfo.launchPath)
+                            command.addAll(adapterInfo.args)
 
-                val processBuilder = ProcessBuilder(command)
-                    .directory(adapterRoot)
-                    .redirectErrorStream(false)
-                processBuilder.environment().putAll(System.getenv())
-                val proc = processBuilder.start()
-                process = proc
-                Thread {
-                    proc.errorStream.bufferedReader().useLines { lines ->
-                        lines.forEach { line -> log.warn("[${adapterInfo.name} stderr] $line") }
+                            val pb = ProcessBuilder(command).directory(adapterRoot).redirectErrorStream(false)
+                            pb.environment().putAll(System.getenv())
+                            val proc = withContext(Dispatchers.IO) { pb.start() }
+                            sharedProc.process = proc
+
+                            Thread {
+                                proc.errorStream.bufferedReader().useLines { lines ->
+                                    lines.forEach { line -> log.warn("[Shared:${requestedAdapterName} stderr] $line") }
+                                }
+                            }.apply { isDaemon = true; start() }
+
+                            val input = LineLoggingInputStream(proc.inputStream) { line ->
+                                onLogEntry(AcpLogEntry(AcpLogEntry.Direction.RECEIVED, line))
+                            }.asSource().buffered()
+                            
+                            val output = LineLoggingOutputStream(proc.outputStream) { line ->
+                                onLogEntry(AcpLogEntry(AcpLogEntry.Direction.SENT, line))
+                            }.asSink().buffered()
+
+                            val transport = StdioTransport(scope, Dispatchers.IO, input, output)
+                            val prot = Protocol(scope, transport)
+                            sharedProc.protocol = prot
+                            
+                            val clientsFactory = object : ClientOperationsFactory {
+                                override suspend fun createClientOperations(
+                                    sessionId: SessionId, 
+                                    sessionResponse: AcpCreatedSessionResponse
+                                ): ClientSessionOperations {
+                                    return this@AcpClientService.MinimalSessionOperations("unknown", context) 
+                                }
+                            }
+
+                            val c = Client(prot)
+                            sharedProc.client = c
+                            prot.start()
+                            c.initialize(ClientInfo(LATEST_PROTOCOL_VERSION, ClientCapabilities()))
+                            sharedProc.isInitialized = true
+                        }
                     }
-                }.apply { isDaemon = true; start() }
 
-                val loggingInputStream = LineLoggingInputStream(proc.inputStream) { line ->
-                    onLogEntry(AcpLogEntry(AcpLogEntry.Direction.RECEIVED, line))
-                }
-                val loggingOutStream = LineLoggingOutputStream(proc.outputStream) { line ->
-                    onLogEntry(AcpLogEntry(AcpLogEntry.Direction.SENT, line))
-                }
-
-                val input = loggingInputStream.asSource().buffered()
-                val output = loggingOutStream.asSink().buffered()
-
-                val transport = StdioTransport(scope, Dispatchers.IO, input, output)
-                val prot = Protocol(scope, transport)
-                protocol = prot
-
-                val operationsFactory = object : ClientOperationsFactory {
-                    override suspend fun createClientOperations(
-                        sessionId: SessionId,
-                        sessionResponse: AcpCreatedSessionResponse
-                    ): ClientSessionOperations {
-                        return MinimalSessionOperations()
+                    val client = sharedProc.client!!
+                    val cwd = project.basePath ?: System.getProperty("user.dir")
+                    
+                    val factory = object : ClientOperationsFactory {
+                        override suspend fun createClientOperations(
+                            sessionId: SessionId, 
+                            sessionResponse: AcpCreatedSessionResponse
+                        ): ClientSessionOperations {
+                            return this@AcpClientService.MinimalSessionOperations(chatId, context)
+                        }
                     }
-                }
 
-                val c = Client(prot)
-                client = c
-                prot.start()
-                c.initialize(ClientInfo(com.agentclientprotocol.model.LATEST_PROTOCOL_VERSION, ClientCapabilities()))
-                val params = SessionCreationParameters(cwd = cwd, mcpServers = emptyList())
-                val sess = if (resumeSessionId != null) {
-                    log.info("Resuming session $resumeSessionId after model change")
-                    c.resumeSession(SessionId(resumeSessionId), params, operationsFactory)
-                } else {
-                    c.newSession(params, operationsFactory)
-                }
-                session = sess
-                sessionIdRef.set(sess.sessionId.value)
-
-                val selectedModelId = resolveModelToApply(
-                    preferredModelId = preferredModelId,
-                    availableModels = adapterInfo.models,
-                    defaultModelId = adapterInfo.defaultModelId
-                )
-
-                if (selectedModelId != null) {
-                    try {
-                        log.info("Setting startup model to: $selectedModelId")
-                        sess.setModel(ModelId(selectedModelId))
-                        activeModelIdRef.set(selectedModelId)
-                        log.info("Startup model set successfully")
-                    } catch (e: Exception) {
-                        log.warn("Failed to set startup model to $selectedModelId: ${e.message}", e)
-                        // Don't fail agent startup if model setting fails
+                    val params = SessionCreationParameters(cwd = cwd, mcpServers = emptyList())
+                    val sess = if (resumeSessionId != null) {
+                        try {
+                            client.resumeSession(SessionId(resumeSessionId), params, factory)
+                        } catch (e: Exception) {
+                            log.warn("[$chatId] Resume session failed for $resumeSessionId, falling back to new session", e)
+                            client.newSession(params, factory)
+                        }
+                    } else {
+                        client.newSession(params, factory)
                     }
-                }
 
-                val defaultModeId = adapterInfo.defaultModeId
-                if (defaultModeId != null) {
-                   try {
-                       log.info("Setting startup mode to: $defaultModeId")
-                       sess.setMode(SessionModeId(defaultModeId))
-                       activeModeIdRef.set(defaultModeId)
-                   } catch (e: Exception) {
-                       log.warn("Failed to set startup mode to $defaultModeId: ${e.message}", e)
-                   }
-                }
+                    context.session = sess
+                    context.sessionIdRef.set(sess.sessionId.value)
 
-                activeAdapterNameRef.set(requestedAdapterName)
-                statusRef.set(Status.Ready)
-            } catch (e: Exception) {
-                log.error(e)
-                stopAgentInternal()
-                statusRef.set(Status.Error)
-                throw e
-            }
+                    val selectedModelId = resolveModelToApply(preferredModelId, adapterInfo.models, adapterInfo.defaultModelId)
+                    if (selectedModelId != null) {
+                        try {
+                            sess.setModel(ModelId(selectedModelId))
+                            context.activeModelIdRef.set(selectedModelId)
+                            log.info("[$chatId] Startup model set to $selectedModelId")
+                        } catch (e: Exception) {
+                            log.warn("[$chatId] Failed to set startup model to $selectedModelId", e)
+                        }
+                    }
+
+                    val defaultModeId = adapterInfo.defaultModeId
+                    if (defaultModeId != null) {
+                        try {
+                            sess.setMode(SessionModeId(defaultModeId))
+                            context.activeModeIdRef.set(defaultModeId)
+                            log.info("[$chatId] Startup mode set to $defaultModeId")
+                        } catch (e: Exception) {
+                            log.warn("[$chatId] Failed to set startup mode to $defaultModeId", e)
+                        }
+                    }
+
+                    context.activeAdapterNameRef.set(requestedAdapterName)
+                    context.statusRef.set(Status.Ready)
+
+                } catch (e: Exception) {
+                    log.error("Failed to start/attach to agent for $chatId", e)
+                    context.stop()
+                    context.statusRef.set(Status.Error)
+                    throw e
+                }
             }
         }
     }
 
     @Suppress("OPT_IN_USAGE")
-    suspend fun setModel(modelId: String): Boolean {
+    suspend fun setModel(chatId: String, modelId: String): Boolean {
+        val context = sessions[chatId] ?: return false
         val trimmedModelId = modelId.trim()
-        if (trimmedModelId.isEmpty()) return false
-        if (session == null) return false
-
-        val currentModelId = activeModelIdRef.get()
-        if (currentModelId == trimmedModelId) return true
-
-        val adapterName = activeAdapterNameRef.get() ?: return false
-        val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
-        val availableModels = adapterInfo.models
-        if (availableModels.isNotEmpty() && availableModels.none { it.id == trimmedModelId }) {
-            log.warn("Model '$trimmedModelId' is not configured for adapter '$adapterName'")
-            return false
+        val currentModelId = context.activeModelIdRef.get()
+        if (currentModelId == trimmedModelId) {
+            log.debug("[$chatId] setModel: already in model $trimmedModelId, skipping")
+            return true
         }
 
+        val adapterName = context.activeAdapterNameRef.get() ?: return false
+        val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
+        
         return when (adapterInfo.modelChangeStrategy) {
             "restart-resume" -> {
-                val oldSessionId = sessionIdRef.get()
                 try {
-                    log.info("Model change ($adapterName): $currentModelId -> $trimmedModelId, restarting with session resume")
-                    startAgent(adapterName, trimmedModelId, oldSessionId)
+                    startAgent(chatId, adapterName, trimmedModelId, context.sessionIdRef.get())
                     true
                 } catch (e: Exception) {
-                    log.warn("Failed to restart agent for model '$trimmedModelId': ${e.message}", e)
                     false
                 }
             }
             "restart" -> {
                 try {
-                    log.info("Model change ($adapterName): $currentModelId -> $trimmedModelId, restarting with new session")
-                    startAgent(adapterName, trimmedModelId, resumeSessionId = null, forceRestart = true)
+                    startAgent(chatId, adapterName, trimmedModelId, resumeSessionId = null, forceRestart = true)
                     true
                 } catch (e: Exception) {
-                    log.warn("Failed to restart agent for model '$trimmedModelId': ${e.message}", e)
                     false
                 }
             }
             "in-session" -> {
-                val sess = session ?: return false
+                val sess = context.session ?: return false
                 try {
-                    withContext(Dispatchers.IO) {
-                        sess.setModel(ModelId(trimmedModelId))
+                    withContext(Dispatchers.IO) { 
+                        sess.setModel(ModelId(trimmedModelId)) 
                     }
-                    activeModelIdRef.set(trimmedModelId)
-                    log.info("Model change ($adapterName): $currentModelId -> $trimmedModelId (in-session)")
+                    context.activeModelIdRef.set(trimmedModelId)
+                    log.info("[$chatId] Model changed to $trimmedModelId (in-session)")
                     true
                 } catch (e: Exception) {
-                    log.warn("Failed to set model '$trimmedModelId' in-session: ${e.message}", e)
+                    log.warn("[$chatId] Failed to set model", e)
                     false
                 }
             }
             else -> {
-                log.warn("Unknown modelChangeStrategy '${adapterInfo.modelChangeStrategy}' for adapter '$adapterName', defaulting to restart")
                 try {
-                    startAgent(adapterName, trimmedModelId, resumeSessionId = null)
+                    startAgent(chatId, adapterName, trimmedModelId)
                     true
                 } catch (e: Exception) {
-                    log.warn("Failed to restart agent for model '$trimmedModelId': ${e.message}", e)
                     false
                 }
             }
@@ -303,53 +333,60 @@ class AcpClientService(private val project: Project) {
     }
 
     @Suppress("OPT_IN_USAGE")
-    suspend fun setMode(modeId: String): Boolean {
+    suspend fun setMode(chatId: String, modeId: String): Boolean {
+        val context = sessions[chatId] ?: return false
         val trimmedModeId = modeId.trim()
-        if (trimmedModeId.isEmpty()) return false
-        val sess = session ?: return false
-        
-        val adapterName = activeAdapterNameRef.get()
-        if (adapterName != null) {
-            val info = AcpAdapterPaths.getAdapterInfo(adapterName)
-            if (info.modes.isNotEmpty() && info.modes.none { it.id == trimmedModeId }) {
-                log.warn("Mode '$trimmedModeId' is not configured for adapter '$adapterName'")
-                return false
-            }
+        if (context.activeModeIdRef.get() == trimmedModeId) {
+            return true
         }
 
+        val sess = context.session ?: return false
         return try {
-            withContext(Dispatchers.IO) {
-                sess.setMode(SessionModeId(trimmedModeId))
+            withContext(Dispatchers.IO) { 
+                sess.setMode(SessionModeId(trimmedModeId)) 
             }
-            activeModeIdRef.set(trimmedModeId)
+            context.activeModeIdRef.set(trimmedModeId)
+            log.info("[$chatId] Mode changed to $trimmedModeId")
             true
         } catch (e: Exception) {
-            log.warn("Failed to set mode '$trimmedModeId': ${e.message}", e)
+            log.warn("[$chatId] Failed to set mode", e)
             false
         }
     }
 
     fun respondToPermissionRequest(requestId: String, decision: String) {
-        val deferred = pendingRequests.remove(requestId)
-        if (deferred != null) {
-            val response = if (decision == "deny") {
-                RequestPermissionResponse(RequestPermissionOutcome.Cancelled)
-            } else {
-                // Assuming decision is the optionId if not "deny"
-                RequestPermissionResponse(RequestPermissionOutcome.Selected(PermissionOptionId(decision)))
+        for (ctx in sessions.values) {
+            val deferred = ctx.pendingRequests.remove(requestId)
+            if (deferred != null) {
+                val response = if (decision == "deny") {
+                    RequestPermissionResponse(RequestPermissionOutcome.Cancelled)
+                } else {
+                    RequestPermissionResponse(RequestPermissionOutcome.Selected(PermissionOptionId(decision)))
+                }
+                deferred.complete(response)
+                return
             }
-            deferred.complete(response)
-        } else {
-            log.warn("Received response for unknown request ID: $requestId")
         }
     }
 
-    fun prompt(text: String): Flow<AcpEvent> = flow {
-        val sess = session ?: run {
-            emit(AcpEvent.Error("No session; start agent first"))
+    fun prompt(chatId: String, text: String): Flow<AcpEvent> = flow {
+        val context = sessions[chatId]
+        if (context == null) {
+            emit(AcpEvent.Error("No session for $chatId"))
             return@flow
         }
-        statusRef.set(Status.Prompting)
+
+        // Wait for any ongoing initialization/restart to finish
+        val sess = context.lifecycleMutex.withLock {
+            val s = context.session
+            if (s == null) {
+                emit(AcpEvent.Error("No session for $chatId; start agent first"))
+                return@flow
+            }
+            s
+        }
+
+        context.statusRef.set(Status.Prompting)
         try {
             sess.prompt(listOf(ContentBlock.Text(text))).collect { event ->
                 when (event) {
@@ -368,84 +405,85 @@ class AcpClientService(private val project: Project) {
                 }
             }
         } finally {
-            statusRef.set(Status.Ready)
+            context.statusRef.set(Status.Ready)
         }
     }
 
-    fun dispose() {
-        scope.coroutineContext[Job]?.cancel()
-        stopAgentInternal()
+    suspend fun cancel(chatId: String) {
+        val context = sessions[chatId] ?: return
+        cancelWithContext(context)
     }
 
-    private fun stopAgentInternal() {
-        process?.destroyForcibly()
-        process = null
-        client = null
-        session = null
-        protocol = null
-        statusRef.set(Status.NotStarted)
-        sessionIdRef.set(null)
-        activeAdapterNameRef.set(null)
-        activeModelIdRef.set(null)
-        activeModeIdRef.set(null)
-        // Cancel all pending requests
-        pendingRequests.values.forEach { it.complete(RequestPermissionResponse(RequestPermissionOutcome.Cancelled)) }
-        pendingRequests.clear()
+    private suspend fun cancelWithContext(context: AgentContext) {
+        // Wait for lock to ensure we don't cancel a session while it's being swapped
+        val sess = context.lifecycleMutex.withLock { context.session } ?: return
+        try {
+            sess.cancel()
+            log.info("[${context.chatId}] session/cancel sent")
+        } catch (e: Exception) {
+            log.warn("[${context.chatId}] Failed to cancel", e)
+        }
+    }
+
+    suspend fun stopAgent(chatId: String) {
+        val context = sessions[chatId] ?: return
+        cancelWithContext(context)
+        sessions.remove(chatId)
+        context.stop()
+    }
+
+    fun shutdown() {
+        scope.coroutineContext[Job]?.cancel()
+        sessions.values.forEach { it.stop() }
+        sessions.clear()
+        activeProcesses.values.forEach { it.stop() }
+        activeProcesses.clear()
     }
 
     private fun resolveModelToApply(
-        preferredModelId: String?,
-        availableModels: List<AcpAdapterConfig.ModelInfo>,
-        defaultModelId: String?
+        pref: String?, 
+        available: List<AcpAdapterConfig.ModelInfo>, 
+        default: String?
     ): String? {
-        val preferred = preferredModelId?.trim().takeUnless { it.isNullOrEmpty() }
-        if (preferred != null) {
-            if (availableModels.isEmpty() || availableModels.any { it.id == preferred }) return preferred
-            log.warn("Preferred model '$preferred' not configured for adapter; falling back")
+        val p = pref?.trim().takeUnless { it.isNullOrEmpty() }
+        if (p != null && (available.isEmpty() || available.any { it.id == p })) {
+            return p
         }
-        return defaultModelId
+        return default
     }
 
-    private inner class MinimalSessionOperations : ClientSessionOperations {
+    private inner class MinimalSessionOperations(
+        val chatId: String, 
+        val context: AgentContext
+    ) : ClientSessionOperations {
         override suspend fun requestPermissions(
             toolCall: SessionUpdate.ToolCallUpdate,
             permissions: List<PermissionOption>,
             _meta: JsonElement?
         ): RequestPermissionResponse {
-            if (permissions.isEmpty()) return RequestPermissionResponse(RequestPermissionOutcome.Cancelled)
+            if (permissions.isEmpty()) {
+                return RequestPermissionResponse(RequestPermissionOutcome.Cancelled)
+            }
             
-            // If mode is "bypassPermissions" (or similar), we might want to auto-allow.
-            // But currently the SDK/Agent decides if it asks. If it asks, we should probably check mode locally or ask user.
-            // Since mode logic is mostly agent-side, if we are here, the agent WANTS to ask.
-            // Exception: if we want to force-bypass even if agent asks (e.g. legacy behavior?), we could check activeMode.
-            // For now, implemented "Ask User" flow.
-
             val requestId = UUID.randomUUID().toString()
-            // Extract meaningful info from toolCall.toString() which looks like ToolCallUpdate(toolCallId=..., title=..., kind=...)
             val str = toolCall.toString()
-            val title = Regex("title=([^,)]+)").find(str)?.groupValues?.get(1) ?: "Unknown Action"
+            val title = Regex("title=([^,)]+)").find(str)?.groupValues?.get(1) ?: "Action"
             val kind = Regex("kind=([^,)]+)").find(str)?.groupValues?.get(1) ?: "OTHER"
             
-            val desc = """
-                Action: $title
-                Type: $kind
-                
-                Raw: $str
-            """.trimIndent()
-
-            val request = PermissionRequest(requestId, desc, permissions)
-            val deferred = CompletableDeferred<RequestPermissionResponse>()
-            pendingRequests[requestId] = deferred
+            val request = PermissionRequest(
+                requestId, 
+                chatId, 
+                "Action: $title\nType: $kind", 
+                permissions
+            )
             
-            permissionRequestHandler?.invoke(request) ?: run {
-                // If no handler, auto-deny or log error?
-                // For now, log warning and auto-allow ONLY if we want to preserve old behavior when UI handles are missing
-                // BUT user requested this feature. So we should probably wait or fail.
-                // If we wait without handler, we hang.
-                log.warn("No permission handler registered! Auto-denying request $requestId")
-                deferred.complete(RequestPermissionResponse(RequestPermissionOutcome.Cancelled))
+            val deferred = CompletableDeferred<RequestPermissionResponse>()
+            context.pendingRequests[requestId] = deferred
+            
+            permissionRequestHandler?.invoke(request) ?: run { 
+                deferred.complete(RequestPermissionResponse(RequestPermissionOutcome.Cancelled)) 
             }
-
+            
             return deferred.await()
         }
 
@@ -453,96 +491,96 @@ class AcpClientService(private val project: Project) {
     }
 }
 
-/** OutputStream that buffers until newline then logs the line and forwards. */
 private class LineLoggingOutputStream(
-    private val delegate: java.io.OutputStream,
+    private val delegate: java.io.OutputStream, 
     private val onLine: (String) -> Unit
 ) : java.io.OutputStream() {
     private val buffer = ByteArrayOutputStream()
 
-    override fun write(b: Int) {
+    override fun write(b: Int) { 
         delegate.write(b)
-        appendForLogging(b)
+        appendInternal(b) 
     }
 
-    override fun write(b: ByteArray, off: Int, len: Int) {
+    override fun write(b: ByteArray, off: Int, len: Int) { 
         delegate.write(b, off, len)
         for (i in off until (off + len).coerceAtMost(b.size)) {
-            appendForLogging(b[i].toInt() and 0xff)
+            appendInternal(b[i].toInt() and 0xff) 
         }
     }
 
-    private fun appendForLogging(b: Int) {
+    private fun appendInternal(b: Int) { 
         if (b == '\n'.code) {
-            flushLine()
-            return
+            flushLine() 
+        } else {
+            buffer.write(b) 
         }
-        buffer.write(b)
     }
 
-    private fun flushLine() {
+    private fun flushLine() { 
         val line = buffer.toString(Charsets.UTF_8).removeSuffix("\r")
         buffer.reset()
         if (line.isNotBlank()) {
-            onLine(line)
+            onLine(line) 
         }
     }
 
     override fun flush() = delegate.flush()
-    override fun close() {
+
+    override fun close() { 
         flushLine()
-        delegate.close()
+        delegate.close() 
     }
 }
 
-/** InputStream that logs line-delimited inbound traffic without modifying payload bytes. */
 private class LineLoggingInputStream(
-    delegate: java.io.InputStream,
+    delegate: java.io.InputStream, 
     private val onLine: (String) -> Unit
 ) : java.io.FilterInputStream(delegate) {
     private val buffer = ByteArrayOutputStream()
 
-    override fun read(): Int {
+    override fun read(): Int { 
         val b = super.read()
         if (b == -1) {
-            flushRemainder()
-            return -1
+            flushRemainder() 
+        } else {
+            appendInternal(b)
         }
-        appendForLogging(b)
-        return b
+        return b 
     }
 
-    override fun read(b: ByteArray, off: Int, len: Int): Int {
-        val read = super.read(b, off, len)
-        if (read == -1) {
-            flushRemainder()
-            return -1
+    override fun read(b: ByteArray, off: Int, len: Int): Int { 
+        val r = super.read(b, off, len)
+        if (r == -1) {
+            flushRemainder() 
+        } else {
+            for (i in off until (off + r).coerceAtMost(b.size)) {
+                appendInternal(b[i].toInt() and 0xff)
+            }
         }
-        for (i in off until (off + read).coerceAtMost(b.size)) {
-            appendForLogging(b[i].toInt() and 0xff)
-        }
-        return read
+        return r 
     }
 
-    private fun appendForLogging(b: Int) {
+    private fun appendInternal(b: Int) { 
         if (b == '\n'.code) {
-            flushLine()
-            return
+            flushInternal() 
+        } else {
+            buffer.write(b) 
         }
-        buffer.write(b)
     }
 
-    private fun flushLine() {
+    private fun flushInternal() { 
         val line = buffer.toString(Charsets.UTF_8).removeSuffix("\r")
         buffer.reset()
         if (line.isNotBlank()) {
-            onLine(line)
+            onLine(line) 
         }
     }
 
-    private fun flushRemainder() {
-        if (buffer.size() == 0) return
-        flushLine()
+    private fun flushRemainder() { 
+        if (buffer.size() > 0) {
+            flushInternal() 
+        }
     }
 }
 

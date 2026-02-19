@@ -3,6 +3,7 @@ package unified.llm.acp
 import com.intellij.openapi.diagnostic.Logger
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.withLock
 
 private val log = Logger.getInstance("unified.llm.acp.AcpAdapterPaths")
 
@@ -69,22 +70,40 @@ object AcpAdapterPaths {
         return ADAPTERS_DIR
     }
     
+    private val adapterLocks = ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+
     /**
      * Returns the adapter root directory (dist/ + package.json + node_modules/).
      * Downloads adapter from npm to ~/.unified-llm/adapters/<adapter-name>/ if needed and runs npm install.
      */
-    fun getAdapterRoot(adapterName: String? = null): File? {
+    suspend fun getAdapterRoot(adapterName: String? = null): File? {
         val adapterInfo = getAdapterInfo(adapterName)
         val runtimeDir = File(ADAPTERS_DIR, adapterInfo.resourceName)
         val cacheKey = runtimeDir.absolutePath
+        
+        // Fast path: already verified and in memory
         cachedRoots[cacheKey]?.let { root ->
             if (root.isDirectory && File(root, "node_modules").isDirectory && File(root, adapterInfo.launchPath).isFile) {
                 return root
             }
         }
-        val root = ensureRuntimeDir(runtimeDir, adapterInfo)
-        if (root != null) cachedRoots[cacheKey] = root
-        return root
+
+        // Slow path: potential installation. Need a lock per adapter.
+        val adapterKey = adapterInfo.resourceName ?: "default"
+        val mutex = adapterLocks.computeIfAbsent(adapterKey) { kotlinx.coroutines.sync.Mutex() }
+        
+        return mutex.withLock {
+            // Re-check after acquiring lock in case another thread finished it
+            cachedRoots[cacheKey]?.let { root ->
+                 if (root.isDirectory && File(root, "node_modules").isDirectory && File(root, adapterInfo.launchPath).isFile) {
+                     return@withLock root
+                 }
+            }
+
+            val root = ensureRuntimeDir(runtimeDir, adapterInfo)
+            if (root != null) cachedRoots[cacheKey] = root
+            root
+        }
     }
 
     private fun ensureRuntimeDir(runtimeDir: File, adapterInfo: AcpAdapterConfig.AdapterInfo): File? {
