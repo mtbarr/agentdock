@@ -27,6 +27,7 @@ export function useChatSession(
   const [selectedModelByAgent, setSelectedModelByAgent] = useState<Record<string, string>>({});
   const [selectedModeByAgent, setSelectedModeByAgent] = useState<Record<string, string>>({});
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+  const [attachments, setAttachments] = useState<{ id: string; data: string; mimeType: string }[]>([]);
 
   const currentAgentMessageRef = useRef<string>('');
   const pendingMessageRef = useRef<string | null>(null);
@@ -181,7 +182,8 @@ export function useChatSession(
         setMessages((prev) => [...prev, assistantMessage]);
         
         try {
-          window.__sendPrompt(chatId, messageToSend);
+          // Note: In pending state we currently only support text
+          window.__sendPrompt(chatId, JSON.stringify([{ type: 'text', text: messageToSend }]));
         } catch (err) {
           console.warn('[useChatSession] Failed to send pending prompt:', err);
           setIsSending(false);
@@ -209,9 +211,10 @@ export function useChatSession(
 
     const unsubReplay = ACPBridge.onHistoryReplay((e) => {
       if (e.detail.chatId !== chatId) return;
-      const role = e.detail.role;
-      const text = e.detail.text || '';
-      if (!text) return;
+      
+      const { role, text, content } = e.detail;
+      const block = content || { type: 'text', text: text || '' };
+      if (block.type === 'text' && !block.text) return;
 
       setMessages((prev) => {
         const lastMsg = prev[prev.length - 1];
@@ -221,14 +224,31 @@ export function useChatSession(
             {
               id: nextMessageId(role),
               role,
-              content: text,
+              content: block.type === 'text' ? block.text || '' : '',
+              blocks: [block],
               timestamp: Date.now()
             }
           ];
         }
+
+        // Handle block merging for text
+        const newBlocks = [...(lastMsg.blocks || [])];
+        if (block.type === 'text' && newBlocks.length > 0 && newBlocks[newBlocks.length - 1].type === 'text') {
+           newBlocks[newBlocks.length - 1] = {
+             ...newBlocks[newBlocks.length - 1],
+             text: (newBlocks[newBlocks.length - 1].text || '') + (block.text || '')
+           };
+        } else {
+           newBlocks.push(block);
+        }
+
         return [
           ...prev.slice(0, -1),
-          { ...lastMsg, content: `${lastMsg.content}${text}` }
+          { 
+            ...lastMsg, 
+            content: block.type === 'text' ? `${lastMsg.content}${block.text}` : lastMsg.content,
+            blocks: newBlocks
+          }
         ];
       });
     });
@@ -346,19 +366,60 @@ export function useChatSession(
 
   const handleSend = () => {
     const text = inputValue.trim();
-    if (!text || isSending || status !== 'ready') return;
+    if ((!text && attachments.length === 0) || isSending || status !== 'ready') return;
 
     if (typeof window.__sendPrompt !== 'function') return;
     
+    // Construct blocks by interleaving text and images
+    const blocks: any[] = [];
+    let currentText = inputValue;
+
+    // Minimal interleaved logic: we find [image-ID] placeholders
+    // For now, to keep it clean and minimal as requested: 
+    // we'll just append images at the end if no placeholders, 
+    // or replace placeholders if they exist.
+    
+    const usedAttachmentIds = new Set<string>();
+    const placeholderRegex = /\[image-([a-z0-9-]+)\]/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = placeholderRegex.exec(currentText)) !== null) {
+      const beforeText = currentText.substring(lastIndex, match.index);
+      if (beforeText) blocks.push({ type: 'text', text: beforeText });
+      
+      const attId = match[1];
+      const att = attachments.find(a => a.id === attId);
+      if (att) {
+        blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType });
+        usedAttachmentIds.add(attId);
+      } else {
+        blocks.push({ type: 'text', text: match[0] }); // Keep as text if not found
+      }
+      lastIndex = placeholderRegex.lastIndex;
+    }
+    
+    const remainingText = currentText.substring(lastIndex);
+    if (remainingText) blocks.push({ type: 'text', text: remainingText });
+
+    // Append any attachments that weren't explicitly placed
+    attachments.forEach(att => {
+      if (!usedAttachmentIds.has(att.id)) {
+        blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType });
+      }
+    });
+
     setIsSending(true);
     const userMessage: Message = {
       id: nextMessageId('user'),
       role: 'user',
-      content: text,
+      content: text, // Keep original text for UI history
+      blocks: blocks, // Store the structured blocks for rich rendering
       timestamp: Date.now(),
     };
     setMessages((prev) => [...prev, userMessage]);
     setInputValue('');
+    setAttachments([]);
     currentAgentMessageRef.current = '';
     
     const assistantMessage: Message = {
@@ -370,7 +431,7 @@ export function useChatSession(
     setMessages((prev) => [...prev, assistantMessage]);
 
     try {
-      window.__sendPrompt(chatId, text);
+      window.__sendPrompt(chatId, JSON.stringify(blocks));
     } catch (e) {
       console.warn('[useChatSession] Failed to send prompt:', e);
       setIsSending(false);
@@ -427,6 +488,8 @@ export function useChatSession(
     handleSend,
     handleStop,
     handlePermissionDecision,
-    hasSelectedAgent: !!selectedAgent
+    hasSelectedAgent: !!selectedAgent,
+    attachments,
+    setAttachments
   };
 }

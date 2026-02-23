@@ -9,6 +9,7 @@ export interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  blocks?: { type: 'text' | 'image'; text?: string; data?: string; mimeType?: string }[];
   timestamp: number;
 }
 
@@ -77,7 +78,8 @@ export interface HistorySessionMeta {
 export interface HistoryReplayChunk {
   chatId: string;
   role: 'user' | 'assistant';
-  text: string;
+  text?: string;
+  content?: { type: 'text' | 'image'; text?: string; data?: string; mimeType?: string };
 }
 
 declare global {

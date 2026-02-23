@@ -433,7 +433,7 @@ class AcpClientService(val project: Project) {
         }
     }
 
-    fun prompt(chatId: String, text: String): Flow<AcpEvent> = flow {
+    fun prompt(chatId: String, blocks: List<ContentBlock>): Flow<AcpEvent> = flow {
         val context = sessions[chatId]
         if (context == null) {
             emit(AcpEvent.Error("No session for $chatId"))
@@ -452,7 +452,7 @@ class AcpClientService(val project: Project) {
 
         context.statusRef.set(Status.Prompting)
         try {
-            sess.prompt(listOf(ContentBlock.Text(text))).collect { event ->
+            sess.prompt(blocks).collect { event ->
                 when (event) {
                     is Event.SessionUpdateEvent -> {
                         val update = event.update

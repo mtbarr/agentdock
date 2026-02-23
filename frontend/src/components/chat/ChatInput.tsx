@@ -22,6 +22,10 @@ interface ChatInputProps {
   onModeChange: (id: string) => void;
 
   hasSelectedAgent: boolean;
+  
+  attachments: { id: string; data: string; mimeType: string }[];
+  onAttachmentsChange: (items: { id: string; data: string; mimeType: string }[]) => void;
+  onImageClick: (src: string) => void;
 }
 
 export default function ChatInput({
@@ -40,15 +44,83 @@ export default function ChatInput({
   modeOptions,
   selectedModeId,
   onModeChange,
-  hasSelectedAgent
+  hasSelectedAgent,
+  attachments,
+  onAttachmentsChange,
+  onImageClick
 }: ChatInputProps) {
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const base64 = (event.target?.result as string).split(',')[1];
+            const id = Math.random().toString(36).substring(2, 9);
+            const newAtt = { id, data: base64, mimeType: file.type };
+            onAttachmentsChange([...attachments, newAtt]);
+            
+            // Insert placeholder at cursor
+            const textarea = e.target as HTMLTextAreaElement;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const text = textarea.value;
+            const placeholder = `[image-${id}]`;
+            const newVal = text.substring(0, start) + placeholder + text.substring(end);
+            onInputChange(newVal);
+            
+            // Set cursor after placeholder
+            setTimeout(() => {
+              textarea.selectionStart = textarea.selectionEnd = start + placeholder.length;
+            }, 0);
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    onAttachmentsChange(attachments.filter(a => a.id !== id));
+    // Also remove any placeholders in text
+    onInputChange(inputValue.replace(`[image-${id}]`, ''));
+  };
+
   return (
     <div className="flex-shrink-0 px-4 pb-4 pt-2">
       <div className="max-w-4xl mx-auto">
         <div className="bg-surface rounded-xl border border-border shadow-2xl focus-within:ring-1 focus-within:ring-ring transition-all">
+          
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 p-3 border-b border-border bg-black/5">
+              {attachments.map(att => (
+                <div key={att.id} className="relative group w-16 h-16 rounded border border-border overflow-hidden bg-background shadow-sm">
+                  <img 
+                    src={`data:${att.mimeType};base64,${att.data}`} 
+                    className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity" 
+                    onClick={() => onImageClick(`data:${att.mimeType};base64,${att.data}`)}
+                  />
+                  <button 
+                    onClick={() => removeAttachment(att.id)}
+                    className="absolute top-0 right-0 p-0.5 bg-error text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                  </button>
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/40 text-[8px] text-white px-1 truncate">
+                    {att.id}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <textarea
             value={inputValue}
             onChange={(e) => onInputChange(e.target.value)}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -56,7 +128,7 @@ export default function ChatInput({
               }
             }}
             rows={3}
-            placeholder="Type your task here"
+            placeholder="Type your task here (Paste images with Ctrl+V)"
             disabled={isSending}
             className="w-full p-4 bg-transparent border-0 outline-none resize-none text-[14px] text-foreground placeholder-foreground/30 disabled:opacity-50"
           />

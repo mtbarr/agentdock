@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -93,16 +94,10 @@ class AcpDebugBridge(
         service.setOnSessionUpdate { chatId, update ->
             when (update) {
                 is SessionUpdate.UserMessageChunk -> {
-                    val content = update.content
-                    if (content is ContentBlock.Text) {
-                        pushHistoryReplay(chatId, "user", content.text)
-                    }
+                    pushHistoryReplay(chatId, "user", update.content)
                 }
                 is SessionUpdate.AgentMessageChunk -> {
-                    val content = update.content
-                    if (content is ContentBlock.Text) {
-                        pushHistoryReplay(chatId, "assistant", content.text)
-                    }
+                    pushHistoryReplay(chatId, "assistant", update.content)
                 }
                 is SessionUpdate.CurrentModeUpdate -> pushMode(chatId, update.currentModeId.value)
                 else -> Unit
@@ -321,16 +316,15 @@ class AcpDebugBridge(
 
         sendPromptQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { payload ->
-                val (chatId, text) = parseTextPayload(payload)
-                if (chatId != null) {
-                    val message = text?.takeIf { it.isNotBlank() } ?: ""
+                val (chatId, blocks) = parseBlocksPayload(payload)
+                if (chatId != null && blocks.isNotEmpty()) {
                     val job = scope.launch(Dispatchers.Default) {
                         // Cancel any previous prompt via ACP protocol before starting a new one
                         service.cancel(chatId)
                         
                         pushStatus(chatId, "prompting")
                         try {
-                            service.prompt(chatId, message).collect { event ->
+                            service.prompt(chatId, blocks).collect { event ->
                                 when (event) {
                                     is AcpEvent.AgentText -> pushAgentText(chatId, event.text)
                                     is AcpEvent.PromptDone -> pushStatus(chatId, "ready")
@@ -663,13 +657,19 @@ class AcpDebugBridge(
         }
     }
 
-    fun pushHistoryReplay(chatId: String, role: String, text: String) {
-        val escapedText = text.escapeForJsString()
+    fun pushHistoryReplay(chatId: String, role: String, content: ContentBlock) {
+        val payload = when (content) {
+            is ContentBlock.Text -> """{"type":"text","text":${escapeJsonString(content.text)}}"""
+            is ContentBlock.Image -> """{"type":"image","data":"${content.data}","mimeType":"${content.mimeType}"}"""
+            else -> null
+        }
+        if (payload == null) return
+
         val escapedRole = role.replace("\\", "\\\\").replace("'", "\\'")
         val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onHistoryReplay) window.__onHistoryReplay({ chatId: '$id', role: '$escapedRole', text: '$escapedText' });",
+                "if(window.__onHistoryReplay) window.__onHistoryReplay({ chatId: '$id', role: '$escapedRole', content: $payload });",
                 browser.cefBrowser.url, 0
             )
         }
@@ -769,6 +769,64 @@ class AcpDebugBridge(
              val text = obj["text"]?.jsonPrimitive?.content
              chatId to text
          } catch (_: Exception) { null to null }
+    }
+
+    private fun parseBlocksPayload(payload: String?): Pair<String?, List<ContentBlock>> {
+        val raw = payload?.trim().orEmpty()
+        if (raw.isEmpty()) return null to emptyList()
+        return try {
+            val obj = Json.parseToJsonElement(raw).jsonObject
+            val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            
+            // 1. Try to get blocks directly if present
+            val blocksElement = obj["blocks"]
+            if (blocksElement != null) {
+                val blocks = blocksElement.jsonArray.map { blockEl ->
+                    val blockObj = blockEl.jsonObject
+                    val type = blockObj["type"]?.jsonPrimitive?.content
+                    when (type) {
+                        "image" -> {
+                            val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
+                            val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "image/png"
+                            ContentBlock.Image(data, mimeType)
+                        }
+                        else -> {
+                            val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
+                            ContentBlock.Text(text)
+                        }
+                    }
+                }
+                return chatId to blocks
+            }
+            
+            // 2. Fallback to text field
+            val textValue = obj["text"]?.jsonPrimitive?.content ?: ""
+            
+            // 3. If textValue looks like a JSON array of blocks, try to parse it (compatibility with current UI)
+            if (textValue.startsWith("[") && textValue.endsWith("]")) {
+                try {
+                    val blocks = Json.parseToJsonElement(textValue).jsonArray.map { blockEl ->
+                        val blockObj = blockEl.jsonObject
+                        val type = blockObj["type"]?.jsonPrimitive?.content
+                        when (type) {
+                            "image" -> {
+                                val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
+                                val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "image/png"
+                                ContentBlock.Image(data, mimeType)
+                            }
+                            else -> {
+                                val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
+                                ContentBlock.Text(text)
+                            }
+                        }
+                    }
+                    if (blocks.isNotEmpty()) return chatId to blocks
+                } catch (_: Exception) {}
+            }
+            
+            // 4. Final fallback: treat as plain text
+            return chatId to listOf(ContentBlock.Text(textValue))
+        } catch (_: Exception) { null to emptyList() }
     }
 
     private fun parseLoadPayload(payload: String?): List<String?> {
