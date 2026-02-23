@@ -45,19 +45,21 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
         val content = ContentFactory.getInstance().createContent(rootPanel, "", false)
         toolWindow.contentManager.addContent(content)
 
+        // Delay browser creation to avoid triggering JBCefApp/ProxyMigrationService during class init (IDE contract)
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed || toolWindow.isDisposed) return@invokeLater
-            
-            try {
-                if (!JBCefApp.isSupported()) {
-                    rootPanel.removeAll()
-                    rootPanel.add(JLabel("JCEF is not supported in this IDE"), BorderLayout.CENTER)
-                    rootPanel.revalidate()
-                    rootPanel.repaint()
-                    return@invokeLater
-                }
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed || toolWindow.isDisposed) return@invokeLater
+                try {
+                    if (!JBCefApp.isSupported()) {
+                        rootPanel.removeAll()
+                        rootPanel.add(JLabel("JCEF is not supported in this IDE"), BorderLayout.CENTER)
+                        rootPanel.revalidate()
+                        rootPanel.repaint()
+                        return@invokeLater
+                    }
 
-                val browser = JBCefBrowser()
+                    val browser = JBCefBrowser()
                 val service = AcpClientService(project)
                 val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
                 
@@ -167,11 +169,12 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                 rootPanel.revalidate()
                 rootPanel.repaint()
 
-            } catch (e: Exception) {
-                log.error("Failed to initialize JCEF browser", e)
-                rootPanel.removeAll()
-                rootPanel.add(JLabel("Error initializing browser: ${e.message}"), BorderLayout.CENTER)
-                rootPanel.revalidate()
+                } catch (e: Exception) {
+                    log.error("Failed to initialize JCEF browser", e)
+                    rootPanel.removeAll()
+                    rootPanel.add(JLabel("Error initializing browser: ${e.message}"), BorderLayout.CENTER)
+                    rootPanel.revalidate()
+                }
             }
         }
     }

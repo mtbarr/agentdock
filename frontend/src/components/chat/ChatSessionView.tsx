@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useChatSession } from '../../hooks/useChatSession';
-import { AgentOption, HistorySessionMeta } from '../../types/chat';
+import { useFileChanges } from '../../hooks/useFileChanges';
+import { AgentOption, FileChangeSummary, HistorySessionMeta } from '../../types/chat';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import PermissionModal from './PermissionModal';
+import FileChangesPanel from './FileChangesPanel';
 
 interface ChatSessionProps {
   isActive: boolean;
@@ -42,14 +44,54 @@ export default function ChatSessionView({
     handlePermissionDecision,
     hasSelectedAgent,
     attachments,
-    setAttachments
+    setAttachments,
+    acpSessionId,
+    adapterName
   } = useChatSession(chatId, availableAgents, initialAgentId, historySession);
+
+  const {
+    fileChanges,
+    totalAdditions,
+    totalDeletions,
+    handleUndoFile,
+    handleUndoAllFiles,
+    handleKeepFile,
+    handleKeepAll,
+  } = useFileChanges(chatId, acpSessionId, adapterName);
+
+  const handleShowDiff = useCallback((fc: FileChangeSummary) => {
+    if (typeof window.__showDiff === 'function') {
+      window.__showDiff(JSON.stringify({
+        filePath: fc.filePath,
+        status: fc.status,
+        operations: fc.operations,
+      }));
+    }
+  }, []);
+
+  const handleOpenFile = useCallback((filePath: string) => {
+    if (typeof window.__openFile === 'function') {
+      window.__openFile(JSON.stringify({ filePath }));
+    }
+  }, []);
 
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col h-full relative">
       <MessageList messages={messages} onImageClick={setSelectedImage} />
+
+      <FileChangesPanel
+        fileChanges={fileChanges}
+        totalAdditions={totalAdditions}
+        totalDeletions={totalDeletions}
+        onUndoFile={handleUndoFile}
+        onUndoAllFiles={handleUndoAllFiles}
+        onKeepFile={handleKeepFile}
+        onKeepAll={handleKeepAll}
+        onOpenFile={handleOpenFile}
+        onShowDiff={handleShowDiff}
+      />
 
       <ChatInput
         inputValue={inputValue}

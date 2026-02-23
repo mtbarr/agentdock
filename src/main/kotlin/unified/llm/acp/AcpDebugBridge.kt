@@ -2,8 +2,17 @@ package unified.llm.acp
 
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.SessionUpdate
+import com.agentclientprotocol.model.ToolCallContent
+import com.agentclientprotocol.model.ToolCallLocation
+import unified.llm.changes.AgentDiffViewer
+import unified.llm.changes.ChangesState
+import unified.llm.changes.ChangesStateService
+import unified.llm.changes.UndoFileHandler
+import unified.llm.changes.UndoOperation
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import kotlinx.coroutines.CoroutineScope
@@ -80,6 +89,14 @@ class AcpDebugBridge(
     private var toggleAgentEnabledQuery: JBCefJSQuery? = null
     private var loginAgentQuery: JBCefJSQuery? = null
     private var logoutAgentQuery: JBCefJSQuery? = null
+    private var undoFileQuery: JBCefJSQuery? = null
+    private var undoAllFilesQuery: JBCefJSQuery? = null
+    private var processFileQuery: JBCefJSQuery? = null
+    private var keepAllQuery: JBCefJSQuery? = null
+    private var removeProcessedFilesQuery: JBCefJSQuery? = null
+    private var getChangesStateQuery: JBCefJSQuery? = null
+    private var showDiffQuery: JBCefJSQuery? = null
+    private var openFileQuery: JBCefJSQuery? = null
 
     private val promptJobs = ConcurrentHashMap<String, Job>()
     private val downloadStatuses = ConcurrentHashMap<String, String>()
@@ -90,8 +107,9 @@ class AcpDebugBridge(
 
     fun install() {
         service.setOnLogEntry { pushLogEntry(it) }
+        // Each JS query below: frontend calls window.__* → JBCefJSQuery → addHandler → Kotlin logic → Response
         service.setOnPermissionRequest { pushPermissionRequest(it) }
-        service.setOnSessionUpdate { chatId, update ->
+        service.setOnSessionUpdate { chatId, update, isReplay ->
             when (update) {
                 is SessionUpdate.UserMessageChunk -> {
                     pushHistoryReplay(chatId, "user", update.content)
@@ -100,6 +118,14 @@ class AcpDebugBridge(
                     pushHistoryReplay(chatId, "assistant", update.content)
                 }
                 is SessionUpdate.CurrentModeUpdate -> pushMode(chatId, update.currentModeId.value)
+                is SessionUpdate.ToolCall -> {
+                    if (!isReplay) removeProcessedFilesForDiffs(chatId, update.content)
+                    pushToolCall(chatId, update)
+                }
+                is SessionUpdate.ToolCallUpdate -> {
+                    if (!isReplay) removeProcessedFilesForDiffs(chatId, update.content)
+                    pushToolCallUpdate(chatId, update)
+                }
                 else -> Unit
             }
         }
@@ -421,11 +447,190 @@ class AcpDebugBridge(
                 JBCefJSQuery.Response("ok")
             }
         }
+
+        undoFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val raw = payload ?: "{}"
+                    val obj = Json.parseToJsonElement(raw).jsonObject
+                    val chatId = obj["chatId"]?.jsonPrimitive?.content ?: ""
+                    val filePath = obj["filePath"]?.jsonPrimitive?.content ?: ""
+                    val status = obj["status"]?.jsonPrimitive?.content ?: "M"
+                    val ops = obj["operations"]?.jsonArray?.map { opEl ->
+                        val opObj = opEl.jsonObject
+                        UndoOperation(
+                            opObj["oldText"]?.jsonPrimitive?.content ?: "",
+                            opObj["newText"]?.jsonPrimitive?.content ?: ""
+                        )
+                    } ?: emptyList()
+
+                    if (chatId.isNotEmpty() && filePath.isNotEmpty()) {
+                        runOnEdt {
+                            val result = UndoFileHandler.undoSingleFile(service.project, filePath, status, ops)
+                            pushUndoResult(chatId, result)
+                        }
+                    }
+                } catch (e: Exception) {
+                    log.error("Failed to parse undo file payload", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        undoAllFilesQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                    val chatId = obj["chatId"]?.jsonPrimitive?.content ?: ""
+                    val filesArr = obj["files"]?.jsonArray ?: return@addHandler JBCefJSQuery.Response("ok")
+                    val files = filesArr.map { fEl ->
+                        val fObj = fEl.jsonObject
+                        val path = fObj["filePath"]?.jsonPrimitive?.content ?: ""
+                        val st = fObj["status"]?.jsonPrimitive?.content ?: "M"
+                        val ops = fObj["operations"]?.jsonArray?.map { opEl ->
+                            val opObj = opEl.jsonObject
+                            UndoOperation(
+                                opObj["oldText"]?.jsonPrimitive?.content ?: "",
+                                opObj["newText"]?.jsonPrimitive?.content ?: ""
+                            )
+                        } ?: emptyList()
+                        Triple(path, st, ops)
+                    }
+                    if (chatId.isNotEmpty()) {
+                        runOnEdt {
+                            val result = UndoFileHandler.undoAllFiles(service.project, files)
+                            pushUndoResult(chatId, result)
+                        }
+                    }
+                } catch (e: Exception) {
+                    log.error("Failed to parse undo all files payload", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        processFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                    val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
+                    val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
+                    val filePath = obj["filePath"]?.jsonPrimitive?.content ?: ""
+                    if (sessionId.isNotEmpty() && adapterName.isNotEmpty() && filePath.isNotEmpty()) {
+                        ChangesStateService.addProcessedFile(sessionId, adapterName, filePath)
+                    }
+                } catch (e: Exception) {
+                    log.error("Failed to process file", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        keepAllQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                    val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
+                    val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
+                    val toolCallIndex = obj["toolCallIndex"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+                    if (sessionId.isNotEmpty() && adapterName.isNotEmpty()) {
+                        ChangesStateService.setBaseIndex(sessionId, adapterName, toolCallIndex)
+                    }
+                } catch (e: Exception) {
+                    log.error("Failed to keep all", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        removeProcessedFilesQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                    val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
+                    val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
+                    val filePaths = obj["filePaths"]?.jsonArray?.mapNotNull { it.jsonPrimitive?.content } ?: emptyList()
+                    if (sessionId.isNotEmpty() && adapterName.isNotEmpty() && filePaths.isNotEmpty()) {
+                        ChangesStateService.removeProcessedFiles(sessionId, adapterName, filePaths)
+                    }
+                } catch (e: Exception) {
+                    log.error("Failed to remove processed files", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        getChangesStateQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                    val chatId = obj["chatId"]?.jsonPrimitive?.content ?: ""
+                    val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
+                    val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
+                    if (chatId.isNotEmpty() && sessionId.isNotEmpty() && adapterName.isNotEmpty()) {
+                        val state = ChangesStateService.loadState(sessionId, adapterName) ?: ChangesState(sessionId, adapterName)
+                        pushChangesState(chatId, state)
+                    }
+                } catch (e: Exception) {
+                    log.error("Failed to get changes state", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        showDiffQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                    val filePath = obj["filePath"]?.jsonPrimitive?.content ?: ""
+                    val status = obj["status"]?.jsonPrimitive?.content ?: "M"
+                    val ops = obj["operations"]?.jsonArray?.map { opEl ->
+                        val opObj = opEl.jsonObject
+                        UndoOperation(
+                            opObj["oldText"]?.jsonPrimitive?.content ?: "",
+                            opObj["newText"]?.jsonPrimitive?.content ?: ""
+                        )
+                    } ?: emptyList()
+                    if (filePath.isNotEmpty()) {
+                        runOnEdt {
+                            AgentDiffViewer.showAgentDiff(service.project, filePath, status, ops)
+                        }
+                    }
+                } catch (e: Exception) {
+                    log.error("Failed to show agent diff", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        openFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                    val filePath = obj["filePath"]?.jsonPrimitive?.content ?: ""
+                    if (filePath.isNotEmpty()) {
+                        runOnEdt {
+                            try {
+                                val resolved = UndoFileHandler.resolveFilePath(service.project, filePath)
+                                val base = service.project.basePath ?: return@runOnEdt
+                                if (!File(resolved).canonicalPath.startsWith(File(base).canonicalPath)) return@runOnEdt
+                                val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(File(resolved))
+                                if (vf != null && vf.exists()) {
+                                    FileEditorManager.getInstance(service.project).openFile(vf, true)
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                } catch (_: Exception) {}
+                JBCefJSQuery.Response("ok")
+            }
+        }
     }
 
     /**
-     * First call (from onLoadEnd): inject no-op callbacks and __notifyReady so React can signal when it has set its callbacks.
-     * Second call (from ready handler): inject real API.
+     * Injects the real JS bridge: window.__startAgent, __sendPrompt, __undoFile, etc.
+     * Called from the ready handler after React has called __notifyReady() and set window.__on* callbacks.
+     * (injectReadySignal runs first on page load and only sets no-op stubs for __on* and __downloadAgent etc.)
      */
     fun injectDebugApi(cefBrowser: CefBrowser) {
         val startAgentInject = decorateQueryInject(
@@ -484,64 +689,114 @@ class AcpDebugBridge(
             logoutAgentQuery?.inject("adapterId") ?: "",
             "logoutAgent"
         )
-        
+        val undoFileInject = decorateQueryInject(
+            undoFileQuery?.inject("payload") ?: "",
+            "undoFile"
+        )
+        val undoAllFilesInject = decorateQueryInject(
+            undoAllFilesQuery?.inject("payload") ?: "",
+            "undoAllFiles"
+        )
+        val processFileInject = decorateQueryInject(
+            processFileQuery?.inject("payload") ?: "",
+            "processFile"
+        )
+        val keepAllInject = decorateQueryInject(
+            keepAllQuery?.inject("payload") ?: "",
+            "keepAll"
+        )
+        val removeProcessedFilesInject = decorateQueryInject(
+            removeProcessedFilesQuery?.inject("payload") ?: "",
+            "removeProcessedFiles"
+        )
+        val getChangesStateInject = decorateQueryInject(
+            getChangesStateQuery?.inject("payload") ?: "",
+            "getChangesState"
+        )
+        val showDiffInject = decorateQueryInject(
+            showDiffQuery?.inject("payload") ?: "",
+            "showDiff"
+        )
+        val openFileInject = decorateQueryInject(
+            openFileQuery?.inject("payload") ?: "",
+            "openFile"
+        )
+
         val script = """
             (function() {
                 window.__requestAdapters = function() {
-                    try { $listAdaptersInject } catch (e) { console.error('[UnifiedLLM] listAdapters', e); }
+                    try { $listAdaptersInject } catch (e) { }
                 };
                 window.__startAgent = function(chatId, adapterId, modelId) {
                     try {
                         if (window.__onStatus) window.__onStatus(chatId, 'initializing');
                         $startAgentInject
-                    } catch (e) {
-                        console.error('[UnifiedLLM] startAgent error', e);
-                        if (window.__onStatus) window.__onStatus(chatId, 'error');
-                    }
+                    } catch (e) { }
                 };
                 window.__setModel = function(chatId, modelId) {
-                    try { $setModelInject } catch (e) { console.error('[UnifiedLLM] setModel error', e); }
+                    try { $setModelInject } catch (e) { }
                 };
                 window.__setMode = function(chatId, modeId) {
-                    try { $setModeInject } catch (e) { console.error('[UnifiedLLM] setMode error', e); }
+                    try { $setModeInject } catch (e) { }
                 };
                 window.__sendPrompt = function(chatId, message) {
                     try {
                         if (window.__onStatus) window.__onStatus(chatId, 'prompting');
                         $sendPromptInject
-                    } catch (e) {
-                         console.error('[UnifiedLLM] sendPrompt error', e);
-                         if (window.__onStatus) window.__onStatus(chatId, 'error');
-                    }
+                    } catch (e) { }
                 };
                 window.__cancelPrompt = function(chatId) {
-                    try { $cancelPromptInject } catch (e) { console.error('[UnifiedLLM] cancelPrompt error', e); }
+                    try { $cancelPromptInject } catch (e) { }
                 };
                 window.__stopAgent = function(chatId) {
-                    try { $stopAgentInject } catch (e) { console.error('[UnifiedLLM] stopAgent error', e); }
+                    try { $stopAgentInject } catch (e) { }
                 };
                 window.__respondPermission = function(requestId, decision) {
-                    try { $respondPermissionInject } catch (e) { console.error('[UnifiedLLM] respondPermission error', e); }
+                    try { $respondPermissionInject } catch (e) { }
                 };
                 window.__loadHistorySession = function(chatId, adapterId, sessionId, modelId, modeId) {
-                    try { $loadSessionInject } catch (e) { console.error('[UnifiedLLM] loadHistorySession error', e); }
+                    try { $loadSessionInject } catch (e) { }
                 };
                 window.__downloadAgent = function(adapterId) {
-                    try { $downloadAgentInject } catch (e) { console.error('[UnifiedLLM] downloadAgent error', e); }
+                    try { $downloadAgentInject } catch (e) { }
                 };
                 window.__deleteAgent = function(adapterId) {
-                    try { $deleteAgentInject } catch (e) { console.error('[UnifiedLLM] deleteAgent error', e); }
+                    try { $deleteAgentInject } catch (e) { }
                 };
                 window.__toggleAgentEnabled = function(adapterId, enabled) {
-                    try { $toggleAgentEnabledInject } catch (e) { console.error('[UnifiedLLM] toggleAgentEnabled error', e); }
+                    try { $toggleAgentEnabledInject } catch (e) { }
                 };
                 window.__loginAgent = function(adapterId) {
-                    try { $loginAgentInject } catch (e) { console.error('[UnifiedLLM] loginAgent error', e); }
+                    try { $loginAgentInject } catch (e) { }
                 };
                 window.__logoutAgent = function(adapterId) {
-                    try { $logoutAgentInject } catch (e) { console.error('[UnifiedLLM] logoutAgent error', e); }
+                    try { $logoutAgentInject } catch (e) { }
                 };
-                
+                window.__undoFile = function(payload) {
+                    try { $undoFileInject } catch (e) { }
+                };
+                window.__undoAllFiles = function(payload) {
+                    try { $undoAllFilesInject } catch (e) { }
+                };
+                window.__processFile = function(payload) {
+                    try { $processFileInject } catch (e) { }
+                };
+                window.__keepAll = function(payload) {
+                    try { $keepAllInject } catch (e) { }
+                };
+                window.__removeProcessedFiles = function(payload) {
+                    try { $removeProcessedFilesInject } catch (e) { }
+                };
+                window.__getChangesState = function(payload) {
+                    try { $getChangesStateInject } catch (e) { }
+                };
+                window.__showDiff = function(payload) {
+                    try { $showDiffInject } catch (e) { }
+                };
+                window.__openFile = function(payload) {
+                    try { $openFileInject } catch (e) { }
+                };
+
                 // Try prime
                 try { window.__requestAdapters(); } catch (e) {}
             })();
@@ -549,10 +804,15 @@ class AcpDebugBridge(
         cefBrowser.executeJavaScript(script, cefBrowser.url, 0)
     }
 
+    /**
+     * Injected on first page load (onLoadEnd). Registers no-op stubs for all __on* and action callbacks
+     * so the page does not break before React mounts. When React is ready it calls __notifyReady(),
+     * which triggers injectDebugApi() to replace these with the real implementations.
+     */
     fun injectReadySignal(cefBrowser: CefBrowser) {
         val readyInject = readyQuery?.inject("") ?: ""
         val script = """
-            // Define stubs that accept optional chatId
+            // No-op stubs until injectDebugApi runs after __notifyReady()
             window.__onAcpLog = window.__onAcpLog || function(payload) {};
             window.__onAgentText = window.__onAgentText || function(chatId, text) {};
             window.__onStatus = window.__onStatus || function(chatId, status) {};
@@ -563,9 +823,13 @@ class AcpDebugBridge(
             window.__respondPermission = window.__respondPermission || function(requestId, decision) {};
             window.__stopAgent = window.__stopAgent || function(chatId) {};
             window.__onHistoryReplay = window.__onHistoryReplay || function(payload) {};
-            
+            window.__onToolCall = window.__onToolCall || function(chatId, payload) {};
+            window.__onToolCallUpdate = window.__onToolCallUpdate || function(chatId, payload) {};
+            window.__onUndoResult = window.__onUndoResult || function(chatId, result) {};
+            window.__onChangesState = window.__onChangesState || function(chatId, state) {};
+
             window.__notifyReady = function() {
-                try { $readyInject } catch (e) { console.error('[UnifiedLLM] notifyReady error', e); }
+                try { $readyInject } catch (e) { }
             };
             window.__downloadAgent = window.__downloadAgent || function(id) {};
             window.__deleteAgent = window.__deleteAgent || function(id) {};
@@ -577,23 +841,11 @@ class AcpDebugBridge(
     }
 
     fun pushLogEntry(entry: AcpLogEntry) {
-        // Global logs don't have chatId yet.
         val payload = """{"direction":"${entry.direction}","json":${escapeJsonString(entry.json)},"timestamp":${entry.timestampMillis}}"""
         val escaped = payload.escapeForJsString()
-        val directionLabel = if (entry.direction == AcpLogEntry.Direction.SENT) "SENT" else "RECEIVED"
-        val jsonEscaped = entry.json.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                """
-                (function() {
-                    try {
-                        const jsonStr = `${jsonEscaped}`;
-                        const jsonObj = JSON.parse(jsonStr);
-                        console.log('[ACP $directionLabel]', jsonObj);
-                    } catch(e) { console.log('[ACP $directionLabel]', `${jsonEscaped}`); }
-                })();
-                if(window.__onAcpLog) window.__onAcpLog(JSON.parse('$escaped'));
-                """.trimIndent(),
+                "if(window.__onAcpLog) window.__onAcpLog(JSON.parse('$escaped'));",
                 browser.cefBrowser.url, 0
             )
         }
@@ -643,17 +895,15 @@ class AcpDebugBridge(
                 browser.cefBrowser.url, 0
             )
         }
-
     }
 
     fun pushPermissionRequest(request: PermissionRequest) {
-        // Simple JSON construction to avoid DSL issues if they persist
         val escapedDec = request.description.escapeForJsString()
         runOnEdt {
-             browser.cefBrowser.executeJavaScript(
+            browser.cefBrowser.executeJavaScript(
                 "if(window.__onPermissionRequest) window.__onPermissionRequest({ requestId: '${request.requestId}', chatId: '${request.chatId}', description: '$escapedDec' });",
                 browser.cefBrowser.url, 0
-            )           
+            )
         }
     }
 
@@ -670,6 +920,107 @@ class AcpDebugBridge(
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
                 "if(window.__onHistoryReplay) window.__onHistoryReplay({ chatId: '$id', role: '$escapedRole', content: $payload });",
+                browser.cefBrowser.url, 0
+            )
+        }
+    }
+
+    fun pushUndoResult(chatId: String, result: unified.llm.changes.UndoResult) {
+        val successStr = if (result.success) "true" else "false"
+        val msgEscaped = result.message.escapeForJsString()
+        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        runOnEdt {
+            browser.cefBrowser.executeJavaScript(
+                "if(window.__onUndoResult) window.__onUndoResult('$id', {success:$successStr,message:'$msgEscaped'});",
+                browser.cefBrowser.url, 0
+            )
+        }
+    }
+
+    /**
+     * When the agent modifies files in a live (non-replay) tool call, remove those paths from
+     * processedFiles so they show again in Edits. Only called when isReplay == false.
+     */
+    private fun removeProcessedFilesForDiffs(chatId: String, content: List<ToolCallContent>?) {
+        val sessionId = service.sessionId(chatId) ?: return
+        val adapterName = service.activeAdapterName(chatId) ?: return
+        val diffs = content?.filterIsInstance<ToolCallContent.Diff>() ?: return
+        if (diffs.isEmpty()) return
+        val paths = diffs.map { it.path }
+        ChangesStateService.removeProcessedFiles(sessionId, adapterName, paths)
+        val state = ChangesStateService.loadState(sessionId, adapterName) ?: ChangesState(sessionId, adapterName)
+        pushChangesState(chatId, state)
+    }
+
+    fun pushChangesState(chatId: String, state: ChangesState) {
+        val processedJson = state.processedFiles.joinToString(",") { escapeJsonString(it) }
+        val payload = """{"sessionId":${escapeJsonString(state.sessionId)},"adapterName":${escapeJsonString(state.adapterName)},"baseToolCallIndex":${state.baseToolCallIndex},"processedFiles":[$processedJson]}"""
+        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val escaped = payload.escapeForJsString()
+        runOnEdt {
+            browser.cefBrowser.executeJavaScript(
+                "if(window.__onChangesState) window.__onChangesState('$id', JSON.parse('$escaped'));",
+                browser.cefBrowser.url, 0
+            )
+        }
+    }
+
+    private fun buildToolCallPayload(
+        toolCallId: String,
+        title: String,
+        kind: String?,
+        status: String?,
+        content: List<ToolCallContent>?,
+        locations: List<ToolCallLocation>?
+    ): String? {
+        val diffs = content?.filterIsInstance<ToolCallContent.Diff>() ?: emptyList()
+        if (diffs.isEmpty()) return null
+
+        val diffsJson = diffs.joinToString(",") { diff ->
+            val oldTextPart = if (diff.oldText != null) escapeJsonString(diff.oldText!!) else "null"
+            """{"path":${escapeJsonString(diff.path)},"oldText":$oldTextPart,"newText":${escapeJsonString(diff.newText)}}"""
+        }
+        val locsJson = locations?.joinToString(",") { loc ->
+            val linePart = if (loc.line != null) ",\"line\":${loc.line}" else ""
+            """{"path":${escapeJsonString(loc.path)}$linePart}"""
+        } ?: ""
+        val kindPart = if (kind != null) ""","kind":${escapeJsonString(kind)}""" else ""
+        val statusPart = if (status != null) ""","status":${escapeJsonString(status)}""" else ""
+        return """{"toolCallId":${escapeJsonString(toolCallId)},"title":${escapeJsonString(title)}$kindPart$statusPart,"diffs":[$diffsJson],"locations":[$locsJson]}"""
+    }
+
+    fun pushToolCall(chatId: String, update: SessionUpdate.ToolCall) {
+        val payload = buildToolCallPayload(
+            update.toolCallId.value, update.title,
+            update.kind?.name?.lowercase(), update.status?.name?.lowercase(),
+            update.content, update.locations
+        ) ?: return
+        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val escaped = payload.escapeForJsString()
+        runOnEdt {
+            browser.cefBrowser.executeJavaScript(
+                "if(window.__onToolCall) window.__onToolCall('$id', JSON.parse('$escaped'));",
+                browser.cefBrowser.url, 0
+            )
+        }
+    }
+
+    fun pushToolCallUpdate(chatId: String, update: SessionUpdate.ToolCallUpdate) {
+        val payload = buildToolCallPayload(
+            update.toolCallId.value, update.title ?: "",
+            update.kind?.name?.lowercase(), update.status?.name?.lowercase(),
+            update.content, update.locations
+        ) ?: run {
+            // No diffs, but still send status-only update so frontend can track completion/failure
+            val statusName = update.status?.name?.lowercase() ?: return
+            val kindPart = if (update.kind != null) ""","kind":${escapeJsonString(update.kind!!.name.lowercase())}""" else ""
+            """{"toolCallId":${escapeJsonString(update.toolCallId.value)},"title":${escapeJsonString(update.title ?: "")}$kindPart,"status":${escapeJsonString(statusName)},"diffs":[],"locations":[]}"""
+        }
+        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val escaped = payload.escapeForJsString()
+        runOnEdt {
+            browser.cefBrowser.executeJavaScript(
+                "if(window.__onToolCallUpdate) window.__onToolCallUpdate('$id', JSON.parse('$escaped'));",
                 browser.cefBrowser.url, 0
             )
         }
@@ -727,8 +1078,8 @@ class AcpDebugBridge(
 
     private fun decorateQueryInject(injectCode: String, actionName: String): String {
         return injectCode
-            .replace("onSuccess: function(response) {}", "onSuccess: function(response) { console.debug('[UnifiedLLM] $actionName ok', response); }")
-            .replace("onFailure: function(error_code, error_message) {}", "onFailure: function(e, m) { console.error('[UnifiedLLM] $actionName failed', e, m); }")
+            .replace("onSuccess: function(response) {}", "onSuccess: function(response) {}")
+            .replace("onFailure: function(error_code, error_message) {}", "onFailure: function(e, m) {}")
     }
 
     private fun escapeJsonString(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\""

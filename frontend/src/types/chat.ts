@@ -82,6 +82,42 @@ export interface HistoryReplayChunk {
   content?: { type: 'text' | 'image'; text?: string; data?: string; mimeType?: string };
 }
 
+export interface ToolCallDiff {
+  path: string;
+  oldText: string | null;
+  newText: string;
+}
+
+export interface ToolCallEvent {
+  toolCallId: string;
+  title: string;
+  kind?: string;
+  status?: string;
+  diffs: ToolCallDiff[];
+  locations?: { path: string; line?: number }[];
+}
+
+export interface FileChangeSummary {
+  filePath: string;
+  fileName: string;
+  status: 'A' | 'M';
+  additions: number;
+  deletions: number;
+  operations: { oldText: string; newText: string }[];
+}
+
+export interface ChangesState {
+  sessionId: string;
+  adapterName: string;
+  baseToolCallIndex: number;
+  processedFiles: string[];
+}
+
+export interface UndoResultPayload {
+  success: boolean;
+  message: string;
+}
+
 declare global {
   interface Window {
     // Actions (Frontend -> Backend)
@@ -102,9 +138,16 @@ declare global {
     __loadHistorySession?: (chatId: string, adapterId: string, sessionId: string, modelId?: string, modeId?: string) => void;
     __loginAgent?: (adapterId: string) => void;
     __logoutAgent?: (adapterId: string) => void;
+    __undoFile?: (payload: string) => void;
+    __undoAllFiles?: (payload: string) => void;
+    __processFile?: (payload: string) => void;
+    __keepAll?: (payload: string) => void;
+    __removeProcessedFiles?: (payload: string) => void;
+    __getChangesState?: (payload: string) => void;
+    __showDiff?: (payload: string) => void;
+    __openFile?: (payload: string) => void;
 
     // Callbacks (Backend -> Frontend)
-    // Note: These are set by the frontend on window.
     __onAcpLog?: (payload: AcpLogEntryPayload) => void;
     __onAgentText?: (chatId: string, text: string) => void;
     __onStatus?: (chatId: string, status: string) => void;
@@ -114,5 +157,9 @@ declare global {
     __onPermissionRequest?: (request: PermissionRequest) => void;
     __onHistoryList?: (list: HistorySessionMeta[]) => void;
     __onHistoryReplay?: (payload: HistoryReplayChunk) => void;
+    __onToolCall?: (chatId: string, payload: ToolCallEvent) => void;
+    __onToolCallUpdate?: (chatId: string, payload: ToolCallEvent) => void;
+    __onUndoResult?: (chatId: string, result: UndoResultPayload) => void;
+    __onChangesState?: (chatId: string, state: ChangesState) => void;
   }
 }

@@ -28,6 +28,7 @@ export function useChatSession(
   const [selectedModeByAgent, setSelectedModeByAgent] = useState<Record<string, string>>({});
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [attachments, setAttachments] = useState<{ id: string; data: string; mimeType: string }[]>([]);
+  const [acpSessionId, setAcpSessionId] = useState<string>('');
 
   const currentAgentMessageRef = useRef<string>('');
   const pendingMessageRef = useRef<string | null>(null);
@@ -97,6 +98,9 @@ export function useChatSession(
         ...prev,
         [historySession.adapterName]: historySession.modeId as string
       }));
+    }
+    if (historySession.sessionId) {
+      setAcpSessionId(historySession.sessionId);
     }
   }, [historySession]);
 
@@ -193,12 +197,11 @@ export function useChatSession(
 
     const unsubSessionId = ACPBridge.onSessionId((e) => {
       if (e.detail.chatId !== chatId) return;
-      console.debug('[useChatSession] Session ID for', chatId, ':', e.detail.sessionId);
+      setAcpSessionId(e.detail.sessionId);
     });
 
     const unsubMode = ACPBridge.onMode((e) => {
       if (e.detail.chatId !== chatId) return;
-      console.debug('[useChatSession] Backend mode for', chatId, ':', e.detail.modeId);
       startedModeIdRef.current = e.detail.modeId;
     });
     
@@ -306,7 +309,6 @@ export function useChatSession(
     
     try {
       if (!selectedAgent?.downloaded || !selectedAgent?.authAuthenticated) {
-        console.debug('[useChatSession] Skipping auto-start: not ready or not authenticated');
         return;
       }
 
@@ -314,7 +316,6 @@ export function useChatSession(
       startedModelIdRef.current = modelId || '';
       startedModeIdRef.current = '';
       
-      console.debug('[useChatSession] Auto-starting agent:', selectedAgentId, 'for chat:', chatId);
       window.__startAgent(chatId, selectedAgentId, modelId || undefined);
     } catch (e) {
       console.warn('[useChatSession] Failed to auto-start agent:', e);
@@ -327,15 +328,12 @@ export function useChatSession(
     if (status !== 'ready') return;
     if (startedAgentIdRef.current !== selectedAgentId) return;
     
-    // Crucial: check against backend value before triggering anything
     if (startedModelIdRef.current === selectedModelId) {
-      console.debug('[useChatSession] Model already matches backend:', selectedModelId);
       return;
     }
     
     if (typeof window.__setModel !== 'function') return;
     try {
-      console.debug('[useChatSession] Changing model:', startedModelIdRef.current, '->', selectedModelId);
       window.__setModel(chatId, selectedModelId);
       startedModelIdRef.current = selectedModelId;
     } catch (e) {
@@ -350,13 +348,11 @@ export function useChatSession(
     if (startedAgentIdRef.current !== selectedAgentId) return;
     
     if (startedModeIdRef.current === selectedModeId) {
-      console.debug('[useChatSession] Mode already matches backend:', selectedModeId);
       return;
     }
     
     if (typeof window.__setMode !== 'function') return;
     try {
-      console.debug('[useChatSession] Changing mode:', startedModeIdRef.current, '->', selectedModeId);
       window.__setMode(chatId, selectedModeId);
       startedModeIdRef.current = selectedModeId;
     } catch (e) {
@@ -490,6 +486,8 @@ export function useChatSession(
     handlePermissionDecision,
     hasSelectedAgent: !!selectedAgent,
     attachments,
-    setAttachments
+    setAttachments,
+    acpSessionId,
+    adapterName: selectedAgentId
   };
 }

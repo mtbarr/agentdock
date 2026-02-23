@@ -1,4 +1,4 @@
-import { AgentOption, PermissionRequest, HistorySessionMeta, HistoryReplayChunk } from '../types/chat';
+import { AgentOption, PermissionRequest, HistorySessionMeta, HistoryReplayChunk, ToolCallEvent, UndoResultPayload, ChangesState } from '../types/chat';
 
 export interface AgentTextEvent { chatId: string; text: string; }
 export interface StatusEvent { chatId: string; status: string; }
@@ -8,6 +8,9 @@ export interface AdaptersEvent { adapters: AgentOption[]; }
 export interface PermissionRequestEvent { request: PermissionRequest; }
 export interface HistoryListEvent { list: HistorySessionMeta[]; }
 export interface HistoryReplayEvent extends HistoryReplayChunk {}
+export interface ToolCallBridgeEvent { chatId: string; payload: ToolCallEvent; }
+export interface UndoResultEvent { chatId: string; result: UndoResultPayload; }
+export interface ChangesStateEvent { chatId: string; state: ChangesState; }
 
 const EVENT_NAMES = {
   AGENT_TEXT: 'acp-agent-text',
@@ -18,7 +21,11 @@ const EVENT_NAMES = {
   PERMISSION: 'acp-permission',
   LOG: 'acp-log',
   HISTORY_LIST: 'history-list',
-  HISTORY_REPLAY: 'history-replay'
+  HISTORY_REPLAY: 'history-replay',
+  TOOL_CALL: 'acp-tool-call',
+  TOOL_CALL_UPDATE: 'acp-tool-call-update',
+  UNDO_RESULT: 'acp-undo-result',
+  CHANGES_STATE: 'acp-changes-state'
 };
 
 export const ACPBridge = {
@@ -50,6 +57,7 @@ export const ACPBridge = {
     };
     
     window.__onAcpLog = (payload) => {
+      console.log('[ACP]', payload.direction, JSON.parse(payload.json));
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.LOG, { detail: payload }));
     };
 
@@ -59,6 +67,22 @@ export const ACPBridge = {
     
     window.__onHistoryReplay = (payload) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.HISTORY_REPLAY, { detail: payload }));
+    };
+
+    window.__onToolCall = (chatId, payload) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.TOOL_CALL, { detail: { chatId, payload } }));
+    };
+
+    window.__onToolCallUpdate = (chatId, payload) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.TOOL_CALL_UPDATE, { detail: { chatId, payload } }));
+    };
+
+    window.__onUndoResult = (chatId, result) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.UNDO_RESULT, { detail: { chatId, result } }));
+    };
+
+    window.__onChangesState = (chatId, state) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.CHANGES_STATE, { detail: { chatId, state } }));
     };
 
     // Notify ready
@@ -120,5 +144,25 @@ export const ACPBridge = {
 
   deleteHistorySession: (meta: HistorySessionMeta) => {
     window.__deleteHistorySession?.(meta);
+  },
+
+  onToolCall: (callback: (e: CustomEvent<ToolCallBridgeEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.TOOL_CALL, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.TOOL_CALL, callback as EventListener);
+  },
+
+  onToolCallUpdate: (callback: (e: CustomEvent<ToolCallBridgeEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.TOOL_CALL_UPDATE, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.TOOL_CALL_UPDATE, callback as EventListener);
+  },
+
+  onUndoResult: (callback: (e: CustomEvent<UndoResultEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.UNDO_RESULT, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.UNDO_RESULT, callback as EventListener);
+  },
+
+  onChangesState: (callback: (e: CustomEvent<ChangesStateEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.CHANGES_STATE, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.CHANGES_STATE, callback as EventListener);
   }
 };

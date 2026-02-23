@@ -15,7 +15,7 @@ function App() {
     };
 
     window.setView = handleSetView;
-    console.log("UnifiedLLM Frontend Ready");
+
 
     return () => {
       delete window.setView;

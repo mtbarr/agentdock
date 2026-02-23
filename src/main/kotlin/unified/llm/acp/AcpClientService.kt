@@ -81,11 +81,13 @@ class AcpClientService(val project: Project) {
     }
     
     @Volatile
-    private var sessionUpdateHandler: ((String, SessionUpdate) -> Unit)? = null
+    private var sessionUpdateHandler: ((String, SessionUpdate, Boolean) -> Unit)? = null
 
-    fun setOnSessionUpdate(handler: (String, SessionUpdate) -> Unit) {
+    fun setOnSessionUpdate(handler: (String, SessionUpdate, Boolean) -> Unit) {
         sessionUpdateHandler = handler
     }
+
+    fun activeAdapterName(chatId: String): String? = sessions[chatId]?.activeAdapterNameRef?.get()
 
     enum class Status { NotStarted, Initializing, Ready, Prompting, Error }
 
@@ -462,6 +464,10 @@ class AcpClientService(val project: Project) {
                                 emit(AcpEvent.AgentText(content.text))
                             }
                         }
+                        // Forward ToolCall/ToolCallUpdate to bridge (isReplay = false: we are in Prompting)
+                        if (update is SessionUpdate.ToolCall || update is SessionUpdate.ToolCallUpdate) {
+                            sessionUpdateHandler?.invoke(chatId, update, false)
+                        }
                     }
                     is Event.PromptResponseEvent -> {
                         emit(AcpEvent.PromptDone(event.response.stopReason.toString()))
@@ -694,7 +700,10 @@ class AcpClientService(val project: Project) {
             if (notification is SessionUpdate.CurrentModeUpdate) {
                 context.activeModeIdRef.set(notification.currentModeId.value)
             }
-            sessionUpdateHandler?.invoke(chatId, notification)
+            // Replay updates are processed async after loadSession() returns (status already Ready).
+            // Only treat as live (remove from processedFiles) when we are in Prompting.
+            val isReplay = context.statusRef.get() != Status.Prompting
+            sessionUpdateHandler?.invoke(chatId, notification, isReplay)
         }
     }
 }
