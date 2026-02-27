@@ -63,6 +63,8 @@ object ThemeColors {
             
             // Other Components
             "TabbedPane.background", "TabbedPane.selectedBackground", "TabbedPane.focusColor",
+            "ProgressBar.trackColor", "ProgressBar.progressColor", "ProgressBar.passedColor", "ProgressBar.failedColor",
+            "Tests.passedColor", "Tests.failedColor", "Tests.errorColor",
             "ScrollBar.trackColor", "ScrollBar.thumbColor", "ToolTip.background", "ToolTip.foreground"
         )
 

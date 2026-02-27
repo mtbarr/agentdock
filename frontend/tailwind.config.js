@@ -32,6 +32,7 @@ export default {
         ring: 'var(--ring)',
         error: 'var(--error)',
         warning: 'var(--warning)',
+        success: 'var(--success)',
         editor: {
           bg: 'var(--editor-bg)',
           fg: 'var(--editor-fg)',

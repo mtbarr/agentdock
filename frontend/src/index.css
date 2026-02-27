@@ -57,8 +57,9 @@
     --border: var(--ide-Borders-color);
     --input: var(--ide-TextField-background);
     --ring: var(--ide-Button-default-focusColor);
-    --error: var(--ide-Notification-errorForeground, #ff5252);
+    --error: #f85149;
     --warning: var(--ide-Notification-warningForeground, #ffb000);
+    --success: #1ea446;
     
     /* Editor Styles */
     --editor-bg: var(--ide-editor-bg);
