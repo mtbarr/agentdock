@@ -5,10 +5,16 @@ import { ContentBlockRenderer } from './blocks/ContentBlockRenderer';
 
 export default function MessageList({ 
   messages,
-  onImageClick
+  onImageClick,
+  isSending,
+  status,
+  agentName
 }: { 
   messages: Message[],
-  onImageClick: (src: string) => void
+  onImageClick: (src: string) => void,
+  isSending?: boolean,
+  status?: string,
+  agentName?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -76,13 +82,7 @@ export default function MessageList({
           ) : (
             <div className="whitespace-pre-wrap">{message.content}</div>
           )
-        ) : (
-          <div className="flex gap-1 py-1">
-            <div className="w-1.5 h-1.5 bg-foreground/30 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-            <div className="w-1.5 h-1.5 bg-foreground/30 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-            <div className="w-1.5 h-1.5 bg-foreground/30 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-          </div>
-        )}
+        ) : null}
       </div>
     );
   };
@@ -113,6 +113,25 @@ export default function MessageList({
             </div>
           </div>
         ))}
+
+        {isSending && (
+          <div className="flex justify-start mb-8 animate-in fade-in slide-in-from-bottom-1 duration-200">
+            <div className="w-full text-foreground">
+              {status === 'initializing' ? (
+                <div className="animate-pulse text-foreground opacity-40 italic text-sm">
+                  Connecting to {agentName || 'agent'}...
+                </div>
+              ) : (
+                <div className="flex gap-1 items-center h-4 text-foreground opacity-30">
+                  <div className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
     </div>

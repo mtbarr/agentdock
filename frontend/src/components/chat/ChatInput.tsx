@@ -7,7 +7,6 @@ interface ChatInputProps {
   onSend: () => void;
   onStop: () => void;
   isSending: boolean;
-  status: string;
   
   agentOptions: DropdownOption[];
   selectedAgentId: string;
@@ -34,7 +33,6 @@ export default function ChatInput({
   onSend,
   onStop,
   isSending,
-  status,
   agentOptions,
   selectedAgentId,
   onAgentChange,
@@ -182,11 +180,6 @@ export default function ChatInput({
               />
 
               <div className="flex items-center gap-2">
-                {status !== 'ready' && status !== 'not started' && (
-                  <span className="text-[10px] uppercase tracking-tighter text-foreground/40 font-bold">
-                    {status}
-                  </span>
-                )}
                 {isSending ? (
                   <button
                     type="button"

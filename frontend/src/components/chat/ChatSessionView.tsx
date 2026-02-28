@@ -46,7 +46,8 @@ export default function ChatSessionView({
     attachments,
     setAttachments,
     acpSessionId,
-    adapterName
+    adapterName,
+    adapterDisplayName
   } = useChatSession(chatId, availableAgents, initialAgentId, historySession);
 
   const {
@@ -79,7 +80,13 @@ export default function ChatSessionView({
 
   return (
     <div className="flex flex-col h-full relative">
-      <MessageList messages={messages} onImageClick={setSelectedImage} />
+      <MessageList 
+        messages={messages} 
+        onImageClick={setSelectedImage} 
+        isSending={isSending}
+        status={status}
+        agentName={adapterDisplayName}
+      />
 
       <FileChangesPanel
         fileChanges={fileChanges}
@@ -99,7 +106,6 @@ export default function ChatSessionView({
         onSend={handleSend}
         onStop={handleStop}
         isSending={isSending}
-        status={status}
         
         agentOptions={agentOptions}
         selectedAgentId={selectedAgentId}
@@ -123,16 +129,6 @@ export default function ChatSessionView({
         onImageClick={setSelectedImage}
       />
 
-      {status === 'initializing' && (
-        <div className="absolute inset-0 z-50 bg-background/80 backdrop-blur-sm flex flex-col items-center justify-center animate-in fade-in duration-300">
-           <div className="flex flex-col items-center gap-4 p-8 bg-surface border border-border shadow-2xl rounded-2xl max-w-sm text-center">
-              <div className="w-10 h-10 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
-              <div>
-                <h3 className="text-lg font-bold text-foreground">Connecting to agent</h3>
-              </div>
-           </div>
-        </div>
-      )}
 
       {permissionRequest && isActive && (
         <PermissionModal 

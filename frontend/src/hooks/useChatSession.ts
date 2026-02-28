@@ -282,8 +282,7 @@ export function useChatSession(
   const [attachments, setAttachments] = useState<{ id: string; data: string; mimeType: string }[]>([]);
   const [acpSessionId, setAcpSessionId] = useState<string>('');
 
-  const pendingMessageRef = useRef<string | null>(null);
-  const pendingModeIdRef = useRef<string | null>(null);
+  const pendingBlocksRef = useRef<any[] | null>(null);
   const startedAgentIdRef = useRef<string>('');
   const startedModelIdRef = useRef<string>('');
   const startedModeIdRef = useRef<string>('');
@@ -395,7 +394,7 @@ export function useChatSession(
       setStatus(s);
 
       if (s === 'initializing') {
-        setIsSending(true);
+        // We don't set isSending(true) here anymore to avoid blocking the user
       }
 
       if (s === 'ready') {
@@ -413,46 +412,22 @@ export function useChatSession(
           setMessages(prev => closeAllStreamingThinking(prev));
         }
 
-        if (!pendingMessageRef.current) {
+        if (!pendingBlocksRef.current) {
           setIsSending(false);
         }
       }
 
-      if (s === 'ready' && pendingMessageRef.current && typeof window.__sendPrompt === 'function') {
-        const messageToSend = pendingMessageRef.current;
-        pendingMessageRef.current = null;
-
-        const desiredMode = pendingModeIdRef.current;
-        pendingModeIdRef.current = null;
-        if (desiredMode && desiredMode !== startedModeIdRef.current && typeof window.__setMode === 'function') {
-          window.__setMode(chatId, desiredMode);
-          startedModeIdRef.current = desiredMode;
-        }
+      if (s === 'ready' && pendingBlocksRef.current && typeof window.__sendPrompt === 'function') {
+        const blocksToSend = pendingBlocksRef.current;
+        pendingBlocksRef.current = null;
 
         setIsSending(true);
-        const userMessage: Message = {
-          id: nextMessageId('user'),
-          role: 'user',
-          content: messageToSend,
-          timestamp: Date.now(),
-        };
-        setMessages((prev) => [...prev, userMessage]);
-
-        chunkBufferRef.current = [];
-
-        const assistantMessage: Message = {
-          id: nextMessageId('assistant'),
-          role: 'assistant',
-          content: '',
-          contentBlocks: [],
-          timestamp: Date.now(),
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
-
+        
+        // Assistant message is already added in handleSend, we just need to trigger the actual send
         try {
-          window.__sendPrompt(chatId, JSON.stringify([{ type: 'text', text: messageToSend }]));
+          window.__sendPrompt(chatId, JSON.stringify(blocksToSend));
         } catch (err) {
-          console.warn('[useChatSession] Failed to send pending prompt:', err);
+          console.warn('[useChatSession] Failed to send pending blocks:', err);
           setIsSending(false);
         }
       }
@@ -491,9 +466,10 @@ export function useChatSession(
     historyLoadRequestedRef.current = historySession.sessionId;
 
     chunkBufferRef.current = [];
-    pendingMessageRef.current = null;
+    pendingBlocksRef.current = null;
     setMessages([]);
     setStatus('initializing');
+    setIsSending(true); // Replay is a special case of "sending"
 
     startedAgentIdRef.current = historySession.adapterName;
     startedModelIdRef.current = historySession.modelId || '';
@@ -582,7 +558,7 @@ export function useChatSession(
 
   const handleSend = () => {
     const text = inputValue.trim();
-    if ((!text && attachments.length === 0) || isSending || status !== 'ready') return;
+    if ((!text && attachments.length === 0) || isSending || (status !== 'ready' && status !== 'initializing')) return;
 
     if (typeof window.__sendPrompt !== 'function') return;
 
@@ -631,8 +607,6 @@ export function useChatSession(
     setMessages((prev) => [...prev, userMessage]);
     setInputValue('');
     setAttachments([]);
-    chunkBufferRef.current = [];
-
     const assistantMessage: Message = {
       id: nextMessageId('assistant'),
       role: 'assistant',
@@ -641,6 +615,12 @@ export function useChatSession(
       timestamp: Date.now(),
     };
     setMessages((prev) => [...prev, assistantMessage]);
+
+    if (status !== 'ready') {
+      // Queue it up
+      pendingBlocksRef.current = blocks;
+      return;
+    }
 
     try {
       window.__sendPrompt(chatId, JSON.stringify(blocks));
@@ -705,7 +685,8 @@ export function useChatSession(
     attachments,
     setAttachments,
     acpSessionId,
-    adapterName: selectedAgentId
+    adapterName: selectedAgentId,
+    adapterDisplayName: selectedAgent?.displayName || ''
   };
 }
 
