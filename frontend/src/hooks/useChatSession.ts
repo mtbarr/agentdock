@@ -121,6 +121,10 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
     }
   } else if (chunk.type === 'image') {
     blocks.push({ type: 'image', data: chunk.data!, mimeType: chunk.mimeType! } as any);
+  } else if (chunk.type === 'audio') {
+    blocks.push({ type: 'audio', data: chunk.data!, mimeType: chunk.mimeType! } as any);
+  } else if (chunk.type === 'video') {
+    blocks.push({ type: 'video', data: chunk.data!, mimeType: chunk.mimeType! } as any);
   } else if (chunk.type === 'tool_call') {
     handleToolCall(blocks, lastBlock, chunk);
   } else if (chunk.type === 'tool_call_update') {
@@ -153,6 +157,10 @@ function buildBlock(chunk: ContentChunk): RichContentBlock {
       };
     case 'image':
       return { type: 'image', data: chunk.data!, mimeType: chunk.mimeType! } as any;
+    case 'audio':
+      return { type: 'audio', data: chunk.data!, mimeType: chunk.mimeType! } as any;
+    case 'video':
+      return { type: 'video', data: chunk.data!, mimeType: chunk.mimeType! } as any;
     case 'tool_call': {
       const entry = buildToolCallEntry(chunk);
       if (!EXPLORING_KINDS.has(chunk.toolKind || '')) {

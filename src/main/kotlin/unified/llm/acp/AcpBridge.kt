@@ -941,7 +941,22 @@ class AcpBridge(
             is ContentBlock.Image -> {
                 pushContentChunk(chatId, role, "image", data = content.data, mimeType = content.mimeType, isReplay = isReplay)
             }
-            else -> {} // Unsupported content types silently ignored
+            is ContentBlock.Audio -> {
+                pushContentChunk(chatId, role, "audio", data = content.data, mimeType = content.mimeType, isReplay = isReplay)
+            }
+            else -> {
+                try {
+                    val json = Json.encodeToJsonElement(content).jsonObject
+                    val type = json["type"]?.jsonPrimitive?.content ?: ""
+                    if (type == "video") {
+                        val data = json["data"]?.jsonPrimitive?.content ?: ""
+                        val mimeType = json["mimeType"]?.jsonPrimitive?.content ?: ""
+                        pushContentChunk(chatId, role, "video", data = data, mimeType = mimeType, isReplay = isReplay)
+                    }
+                } catch (e: Exception) {
+                    // Unsupported content types silently ignored
+                }
+            }
         }
     }
 
@@ -1258,6 +1273,11 @@ class AcpBridge(
                             val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "image/png"
                             ContentBlock.Image(data, mimeType)
                         }
+                        "audio" -> {
+                            val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
+                            val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "audio/wav"
+                            ContentBlock.Audio(data, mimeType)
+                        }
                         else -> {
                             val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
                             ContentBlock.Text(text)
@@ -1281,6 +1301,11 @@ class AcpBridge(
                                 val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
                                 val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "image/png"
                                 ContentBlock.Image(data, mimeType)
+                            }
+                            "audio" -> {
+                                val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
+                                val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "audio/wav"
+                                ContentBlock.Audio(data, mimeType)
                             }
                             else -> {
                                 val text = blockObj["text"]?.jsonPrimitive?.content ?: ""

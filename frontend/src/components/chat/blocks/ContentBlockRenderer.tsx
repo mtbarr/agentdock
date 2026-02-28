@@ -56,6 +56,26 @@ export const ContentBlockRenderer: React.FC<Props> = ({ block }) => {
           />
         </div>
       );
+    case 'audio':
+      return (
+        <div className="my-2 rounded-lg overflow-hidden border border-[var(--ide-Borders-color)] shadow-sm max-w-md">
+          <audio
+            controls
+            src={block.data.startsWith('data:') ? block.data : `data:${block.mimeType};base64,${block.data}`}
+            className="w-full"
+          />
+        </div>
+      );
+    case 'video':
+      return (
+        <div className="my-2 rounded-lg overflow-hidden border border-[var(--ide-Borders-color)] shadow-sm max-w-md">
+          <video
+            controls
+            src={block.data.startsWith('data:') ? block.data : `data:${block.mimeType};base64,${block.data}`}
+            className="w-full h-auto"
+          />
+        </div>
+      );
     default:
       return null;
   }

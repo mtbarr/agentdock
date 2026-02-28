@@ -6,6 +6,8 @@ export interface AcpLogEntryPayload {
 
 export interface TextBlock { type: 'text'; text: string; }
 export interface ImageBlock { type: 'image'; data: string; mimeType: string; }
+export interface AudioBlock { type: 'audio'; data: string; mimeType: string; }
+export interface VideoBlock { type: 'video'; data: string; mimeType: string; }
 
 export interface ToolCallEntry {
   toolCallId: string;
@@ -29,7 +31,7 @@ export interface PlanEntry {
 
 export interface PlanBlock { type: 'plan'; entries: PlanEntry[]; isReplay?: boolean; }
 
-export type RichContentBlock = TextBlock | ImageBlock | ExploringBlock | ToolCallBlock | PlanBlock;
+export type RichContentBlock = TextBlock | ImageBlock | AudioBlock | VideoBlock | ExploringBlock | ToolCallBlock | PlanBlock;
 
 
 
@@ -107,7 +109,7 @@ export interface HistorySessionMeta {
 export interface ContentChunk {
   chatId: string;
   role: 'user' | 'assistant';
-  type: 'text' | 'thinking' | 'image' | 'tool_call' | 'tool_call_update' | 'plan';
+  type: 'text' | 'thinking' | 'image' | 'audio' | 'video' | 'tool_call' | 'tool_call_update' | 'plan';
   text?: string;
   data?: string;
   mimeType?: string;
