@@ -21,8 +21,15 @@ export interface ToolCallEntry {
 }
 export interface ExploringBlock { type: 'exploring'; isStreaming: boolean; isReplay?: boolean; entries: ToolCallEntry[]; }
 export interface ToolCallBlock { type: 'tool_call'; entry: ToolCallEntry; isReplay?: boolean; }
+export interface PlanEntry {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'failed';
+  priority?: string;
+}
 
-export type RichContentBlock = TextBlock | ImageBlock | ExploringBlock | ToolCallBlock;
+export interface PlanBlock { type: 'plan'; entries: PlanEntry[]; isReplay?: boolean; }
+
+export type RichContentBlock = TextBlock | ImageBlock | ExploringBlock | ToolCallBlock | PlanBlock;
 
 
 
@@ -100,7 +107,7 @@ export interface HistorySessionMeta {
 export interface ContentChunk {
   chatId: string;
   role: 'user' | 'assistant';
-  type: 'text' | 'thinking' | 'image' | 'tool_call' | 'tool_call_update';
+  type: 'text' | 'thinking' | 'image' | 'tool_call' | 'tool_call_update' | 'plan';
   text?: string;
   data?: string;
   mimeType?: string;
@@ -111,6 +118,7 @@ export interface ContentChunk {
   toolTitle?: string;
   toolStatus?: string;
   toolRawJson?: string;
+  planEntries?: PlanEntry[];
 }
 
 

@@ -125,6 +125,9 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
     handleToolCall(blocks, lastBlock, chunk);
   } else if (chunk.type === 'tool_call_update') {
     handleToolCallUpdate(blocks, chunk);
+  } else if (chunk.type === 'plan') {
+    closeStreamingExploring(blocks);
+    blocks.push({ type: 'plan', entries: chunk.planEntries || [], isReplay: chunk.isReplay });
   }
 
   // Final rebuild
@@ -157,6 +160,8 @@ function buildBlock(chunk: ContentChunk): RichContentBlock {
       }
       return { type: 'exploring', isStreaming: !chunk.isReplay, isReplay: chunk.isReplay, entries: [entry] } as ExploringBlock;
     }
+    case 'plan':
+      return { type: 'plan', entries: chunk.planEntries || [], isReplay: chunk.isReplay };
     case 'text':
     default:
       return { type: 'text', text: chunk.text || '' };

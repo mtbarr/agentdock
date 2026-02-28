@@ -6,6 +6,7 @@ import { ExecuteBlock } from './ExecuteBlock';
 import { SubAgentBlock } from './SubAgentBlock';
 import { SimpleActivityBlock } from './SimpleActivityBlock';
 import { EditBlock } from './EditBlock';
+import { PlanBlockComponent } from './PlanBlock';
 import { MarkdownMessage } from '../MarkdownMessage';
 
 interface Props {
@@ -43,6 +44,8 @@ export const ContentBlockRenderer: React.FC<Props> = ({ block }) => {
           </div>
         </div>
       );
+    case 'plan':
+      return <PlanBlockComponent block={block} />;
     case 'image':
       return (
         <div className="my-2 rounded-lg overflow-hidden border border-[var(--ide-Borders-color)] shadow-sm max-w-sm">

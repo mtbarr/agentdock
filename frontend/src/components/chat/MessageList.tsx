@@ -103,7 +103,7 @@ export default function MessageList({
             <div className={`
               rounded-lg 
               ${message.role === 'user' 
-                ? 'max-w-[85%] bg-[var(--ide-editor-bg)] p-4 border border-[var(--ide-Borders-color)] ml-auto text-foreground shadow-sm' 
+                ? 'max-w-[85%] bg-[var(--ide-editor-bg)] p-4 border border-[var(--ide-Borders-color)] ml-auto text-foreground shadow-sm'
                 : 'w-full text-foreground'
               }
             `}>

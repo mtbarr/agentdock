@@ -475,11 +475,9 @@ class AcpClientService(val project: Project) {
                                 emit(AcpEvent.AgentThought(content.text))
                             }
                         }
-                        // Forward ToolCall/ToolCallUpdate and Plan to bridge (isReplay = false: we are in Prompting)
-                        if (update is SessionUpdate.ToolCall || update is SessionUpdate.ToolCallUpdate || update.javaClass.simpleName == "Plan") {
-                            // Only pass _meta if the event type supports it. For now, we'll try to access it if possible 
-                            // or pass null if Event.SessionUpdateEvent doesn't have it.
-                            // Assuming Event.SessionUpdateEvent does NOT have _meta based on errors.
+                        // Forward everything else to bridge (ToolCall, ToolCallUpdate, Plan, etc.)
+                        val isHandled = update is SessionUpdate.AgentMessageChunk || update is SessionUpdate.AgentThoughtChunk
+                        if (!isHandled) {
                             sessionUpdateHandler?.invoke(chatId, update, false, null)
                         }
                     }

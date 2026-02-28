@@ -135,7 +135,13 @@ class AcpBridge(
                     val json = try { Json.encodeToString(update) } catch (_: Exception) { update.toString() }
                     pushToolCallUpdateChunk(chatId, update.toolCallId.value, json, isReplay)
                 }
-                else -> {}
+                else -> {
+                    if (isPlanUpdate(update, _meta)) {
+                        pushPlanChunk(chatId, update, isReplay, _meta)
+                    } else {
+                        log.debug("[$chatId] Unknown session update received: ${update.javaClass.simpleName}")
+                    }
+                }
             }
         }
 
@@ -974,6 +980,62 @@ class AcpBridge(
         parts.add("\"toolCallId\":${escapeJsonString(toolCallId)}")
         parts.add("\"toolRawJson\":${escapeJsonString(rawJson)}")
         val json = "{${parts.joinToString(",")}}"
+        runOnEdt {
+            browser.cefBrowser.executeJavaScript(
+                "if(window.__onContentChunk) window.__onContentChunk($json);",
+                browser.cefBrowser.url, 0
+            )
+        }
+    }
+
+
+    private fun isPlanUpdate(update: SessionUpdate, _meta: JsonElement?): Boolean {
+        // Check via raw JSON-RPC metadata (available during replay)
+        if (_meta is JsonObject) {
+            val updateObj = _meta["update"]?.jsonObject ?: _meta
+            if (updateObj["sessionUpdate"]?.jsonPrimitive?.contentOrNull == "plan") return true
+        }
+        // Check via serialized update object (available during prompting)
+        return try {
+            val parsed = Json.parseToJsonElement(Json.encodeToString(update)).jsonObject
+            parsed["sessionUpdate"]?.jsonPrimitive?.contentOrNull == "plan"
+        } catch (_: Exception) { false }
+    }
+
+    private fun extractPlanEntries(plan: SessionUpdate, _meta: JsonElement?): JsonArray? {
+        // 1. Try _meta (raw JSON-RPC params, available during replay)
+        if (_meta is JsonObject) {
+            val updateObj = _meta["update"]?.jsonObject ?: _meta
+            updateObj["entries"]?.jsonArray?.let { return it }
+        }
+        // 2. Fallback: serialize the plan object (during prompting, _meta is null)
+        return try {
+            Json.parseToJsonElement(Json.encodeToString(plan)).jsonObject["entries"]?.jsonArray
+        } catch (_: Exception) { null }
+    }
+
+    fun pushPlanChunk(chatId: String, plan: SessionUpdate, isReplay: Boolean = false, _meta: JsonElement? = null) {
+        val entries = try {
+            extractPlanEntries(plan, _meta)
+        } catch (e: Exception) {
+            log.warn("[$chatId] Failed to extract plan entries", e)
+            null
+        }
+
+        if (entries == null || entries.isEmpty()) {
+            log.info("[$chatId] Plan update skipped: no entries found.")
+            return
+        }
+
+        val chunk = buildJsonObject {
+            put("chatId", chatId)
+            put("role", "assistant")
+            put("type", "plan")
+            put("isReplay", isReplay)
+            put("planEntries", entries)
+        }
+
+        val json = chunk.toString()
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
                 "if(window.__onContentChunk) window.__onContentChunk($json);",
