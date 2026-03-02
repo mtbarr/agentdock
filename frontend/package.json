@@ -9,8 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@lexical/react": "^0.41.0",
     "diff-match-patch": "^1.0.5",
     "highlight.js": "^11.11.1",
+    "lexical": "^0.41.0",
     "lucide-react": "^0.575.0",
     "marked": "^17.0.3",
     "marked-highlight": "^2.2.3",
