@@ -42,7 +42,7 @@ export default function ChatDropdown({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((prev) => !prev)}
-        className="flex items-center gap-1.5 py-1 px-2 rounded  text-foreground/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
+        className="flex items-center gap-1.5 py-1 px-2 rounded  text-foreground opacity-80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
       >
         <span className="truncate max-w-[150px]">{selectedLabel}</span>
         <svg
@@ -68,7 +68,7 @@ export default function ChatDropdown({
           }`}
         >
           {header && (
-            <div className="px-3 py-1.5 font-medium text-foreground/40 border-b border-border/50 text-center uppercase tracking-wider">
+            <div className="px-3 py-1.5 font-medium text-foreground-secondary opacity-50 border-b border-border opacity-50 text-center uppercase tracking-wider">
               {header}
             </div>
           )}
@@ -83,7 +83,7 @@ export default function ChatDropdown({
                     setOpen(false);
                   }}
                   className={`flex items-center w-full px-3 py-1.5 text-left transition-colors  group ${
-                    option.id === value ? 'bg-accent text-foreground font-medium' : 'text-foreground/80'
+                    option.id === value ? 'bg-accent text-foreground font-medium' : 'text-foreground opacity-80'
                   }`}
                 >
                   <span className="w-5 flex-shrink-0">
@@ -97,9 +97,7 @@ export default function ChatDropdown({
                 </button>
               ))
             ) : (
-              <div className="px-3 py-2 text-foreground/40 italic text-center">
-                {placeholder}
-              </div>
+              <div className="px-3 py-2 text-foreground-secondary opacity-50 italic text-center">No options availables</div>
             )}
           </div>
         </div>

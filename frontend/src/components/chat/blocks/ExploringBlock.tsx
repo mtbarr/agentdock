@@ -5,6 +5,7 @@ import { ReadActivity } from './ReadActivity';
 import { FetchActivity } from './FetchActivity';
 import { SearchActivity } from './SearchActivity';
 import { ThinkingActivity } from './ThinkingActivity';
+import { ExecuteBlock } from './ExecuteBlock';
 
 interface Props {
   block: ExploringBlockType;
@@ -20,6 +21,7 @@ function buildLabel(entries: ToolCallEntry[], isStreaming: boolean): string {
   let files = 0;
   let searches = 0;
   let fetches = 0;
+  let commands = 0;
 
   for (const e of uniqueEntries.values()) {
     switch (e.kind) {
@@ -27,10 +29,11 @@ function buildLabel(entries: ToolCallEntry[], isStreaming: boolean): string {
       case 'read': files++; break;
       case 'search': searches++; break;
       case 'fetch': fetches++; break;
+      case 'execute': commands++; break;
     }
   }
 
-  const onlyThinking = thoughts > 0 && files === 0 && searches === 0 && fetches === 0;
+  const onlyThinking = thoughts > 0 && files === 0 && searches === 0 && fetches === 0 && commands === 0;
 
   if (onlyThinking) {
     return isStreaming ? 'Thinking' : 'Thought';
@@ -46,6 +49,7 @@ function buildLabel(entries: ToolCallEntry[], isStreaming: boolean): string {
   if (files > 0) parts.push(`${files} ${files === 1 ? 'file' : 'files'}`);
   if (searches > 0) parts.push(`${searches} ${searches === 1 ? 'search' : 'searches'}`);
   if (fetches > 0) parts.push(`${fetches} ${fetches === 1 ? 'fetch' : 'fetches'}`);
+  if (commands > 0) parts.push(`${commands} ${commands === 1 ? 'command' : 'commands'}`);
 
   const summary = parts.length > 0 ? ` (${parts.join(', ')})` : '';
   return `Explored${summary}`;
@@ -79,42 +83,60 @@ export const ExploringBlock: React.FC<Props> = ({ block }) => {
     }
   };
 
-  const label = buildLabel(block.entries, block.isStreaming);
+  const renderEntries = () => (
+    <div className="py-1 space-y-1 w-full min-w-0">
+      {block.entries.map((entry, i) => {
+        if (entry.kind === 'thinking') {
+          return <ThinkingActivity key={entry.toolCallId || i} entry={entry} />;
+        }
+        if (entry.kind === 'read') {
+          return <ReadActivity key={entry.toolCallId || i} entry={entry} onOpenFile={handleOpenFile} />;
+        }
+        if (entry.kind === 'fetch') {
+          return <FetchActivity key={entry.toolCallId || i} entry={entry} onOpenUrl={handleOpenUrl} />;
+        }
+        if (entry.kind === 'search') {
+          return <SearchActivity key={entry.toolCallId || i} entry={entry} />;
+        }
+        if (entry.kind === 'execute') {
+          return <ExecuteBlock key={entry.toolCallId || i} block={{ type: 'tool_call', entry, isReplay: block.isReplay }} />;
+        }
+        return null;
+      })}
+    </div>
+  );
+
+  const entries = block.entries;
+  const isSingleNonThinking = entries.length === 1 && entries[0].kind !== 'thinking';
+
+  if (isSingleNonThinking) {
+    return (
+      <div className="w-full min-w-0 max-w-full">
+        {renderEntries()}
+      </div>
+    );
+  }
+
+  const label = buildLabel(entries, block.isStreaming);
 
   return (
-    <div className="w-full min-w-0 max-w-full overflow-hidden">
+    <div className="w-full min-w-0 max-w-full text-foreground-secondary">
       <button
         onClick={() => setIsExpanded(v => !v)}
-        className="flex items-center gap-1.5 py-1 text-[var(--ide-Label-foreground)] hover:text-foreground transition-colors opacity-80 hover:opacity-100 font-medium max-w-full focus:outline-none"
+        className="flex items-center gap-1.5 py-1 max-w-full focus:outline-none"
       >
         <span className="truncate">{label}</span>
-        <span className={`transition-transform duration-200 flex-shrink-0 ${isExpanded ? 'rotate-90' : ''}`}>
+        <span className={`transition-transform duration-200 mt-[-2px] ${isExpanded ? 'rotate-90' : ''}`}>
           <ChevronRight size={14} />
         </span>
       </button>
 
       <div
-        className={`grid transition-[grid-template-rows] duration-300 ease-in-out w-full min-w-0 overflow-hidden`}
+        className={`grid transition-[grid-template-rows,opacity,transform] duration-300 ease-in-out w-full min-w-0 ${isExpanded ? 'opacity-100 translate-y-0 overflow-visible' : 'opacity-0 -translate-y-2 overflow-hidden'}`}
         style={{ gridTemplateRows: isExpanded ? '1fr' : '0fr' }}
       >
-        <div className="font-normal w-full min-w-0 overflow-hidden">
-          <div className="pl-4 pr-4 py-1 space-y-1 w-full min-w-0">
-            {block.entries.map((entry, i) => {
-              if (entry.kind === 'thinking') {
-                return <ThinkingActivity key={entry.toolCallId || i} entry={entry} />;
-              }
-              if (entry.kind === 'read') {
-                return <ReadActivity key={entry.toolCallId || i} entry={entry} onOpenFile={handleOpenFile} />;
-              }
-              if (entry.kind === 'fetch') {
-                return <FetchActivity key={entry.toolCallId || i} entry={entry} onOpenUrl={handleOpenUrl} />;
-              }
-              if (entry.kind === 'search') {
-                return <SearchActivity key={entry.toolCallId || i} entry={entry} />;
-              }
-              return null;
-            })}
-          </div>
+        <div className="font-normal w-full min-w-0 min-h-0">
+          {renderEntries()}
         </div>
       </div>
     </div>

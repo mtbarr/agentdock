@@ -22,7 +22,7 @@ interface Props {
 
 export const SubAgentBlock: React.FC<Props> = ({ block }) => {
   const { isPending, isError, isFinished } = parseToolStatus(block.entry.status);
-  const { isExpanded, toggle } = useAutoCollapse(isFinished, block.isReplay);
+  const { isExpanded, toggle } = useAutoCollapse();
 
   const title = block.entry.title || block.entry.kind || 'Thinking...';
 
@@ -41,7 +41,7 @@ export const SubAgentBlock: React.FC<Props> = ({ block }) => {
     <div className="my-2 border border-border rounded-md overflow-hidden shadow-sm">
       <button
         onClick={toggle}
-        className="flex items-center gap-2 w-full px-3 py-2 bg-editor-bg hover:bg-secondary transition-colors group border-b border-border"
+        className="flex items-center gap-2 w-full px-3 py-2 bg-editor-bg "
       >
         <div className="flex-shrink-0 text-editor-fg opacity-70 relative top-[-1px]">
           <BotIcon size={14} />
@@ -53,7 +53,7 @@ export const SubAgentBlock: React.FC<Props> = ({ block }) => {
           {(isPending || isError) && (
             <div
               className={`w-2.5 h-2.5 rounded-full ${
-                isPending ? 'bg-orange-500 animate-pulse' : 'bg-error'
+                isPending ? 'bg-warning animate-pulse' : 'bg-error'
               }`}
             />
           )}
@@ -70,7 +70,7 @@ export const SubAgentBlock: React.FC<Props> = ({ block }) => {
         <div className="overflow-hidden">
           <div className="p-3 bg-editor-bg max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
             {promptText && (
-              <div className="mb-4 pb-4 border-b border-border/30">
+              <div className="mb-4 pb-4 border-b border-border opacity-30">
                 <div className="tracking-wider opacity-40 mb-2 font-semibold">Subagent task</div>
                 <div className="leading-relaxed opacity-80 italic">
                   <MarkdownMessage content={promptText} />

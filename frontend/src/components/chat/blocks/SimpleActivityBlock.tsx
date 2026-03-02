@@ -43,7 +43,7 @@ export const SimpleActivityBlock: React.FC<Props> = ({ block }) => {
           {(isPending || isError) && (
             <div
               className={`w-2.5 h-2.5 rounded-full ${
-                isPending ? 'bg-orange-500 animate-pulse' : 'bg-error'
+                isPending ? 'bg-warning animate-pulse' : 'bg-error'
               }`}
             />
           )}

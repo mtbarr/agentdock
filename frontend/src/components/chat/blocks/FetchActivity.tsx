@@ -47,7 +47,7 @@ export const FetchActivity: React.FC<Props> = ({ entry, onOpenUrl }) => {
   const hasError = status === 'error' || status === 'failed';
 
   const icon = (
-    <span className="text-[var(--ide-Label-foreground)] opacity-70 flex-shrink-0">
+    <span className=" flex-shrink-0">
       {isSearch ? <WebSearchIcon size={13} /> : <GlobeIcon size={13} />}
     </span>
   );
@@ -67,7 +67,7 @@ export const FetchActivity: React.FC<Props> = ({ entry, onOpenUrl }) => {
     if (isSearch) {
       return (
         <ActivityTooltip icon={icon} content={tooltipContent}>
-          <span className="text-foreground/60 truncate min-w-0 flex-1 block">{cleanTitle || entry.kind}</span>
+          <span className="text-foreground opacity-60 truncate min-w-0 flex-1 block">{cleanTitle || entry.kind}</span>
           {hasError && (
             <div className="w-1.5 h-1.5 rounded-full bg-error flex-shrink-0 ml-1" />
           )}
@@ -77,7 +77,7 @@ export const FetchActivity: React.FC<Props> = ({ entry, onOpenUrl }) => {
     return (
       <div className="flex items-center gap-1.5 py-0.5 min-w-0 w-full">
         {icon}
-        <span className="text-foreground/60 truncate min-w-0 flex-1 block">{cleanTitle || entry.kind}</span>
+        <span className="text-foreground opacity-60 truncate min-w-0 flex-1 block">{cleanTitle || entry.kind}</span>
         {hasError && (
           <div className="w-1.5 h-1.5 rounded-full bg-error flex-shrink-0" />
         )}

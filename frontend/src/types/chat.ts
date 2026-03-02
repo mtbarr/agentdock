@@ -40,8 +40,13 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   contentBlocks?: RichContentBlock[];
-  blocks?: RichContentBlock[]; // Updated to use RichContentBlock[]
-  timestamp: number;
+  blocks?: RichContentBlock[];
+  timestamp?: number;
+  // Meta-information
+  agentName?: string;
+  modelName?: string;
+  modeName?: string;
+  duration?: number;
 }
 
 export interface ModelOption {

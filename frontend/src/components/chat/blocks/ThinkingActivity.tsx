@@ -1,5 +1,6 @@
 import React from 'react';
 import { ToolCallEntry } from '../../../types/chat';
+import { MarkdownMessage } from '../MarkdownMessage';
 
 interface Props {
   entry: ToolCallEntry;
@@ -14,12 +15,12 @@ const BrainIcon = ({ size = 13 }: { size?: number }) => (
 
 export const ThinkingActivity: React.FC<Props> = ({ entry }) => {
   return (
-    <div className="flex items-start gap-1.5 py-1 min-w-0 w-full">
-      <div className="flex-shrink-0 text-[var(--ide-Label-foreground)] opacity-60 mt-0.5">
+    <div className="flex items-start gap-1.5 py-1 min-w-0 w-full prose-sm">
+      <div className="flex-shrink-0 text-[var(--ide-Label-foreground)] mt-1">
         <BrainIcon size={13} />
       </div>
-      <div className="flex-1">
-        {entry.text || 'Thinking...'}
+      <div className="flex-1 min-w-0 overflow-hidden [&_.markdown-body]:my-0 [&_.markdown-body_p]:mb-0">
+        <MarkdownMessage content={entry.text || 'Thinking...'} />
       </div>
     </div>
   );

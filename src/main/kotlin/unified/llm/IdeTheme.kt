@@ -27,10 +27,8 @@ object IdeTheme {
         "Notification" to UiComponentDef(listOf("background", "foreground", "errorBackground", "errorForeground")),
         "ToolTip" to UiComponentDef(listOf("background", "foreground")),
         "Button.default" to UiComponentDef(listOf("startBackground", "endBackground", "foreground", "borderColor", "focusColor", "focusedBorderColor")),
-        "Borders" to UiComponentDef(listOf("color", "ContrastBorderColor")),
         "CheckBox" to UiComponentDef(listOf("background", "foreground")),
         "RadioButton" to UiComponentDef(listOf("background")),
-        "ScrollBar" to UiComponentDef(listOf("trackColor", "thumbColor")),
         "ProgressBar" to UiComponentDef(listOf("passedColor")),
         "Hyperlink" to UiComponentDef(listOf("linkColor"))
     )
@@ -94,7 +92,7 @@ object IdeTheme {
 
         // 6. Dynamic background variations
         val isDark = !JBColor.isBright()
-        val baseBackground = UIManager.getColor("Panel.background") ?: Color(43, 45, 48)
+        val baseBackground = UIManager.getColor("Panel.background")
         val editorBackground = scheme.defaultBackground
 
         // Secondary: use editor background if different from panel, otherwise calculate
@@ -107,7 +105,25 @@ object IdeTheme {
         }
         sb.append("  --ide-background-secondary: ${toCssColor(secondaryBackground)};\n")
 
-        // 7. Layout and spacing
+        // 7. Dynamic border color (must be different from both backgrounds)
+        val originalBorder = UIManager.getColor("Borders.color")
+        val borderColor = if (areColorsSimilar(originalBorder, baseBackground) ||
+                             areColorsSimilar(originalBorder, secondaryBackground)) {
+            // Border is too similar to backgrounds - adjust it
+            // In dark theme: make lighter than both backgrounds
+            // In light theme: make darker than both backgrounds
+            adjustBrightness(baseBackground, if (isDark) 1.25 else 0.85)
+        } else {
+            // Border is distinct - use original
+            originalBorder
+        }
+        sb.append("  --ide-Borders-color: ${toCssColor(borderColor)};\n")
+
+        // Scrollbar color based on border
+        val scrollbarColor = adjustBrightness(borderColor, if (isDark) 1.15 else 0.90)
+        sb.append("  --ide-scrollbar-color: ${toCssColor(scrollbarColor)};\n")
+
+        // 8. Layout and spacing
         val listIndent = UIManager.getInt("Tree.leftChildIndent").takeIf { it > 0 }
             ?: com.intellij.util.ui.JBUI.scale(20)
         val paraSpacing = com.intellij.util.ui.JBUI.scale(10)

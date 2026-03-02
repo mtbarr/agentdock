@@ -50,7 +50,7 @@ export default function TabBar({
               onClick={() => onSelectTab(tab.id)}
               className={`
                 group relative flex items-center min-w-[120px] max-w-[200px] h-full px-3 gap-2 cursor-default transition-colors
-                ${isActive ? 'bg-background-secondary text-foreground font-medium' : 'text-foreground/60  hover:text-foreground/90'}
+                ${isActive ? 'bg-background-secondary text-foreground font-medium' : 'text-foreground/60 hover:text-foreground/90'}
               `}
             >
               <div className="flex-1 truncate leading-none">
@@ -75,7 +75,7 @@ export default function TabBar({
 
               {/* Separator (only if not active and next isn't active) - tricky with React map, simplify for now */}
               {!isActive && (
-                <div className="absolute right-0 top-1.5 bottom-1.5 w-[1px] border-l border-border opacity-50 group-hover:opacity-0 pointer-events-none" />
+                <div className="absolute right-0 top-1.5 bottom-1.5 w-[1px] border-l border-border/50 group-hover:opacity-0 pointer-events-none" />
               )}
             </div>
           );
@@ -87,7 +87,7 @@ export default function TabBar({
         {/* New Tab (+ matches default agent) */}
         <button
           onClick={onNewTab}
-          className="flex items-center justify-center w-[28px] h-[24px] rounded  text-foreground/60 hover:text-foreground transition-colors"
+          className="flex items-center justify-center w-[28px] h-[24px] rounded text-foreground/60 hover:text-foreground transition-colors"
           title="New Chat Tab"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -100,7 +100,7 @@ export default function TabBar({
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className={`flex items-center justify-center w-[24px] h-[24px] rounded  text-foreground/60 hover:text-foreground transition-colors ${menuOpen ? 'bg-background-secondary text-foreground' : ''}`}
+            className={`flex items-center justify-center w-[24px] h-[24px] rounded text-foreground/60 hover:text-foreground transition-colors ${menuOpen ? 'bg-background-secondary text-foreground' : ''}`}
             title="Open a new tab with a specific profile"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -121,7 +121,7 @@ export default function TabBar({
                      className="flex items-center w-full px-3 py-1.5 text-left text-foreground/80 hover:bg-accent hover:text-accent-foreground transition-colors group"
                    >
                      {/* Placeholder icon */}
-                     <span className="w-5 h-5 mr-2 flex items-center justify-center opacity-60 group-hover:opacity-100">
+                     <span className="w-5 h-5 mr-2 flex items-center justify-center text-foreground-secondary/60 group-hover:text-foreground-secondary">
                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                          <circle cx="12" cy="7" r="4"></circle>
@@ -146,7 +146,7 @@ export default function TabBar({
             className={`flex items-center justify-center w-[28px] h-[24px] rounded transition-colors
               ${showHistory 
                 ? 'bg-background-secondary text-foreground' 
-                : 'text-foreground/60  hover:text-foreground'
+                : 'text-foreground/60 hover:text-foreground'
               }
             `}
             title="Chat History"

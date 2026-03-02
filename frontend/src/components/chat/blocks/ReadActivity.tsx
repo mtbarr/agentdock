@@ -34,10 +34,10 @@ export const ReadActivity: React.FC<Props> = ({ entry, onOpenFile }) => {
   if (!location?.path || !fileName) {
     return (
       <div className="flex items-center gap-1.5 py-0.5 min-w-0 w-full">
-        <span className="text-[var(--ide-Label-foreground)] opacity-70 flex-shrink-0">
+        <span className=" flex-shrink-0">
           <FileIcon size={13} />
         </span>
-        <span className="text-foreground/60 truncate min-w-0 flex-1 block">{cleanTitle || entry.kind}</span>
+        <span className="text-foreground opacity-60 truncate min-w-0 flex-1 block">{cleanTitle || entry.kind}</span>
         {hasError && (
           <div className="w-1.5 h-1.5 rounded-full bg-error flex-shrink-0" />
         )}
@@ -60,7 +60,7 @@ export const ReadActivity: React.FC<Props> = ({ entry, onOpenFile }) => {
   return (
     <ActivityTooltip
       icon={
-        <span className="text-[var(--ide-Label-foreground)] opacity-70">
+        <span className="">
           <FileIcon size={13} />
         </span>
       }
@@ -68,7 +68,7 @@ export const ReadActivity: React.FC<Props> = ({ entry, onOpenFile }) => {
     >
       <button
         onClick={() => onOpenFile(location.path, startLine || undefined)}
-        className="text-[var(--ide-Label-foreground)] hover:text-[var(--ide-Link-foreground)] hover:underline transition-colors text-left font-normal truncate min-w-0 flex-1"
+        className="text-[var(--ide-Link-foreground)] hover:underline text-left truncate"
       >
         {fileName}{lineRange}
       </button>

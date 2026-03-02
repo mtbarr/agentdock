@@ -52,12 +52,12 @@ export default function HistoryPanel({ onClose, availableAgents, onOpenSession }
   return (
     <div className="flex flex-col h-full bg-background text-foreground z-10 w-full">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <h2 className="text-sm font-semibold tracking-wide uppercase text-foreground/80">Chat History</h2>
+        <h2 className="text-sm font-semibold tracking-wide uppercase text-foreground opacity-80">Chat History</h2>
         <div className="flex items-center gap-1">
           <button
             onClick={refreshHistory}
             disabled={isLoading}
-            className={`p-1  rounded transition-colors text-foreground/60 hover:text-foreground ${isLoading ? 'animate-spin opacity-50' : ''}`}
+            className={`p-1  rounded transition-colors text-foreground opacity-60 hover:text-foreground ${isLoading ? 'animate-spin opacity-50' : ''}`}
             title="Refresh History"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -66,7 +66,7 @@ export default function HistoryPanel({ onClose, availableAgents, onOpenSession }
           </button>
           <button
             onClick={onClose}
-            className="p-1  rounded transition-colors text-foreground/60 hover:text-foreground"
+            className="p-1  rounded transition-colors text-foreground opacity-60 hover:text-foreground"
             title="Close History Panel"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -79,9 +79,9 @@ export default function HistoryPanel({ onClose, availableAgents, onOpenSession }
 
       <div className="flex-1 overflow-y-auto w-full p-4 space-y-2">
         {isLoading ? (
-          <div className="flex justify-center p-8 text-foreground/40">Loading history...</div>
+          <div className="flex justify-center p-8 text-foreground opacity-40">Loading history...</div>
         ) : historyList.length === 0 ? (
-          <div className="flex flex-col items-center justify-center p-8 text-foreground/40 h-full">
+          <div className="flex flex-col items-center justify-center p-8 text-foreground opacity-40 h-full">
             <p className="text-sm italic">No history available yet.</p>
           </div>
         ) : (
@@ -96,13 +96,13 @@ export default function HistoryPanel({ onClose, availableAgents, onOpenSession }
                 className="w-full text-left p-4 rounded-lg bg-background-secondary border border-border hover:border-primary/40  transition-colors"
               >
                 <div className="font-semibold text-sm truncate pr-8">{item.title}</div>
-                <div className="text-xs text-foreground/60 mt-1 flex items-center gap-2">
-                  <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase tracking-wider font-bold">
+                <div className="text-xs text-foreground opacity-60 mt-1 flex items-center gap-2">
+                  <span className="bg-primary opacity-10 text-primary px-1.5 py-0.5 rounded uppercase tracking-wider font-bold">
                     {adapterDisplay.get(item.adapterName) || item.adapterName}
                   </span>
                   {item.modelId ? <span>{item.modelId}</span> : null}
                 </div>
-                <div className="text-xs text-foreground/40 mt-2">{formatDate(item.updatedAt)}</div>
+                <div className="text-xs text-foreground opacity-40 mt-2">{formatDate(item.updatedAt)}</div>
               </button>
               
               <button
@@ -110,7 +110,7 @@ export default function HistoryPanel({ onClose, availableAgents, onOpenSession }
                   e.stopPropagation();
                   setSessionToDelete(item);
                 }}
-                className="absolute top-4 right-4 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-error/10 hover:text-error rounded transition-all text-foreground/40"
+                className="absolute top-4 right-4 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-error opacity-10 hover:text-error rounded transition-all text-foreground opacity-40"
                 title="Delete Session"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

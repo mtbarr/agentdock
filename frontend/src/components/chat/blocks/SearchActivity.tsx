@@ -21,13 +21,13 @@ export const SearchActivity: React.FC<Props> = ({ entry }) => {
   return (
     <ActivityTooltip
       icon={
-        <span className="text-[var(--ide-Label-foreground)] opacity-70">
+        <span className="">
           <SearchIcon size={13} />
         </span>
       }
       content={<span>Search: {cleanTitle}</span>}
     >
-      <span className="text-foreground/60 truncate min-w-0 flex-1 block">{cleanTitle || entry.kind}</span>
+      <span className="text-foreground opacity-60 truncate min-w-0 flex-1 block">{cleanTitle || entry.kind}</span>
       {hasError && (
         <div className="w-1.5 h-1.5 rounded-full bg-error flex-shrink-0 ml-1" />
       )}

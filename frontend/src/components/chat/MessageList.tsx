@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { Message } from '../../types/chat';
-import { MarkdownMessage } from './MarkdownMessage';
-import { ContentBlockRenderer } from './blocks/ContentBlockRenderer';
+import { UserMessage } from './UserMessage';
+import { AssistantMessage } from './AssistantMessage';
+
+import { ChatLoadingIndicator } from './ChatLoadingIndicator';
 
 export default function MessageList({ 
   messages,
@@ -33,60 +35,6 @@ export default function MessageList({
     }
   }, [messages]);
 
-  const renderContent = (message: Message) => {
-    const isAssistant = message.role === 'assistant';
-
-    if (isAssistant && message.contentBlocks && message.contentBlocks.length > 0) {
-      return (
-        <div className="flex flex-col">
-          {message.contentBlocks.map((block, idx) => (
-            <ContentBlockRenderer key={idx} block={block} />
-          ))}
-        </div>
-      );
-    }
-
-    if (message.blocks && message.blocks.length > 0) {
-      return (
-        <div className="space-y-2">
-          {message.blocks.map((block, idx) => {
-            if (block.type === 'image' && block.data) {
-              const src = `data:${block.mimeType || 'image/png'};base64,${block.data}`;
-              return (
-                <div key={idx} className="my-2">
-                  <img 
-                    src={src} 
-                    alt="Pikums" 
-                    className="max-w-full rounded-md shadow-sm cursor-zoom-in hover:opacity-90 transition-opacity" 
-                    style={{ maxHeight: '300px' }}
-                    onClick={() => onImageClick(src)}
-                  />
-                </div>
-              );
-            }
-            return isAssistant ? (
-              <MarkdownMessage key={idx} content={(block as any).text || ''} />
-            ) : (
-              <div key={idx} className="whitespace-pre-wrap">{(block as any).text || ''}</div>
-            );
-          })}
-        </div>
-      );
-    }
-
-    return (
-      <div className="">
-        {message.content ? (
-          isAssistant ? (
-            <MarkdownMessage content={message.content} />
-          ) : (
-            <div className="whitespace-pre-wrap">{message.content}</div>
-          )
-        ) : null}
-      </div>
-    );
-  };
-
   return (
     <div
       ref={containerRef}
@@ -94,41 +42,34 @@ export default function MessageList({
       className="flex-1 min-h-0 overflow-y-auto p-8 space-y-6"
     >
       <div className="max-w-4xl mx-auto">
-        {messages.length === 0 && (
-          <div className="mt-20 space-y-4 text-center text-foreground/50">Hello, world!</div>
-        )}
 
-        {messages.map((message) => (
-          <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end mb-4' : 'justify-start mb-8'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-            <div className={`
-              rounded-lg 
-              ${message.role === 'user' 
-                ? 'max-w-[85%] bg-[var(--ide-editor-bg)] p-4 border border-[var(--ide-Borders-color)] ml-auto text-foreground shadow-sm'
-                : 'w-full text-foreground'
-              }
-            `}>
-              <div className="leading-relaxed break-words">
-                {renderContent(message)}
-              </div>
-            </div>
-          </div>
-        ))}
+        {messages.map((message, index) => {
+          const isAssistant = message.role === 'assistant';
+          const isLast = index === messages.length - 1;
+
+          if (isAssistant) {
+            return (
+              <AssistantMessage 
+                key={message.id} 
+                message={message} 
+                onImageClick={onImageClick} 
+                showBorder={!isLast}
+              />
+            );
+          }
+
+          return (
+            <UserMessage 
+              key={message.id} 
+                message={message} 
+              onImageClick={onImageClick} 
+            />
+          );
+        })}
 
         {isSending && (
-          <div className="flex justify-start mb-8 animate-in fade-in slide-in-from-bottom-1 duration-200">
-            <div className="w-full text-foreground">
-              {status === 'initializing' ? (
-                <div className="animate-pulse text-foreground opacity-40 italic text-sm">
-                  Connecting to {agentName || 'agent'}...
-                </div>
-              ) : (
-                <div className="flex gap-1 items-center h-4 text-foreground opacity-30">
-                  <div className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-1 h-1 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-              )}
-            </div>
+          <div className="flex justify-start mb-8">
+            <ChatLoadingIndicator status={status} agentName={agentName} />
           </div>
         )}
 

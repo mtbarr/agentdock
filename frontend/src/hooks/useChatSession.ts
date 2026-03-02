@@ -15,7 +15,27 @@ import {
 import { ACPBridge } from '../utils/bridge';
 import { safeParseJson, buildToolCallEntry, extractResultTexts } from '../utils/toolCallUtils';
 
-const EXPLORING_KINDS = new Set(['read', 'fetch', 'search']);
+function isExploringChunk(chunk: ContentChunk): boolean {
+  const kind = chunk.toolKind || '';
+  if (kind === 'read' || kind === 'fetch' || kind === 'search') return true;
+  if (kind === 'execute') {
+    const cmd = (chunk.toolTitle || '').toLowerCase().trim();
+    if (!cmd) return true;
+
+    const IMPACTFUL_KEYWORDS = [
+      'rm', 'mv', 'cp', 'mkdir', 'touch', 'chmod', 'chown',
+      'del', 'erase', 'rd', 'rmdir', 'move', 'copy', 'ren', 'rename',
+      'new-item', 'remove-item', 'move-item', 'copy-item',
+      'curl', 'wget', 'scp', 'rsync', 'ssh', 'ftp', 'npm', 'yarn', 'git'
+    ];
+
+    const tokens = cmd.split(/[\s"'/\\;|=&]+/);
+    const isHighPriority = IMPACTFUL_KEYWORDS.some(kw => tokens.includes(kw));
+    
+    return !isHighPriority;
+  }
+  return false;
+}
 
 let messageCounter = 0;
 let thinkingCounter = 0;
@@ -56,7 +76,7 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
       id: nextMessageId(chunk.role),
       role: chunk.role,
       content: chunk.type === 'text' ? (chunk.text || '') : '',
-      timestamp: Date.now()
+      timestamp: chunk.isReplay ? undefined : Date.now()
     };
     if (chunk.role === 'assistant') {
       newMsg.contentBlocks = [block];
@@ -163,7 +183,7 @@ function buildBlock(chunk: ContentChunk): RichContentBlock {
       return { type: 'video', data: chunk.data!, mimeType: chunk.mimeType! } as any;
     case 'tool_call': {
       const entry = buildToolCallEntry(chunk);
-      if (!EXPLORING_KINDS.has(chunk.toolKind || '')) {
+      if (!isExploringChunk(chunk)) {
         return { type: 'tool_call', entry } as ToolCallBlock;
       }
       return { type: 'exploring', isStreaming: !chunk.isReplay, isReplay: chunk.isReplay, entries: [entry] } as ExploringBlock;
@@ -188,7 +208,7 @@ function closeStreamingExploring(blocks: RichContentBlock[]) {
 function handleToolCall(blocks: RichContentBlock[], lastBlock: RichContentBlock | null, chunk: ContentChunk) {
   const entry = buildToolCallEntry(chunk);
 
-  if (!EXPLORING_KINDS.has(chunk.toolKind || '')) {
+  if (!isExploringChunk(chunk)) {
     closeStreamingExploring(blocks);
 
     const idx = blocks.findIndex(b => b.type === 'tool_call' && (b as ToolCallBlock).entry.toolCallId === entry.toolCallId);
@@ -301,6 +321,7 @@ export function useChatSession(
   const startedModeIdRef = useRef<string>('');
   const historyLoadRequestedRef = useRef<string | null>(null);
   const statusRef = useRef<string>('not started');
+  const startTimeRef = useRef<number | null>(null);
 
   // Buffered chunk queue — chunks are collected here and flushed atomically
   const chunkBufferRef = useRef<ContentChunk[]>([]);
@@ -333,6 +354,8 @@ export function useChatSession(
   const selectedModeId = selectedAgent
       ? (selectedModeByAgent[selectedAgent.id] || selectedAgent.defaultModeId || availableModes[0]?.id || '')
       : '';
+
+  const adapterDisplayName = selectedAgent?.displayName || '';
 
   const agentOptions: DropdownOption[] = availableAgents.map((agent) => ({ id: agent.id, label: agent.displayName }));
   const modelOptions: DropdownOption[] = availableModels.map((model) => ({ id: model.id, label: model.displayName }));
@@ -411,6 +434,10 @@ export function useChatSession(
       }
 
       if (s === 'ready') {
+        const endTime = Date.now();
+        const durationSeconds = startTimeRef.current ? (endTime - startTimeRef.current) / 1000 : undefined;
+        startTimeRef.current = null;
+
         setPermissionRequest(null);
         // Flush any remaining buffered chunks immediately before processing status
         if (chunkBufferRef.current.length > 0) {
@@ -419,10 +446,38 @@ export function useChatSession(
           chunkBufferRef.current = [];
           setMessages(prev => {
             let result = applyChunks(prev, chunks);
-            return closeAllStreamingThinking(result);
+            result = closeAllStreamingThinking(result);
+            if (result.length > 0) {
+              const last = result[result.length - 1];
+              if (last.role === 'assistant' && durationSeconds !== undefined) {
+                result[result.length - 1] = {
+                  ...last,
+                  duration: durationSeconds,
+                  agentName: adapterDisplayName,
+                  modelName: selectedModelId, // Should ideally be display name
+                  modeName: selectedModeId
+                };
+              }
+            }
+            return result;
           });
         } else {
-          setMessages(prev => closeAllStreamingThinking(prev));
+          setMessages(prev => {
+            const result = closeAllStreamingThinking(prev);
+            if (result.length > 0) {
+              const last = result[result.length - 1];
+              if (last.role === 'assistant' && durationSeconds !== undefined) {
+                result[result.length - 1] = {
+                  ...last,
+                  duration: durationSeconds,
+                  agentName: adapterDisplayName,
+                  modelName: selectedModelId,
+                  modeName: selectedModeId
+                };
+              }
+            }
+            return result;
+          });
         }
 
         if (!pendingBlocksRef.current) {
@@ -470,7 +525,7 @@ export function useChatSession(
       unsubMode();
       unsubPermission();
     };
-  }, [chatId, enqueueChunk, flushChunks]);
+  }, [chatId, enqueueChunk, flushChunks, adapterDisplayName, selectedModelId, selectedModeId]);
 
   useEffect(() => {
     if (!historySession) return;
@@ -636,6 +691,7 @@ export function useChatSession(
     }
 
     try {
+      startTimeRef.current = Date.now();
       window.__sendPrompt(chatId, JSON.stringify(blocks));
     } catch (e) {
       console.warn('[useChatSession] Failed to send prompt:', e);

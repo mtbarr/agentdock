@@ -114,7 +114,7 @@
 
     & code {
         @apply px-1 rounded;
-        background-color: var(--ide-List-hoverBackground);
+        background-color: var(--ide-editor-bg);
     }
 
     & pre {

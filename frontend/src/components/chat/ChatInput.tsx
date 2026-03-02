@@ -93,7 +93,7 @@ export default function ChatInput({
         <div className="bg-background-secondary rounded-xl border border-border shadow-2xl focus-within:ring-1 focus-within:ring-ring transition-all">
           
           {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 p-3 border-b border-border bg-black/5">
+            <div className="flex flex-wrap gap-2 p-3 border-b border-border bg-black opacity-5">
               {attachments.map(att => (
                 <div key={att.id} className="relative group w-16 h-16 rounded border border-border overflow-hidden bg-background shadow-sm">
                   <img 
@@ -107,7 +107,7 @@ export default function ChatInput({
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                   </button>
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/40 text-white px-1 truncate">
+                  <div className="absolute bottom-0 left-0 right-0 bg-black opacity-40 text-white px-1 truncate">
                     {att.id}
                   </div>
                 </div>
@@ -135,7 +135,7 @@ export default function ChatInput({
             {/* Left Controls */}
             <div className="flex items-center gap-1">
               <button
-                className="p-1.5  rounded text-foreground/60 hover:text-foreground transition-colors"
+                className="p-1.5  rounded text-foreground opacity-60 hover:text-foreground transition-colors"
                 title="Add context"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -196,7 +196,7 @@ export default function ChatInput({
                     type="button"
                     onClick={onSend}
                     disabled={!inputValue.trim()}
-                    className="p-1.5 bg-transparent text-foreground/60 hover:text-accent transition-all disabled:opacity-20 translate-y-[1px]"
+                    className="p-1.5 bg-transparent text-foreground opacity-60 hover:text-accent transition-all disabled:opacity-20 translate-y-[1px]"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="22" y1="2" x2="11" y2="13"></line>

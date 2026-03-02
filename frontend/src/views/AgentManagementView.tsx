@@ -82,7 +82,7 @@ export function AgentManagementView() {
               return (
                 <article 
                   key={agent.id} 
-                  className="bg-background-secondary border border-border/40 rounded-xl p-5 shadow-sm space-y-6"
+                  className="bg-background-secondary border border-border opacity-40 rounded-xl p-5 shadow-sm space-y-6"
                 >
                   {/* Title & Toggle */}
                   <div className="flex justify-between items-start gap-4">
@@ -90,7 +90,7 @@ export function AgentManagementView() {
                       <div className="flex items-center gap-2">
                         <h3 className="font-bold text-lg truncate">{agent.displayName}</h3>
                         {agent.isDefault && (
-                          <span className="px-1.5 py-0.5 rounded bg-accent/10 text-accent font-medium">
+                          <span className="px-1.5 py-0.5 rounded bg-accent opacity-10 text-accent font-medium">
                             Default
                           </span>
                         )}
@@ -112,7 +112,7 @@ export function AgentManagementView() {
                   {/* Installation Section */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                        <span className="font-bold text-foreground-secondary/50">Installation</span>
+                        <span className="font-bold text-foreground-secondary opacity-50">Installation</span>
                         {agent.downloaded && !isInstalling && (
                             <button
                                 onClick={() => handleDelete(agent.id)}
@@ -125,7 +125,7 @@ export function AgentManagementView() {
                     </div>
 
                     {agent.downloaded ? (
-                        <div className="bg-black/5 rounded border border-border/10 p-3 space-y-2">
+                        <div className="bg-black opacity-5 rounded border border-border opacity-10 p-3 space-y-2">
                             {/* Main download path */}
                             <div className="font-mono opacity-60 break-all leading-tight">
                                 {agent.downloadPath}
@@ -166,7 +166,7 @@ export function AgentManagementView() {
                   {agent.downloaded && (
                     <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                            <span className="font-bold text-foreground-secondary/50">Authentication</span>
+                            <span className="font-bold text-foreground-secondary opacity-50">Authentication</span>
                             <div className="flex items-center gap-1.5">
                                 <span className={`w-1.5 h-1.5 rounded-full ${agent.authAuthenticated ? 'bg-green-500' : 'bg-red-500'}`} />
                                 <span className={`font-bold ${agent.authAuthenticated ? 'text-green-500/80' : 'text-red-500/80'}`}>
@@ -177,7 +177,7 @@ export function AgentManagementView() {
 
                         {/* Auth Key Path - Separate Box, Only if Authenticated */}
                         {agent.authAuthenticated && agent.authPath && (
-                            <div className="bg-black/5 rounded border border-border/10 p-3">
+                            <div className="bg-black opacity-5 rounded border border-border opacity-10 p-3">
                                 <div className="font-mono opacity-60 break-all leading-tight">
                                     {agent.authPath}
                                 </div>
@@ -192,7 +192,7 @@ export function AgentManagementView() {
                             disabled={agent.authenticating}
                             className={`px-4 py-2 rounded text-xs font-bold transition-all focus:outline-none ${
                                 agent.authAuthenticated
-                                    ? 'bg-background-secondary/20 text-foreground border border-border/50 hover:bg-background-secondary/40 focus:ring-2 focus:ring-muted active:scale-95'
+                                    ? 'bg-background-secondary opacity-20 text-foreground border border-border opacity-50 hover:bg-background-secondary opacity-40 focus:ring-2 focus:ring-muted active:scale-95'
                                     : 'bg-primary text-primary-foreground shadow-sm hover:opacity-90 focus:ring-2 focus:ring-primary/50 active:scale-95'
                             } ${agent.authenticating ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
                         >

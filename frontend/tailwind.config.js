@@ -13,7 +13,7 @@ export default {
         },
         foreground: {
           DEFAULT: 'var(--ide-Label-foreground)',
-          secondary: 'var(--ide-Label-disabledForeground)'
+          secondary: 'color-mix(in srgb, var(--ide-Label-foreground), transparent 40%)'
         },
         primary: {
           DEFAULT: 'var(--ide-Button-default-startBackground)',
@@ -67,6 +67,9 @@ export default {
       spacing: {
         'ide-paragraph': 'var(--ide-paragraph-spacing)',
         'ide-indent': 'var(--ide-list-indent)',
+      },
+      fontFamily: {
+        mono: ['var(--ide-code-font-family)', 'monospace'],
       }
     },
   },

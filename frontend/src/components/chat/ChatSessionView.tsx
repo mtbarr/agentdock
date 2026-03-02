@@ -77,6 +77,13 @@ export default function ChatSessionView({
   }, []);
 
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState(false);
+
+  const handleDownload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDownloaded(true);
+    setTimeout(() => setDownloaded(false), 2000);
+  };
 
   return (
     <div className="flex flex-col h-full relative">
@@ -140,20 +147,57 @@ export default function ChatSessionView({
       {/* Full-size Image Overlay */}
       {selectedImage && (
         <div 
-          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-8 animate-in fade-in duration-200 cursor-zoom-out"
+          className="fixed inset-0 z-[100] bg-black bg-opacity-70 flex items-center 
+            justify-center p-8 animate-in fade-in duration-200 cursor-zoom-out"
           onClick={() => setSelectedImage(null)}
         >
-          <img 
-            src={selectedImage} 
-            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-200" 
-            alt="Pilna izmēra attēls"
-          />
-          <button 
-            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
-            onClick={(e) => { e.stopPropagation(); setSelectedImage(null); }}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-          </button>
+          <div className="relative max-w-full max-h-full flex items-center justify-center">
+            <img 
+              src={selectedImage} 
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-200" 
+              alt="Full size preview"
+            />
+            <div className="absolute top-2 right-4 flex gap-2">
+              <a 
+                href={selectedImage}
+                download="image.png"
+                className="p-2 bg-black bg-opacity-50 hover:bg-opacity-80 rounded-full text-white 
+                  transition-all outline-none shadow-xl"
+                onClick={handleDownload}
+                title="Download image"
+              >
+                {downloaded ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" 
+                    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" 
+                    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                )}
+              </a>
+              <button 
+                className="p-2 bg-black bg-opacity-50 hover:bg-opacity-80 rounded-full text-white 
+                  transition-all outline-none shadow-xl"
+                onClick={(e) => { e.stopPropagation(); setSelectedImage(null); }}
+                title="Close"
+              >
+                <svg 
+                  xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" 
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

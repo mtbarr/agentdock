@@ -14,7 +14,7 @@ interface Props {
 
 export const ExecuteBlock: React.FC<Props> = ({ block }) => {
   const { isPending, isError, isFinished } = parseToolStatus(block.entry.status);
-  const { isExpanded, toggle } = useAutoCollapse(isFinished, block.isReplay);
+  const { isExpanded, toggle } = useAutoCollapse();
 
   const rawCommand = block.entry.title || block.entry.kind || 'Terminal Command';
   const command = String(rawCommand).replace(/^`|`$/g, '');
@@ -23,7 +23,7 @@ export const ExecuteBlock: React.FC<Props> = ({ block }) => {
     <div className="my-2 border border-border rounded-md overflow-hidden shadow-sm">
       <button
         onClick={toggle}
-        className="flex items-center gap-2 w-full px-3 py-2 bg-editor-bg hover:bg-secondary transition-colors group border-b border-border"
+        className="flex items-center gap-2 w-full px-3 py-2 bg-editor-bg "
       >
         <div className="flex-shrink-0 text-editor-fg opacity-70">
           <TerminalIcon />
@@ -35,7 +35,7 @@ export const ExecuteBlock: React.FC<Props> = ({ block }) => {
           {(isPending || isError) && (
             <div
               className={`w-2.5 h-2.5 rounded-full ${
-                isPending ? 'bg-orange-500 animate-pulse' : 'bg-error'
+                isPending ? 'bg-warning animate-pulse' : 'bg-error'
               }`}
             />
           )}

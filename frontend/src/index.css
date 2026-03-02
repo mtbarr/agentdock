@@ -85,13 +85,10 @@
     margin: calc(var(--ide-paragraph-spacing) * 0.3) 0;
   }
 
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: var(--ide-Borders-color) transparent;
-  }
-
   *::-webkit-scrollbar {
-    width: 6px;
+    width: 7px;
+    height: 7px;
+    position: absolute;
   }
 
   *::-webkit-scrollbar-track {
@@ -99,7 +96,12 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: var(--ide-Borders-color);
-    border-radius: 20px;
+    background-color: var(--ide-scrollbar-color);
+    opacity: 0.8;
+    border-radius: 0;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    opacity: 1;
   }
 }

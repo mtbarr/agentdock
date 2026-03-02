@@ -39,6 +39,14 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
     private var debugBridge: AcpBridge? = null
     private var historyBridge: HistoryBridge? = null
 
+    companion object {
+        // --- DEVELOPMENT TOGGLE ---
+        // Set to true to load from Vite dev server (http://localhost:5173) instead of built resources.
+        // Remember to run 'npm run dev' in the 'frontend' directory.
+        private const val IS_DEV_MODE = true
+        private const val DEV_URL = "http://localhost:5173"
+    }
+
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val rootPanel = JPanel(BorderLayout())
         rootPanel.add(JLabel("Initializing AI Chat..."), BorderLayout.CENTER)
@@ -126,6 +134,24 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
                             override fun onLoadEnd(cefBrowser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
                                 if (frame.isMain) {
+                                    // Inject theme CSS if in dev mode (since it's not inlined in index.html)
+                                    if (IS_DEV_MODE) {
+                                        val themeCss = IdeTheme.generateCssBlock()
+                                        val escapedThemeCss = themeCss.replace("`", "\\`").replace("$", "\\$")
+                                        val themeInjection = """
+                                            (function() {
+                                              let style = document.getElementById('ide-theme-style');
+                                              if (!style) {
+                                                style = document.createElement('style');
+                                                style.id = 'ide-theme-style';
+                                                document.head.appendChild(style);
+                                              }
+                                              style.textContent = `$escapedThemeCss`;
+                                            })();
+                                        """.trimIndent()
+                                        cefBrowser.executeJavaScript(themeInjection, cefBrowser.url, 0)
+                                    }
+
                                     val cursorInjection = """
                                         window.__lastSentCursor = 'default';
                                         document.addEventListener('mousemove', function(e) {
@@ -199,7 +225,19 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
         // Reload JCEF when the IntelliJ theme changes (so CSS variables update)
         val connection = ApplicationManager.getApplication().messageBus.connect(browser)
         connection.subscribe(LafManagerListener.TOPIC, LafManagerListener {
-            loadContent(browser)
+            if (IS_DEV_MODE) {
+                // In dev mode, we just re-run the injection in the current page
+                val themeCss = IdeTheme.generateCssBlock()
+                val escapedThemeCss = themeCss.replace("`", "\\`").replace("$", "\\$")
+                browser.cefBrowser.executeJavaScript("""
+                    (function() {
+                        const style = document.getElementById('ide-theme-style');
+                        if (style) style.textContent = `$escapedThemeCss`;
+                    })();
+                """.trimIndent(), browser.cefBrowser.url, 0)
+            } else {
+                loadContent(browser)
+            }
         })
 
         panel.add(browser.component, BorderLayout.CENTER)
@@ -207,8 +245,12 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 
     private fun loadContent(browser: JBCefBrowser) {
-        // Load all content as a single HTML block using helper classes
-        val html = AssetLoader.loadAndInlineAssets(javaClass)
-        browser.loadHTML(html)
+        if (IS_DEV_MODE) {
+            browser.loadURL(DEV_URL)
+        } else {
+            // Load all content as a single HTML block using helper classes
+            val html = AssetLoader.loadAndInlineAssets(javaClass)
+            browser.loadHTML(html)
+        }
     }
 }
