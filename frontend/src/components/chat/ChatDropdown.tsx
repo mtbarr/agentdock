@@ -3,33 +3,57 @@ import { DropdownOption } from '../../types/chat';
 
 export default function ChatDropdown({
   value,
+  subValue,
   options,
   placeholder,
   disabled,
   minWidthClass,
   direction = 'up',
-  header,
   onChange,
+  onSubChange,
 }: {
   value: string;
+  subValue?: string;
   options: DropdownOption[];
   placeholder: string;
   disabled: boolean;
   minWidthClass?: string;
   direction?: 'up' | 'down';
-  header?: string;
   onChange: (value: string) => void;
+  onSubChange?: (parentId: string, subId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [hoveredOptionId, setHoveredOptionId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  
   const selectedOption = options.find((option) => option.id === value);
-  const selectedLabel = selectedOption?.label || placeholder;
+  const selectedSub = selectedOption?.subOptions?.find(s => s.id === subValue);
+
+  const renderIcon = (path?: string, className: string = "w-4 h-4") => {
+    if (!path) return null;
+    return <img src={path} className={className} alt="" />;
+  };
+  
+  // Clean label showing Agent Icon and Model
+  const selectedLabel = selectedSub ? (
+    <div className="flex items-center gap-1.5 min-w-0">
+      {renderIcon(selectedOption?.iconPath, "w-4 h-4")}
+      <span className="opacity-30 select-none text-[10px]">•</span>
+      <span className="truncate">{selectedSub.label}</span>
+    </div>
+  ) : (
+    <div className="flex items-center gap-2 min-w-0">
+      {renderIcon(selectedOption?.iconPath, "w-4 h-4")}
+      <span className="truncate">{selectedOption?.label || placeholder}</span>
+    </div>
+  );
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
       if (!rootRef.current) return;
       if (!rootRef.current.contains(event.target as Node)) {
         setOpen(false);
+        setHoveredOptionId(null);
       }
     };
     window.addEventListener('mousedown', onPointerDown);
@@ -42,9 +66,9 @@ export default function ChatDropdown({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((prev) => !prev)}
-        className="flex items-center gap-1.5 py-1 px-2 rounded  text-foreground opacity-80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
+        className="flex items-center gap-1.5 py-1 px-2 rounded text-foreground hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed group whitespace-nowrap"
       >
-        <span className="truncate max-w-[150px]">{selectedLabel}</span>
+        <span className="truncate max-w-[200px] text-ide-regular">{selectedLabel}</span>
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="12"
@@ -55,7 +79,7 @@ export default function ChatDropdown({
           strokeWidth="2.5"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className={`opacity-50 group-hover:opacity-100 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`group-hover:text-accent transition-transform ${open ? 'rotate-180' : ''}`}
         >
           <polyline points="6 9 12 15 18 9"></polyline>
         </svg>
@@ -63,42 +87,81 @@ export default function ChatDropdown({
 
       {open && !disabled && (
         <div
-          className={`absolute z-50 min-w-[220px] rounded-md border border-border bg-background-secondary shadow-xl overflow-hidden py-1 ${
+          className={`absolute z-[100] min-w-[200px] rounded-md border border-border bg-background-secondary shadow-2xl py-1 animate-in fade-in duration-75 ${
             direction === 'up' ? 'bottom-full mb-2 left-0' : 'top-full mt-2 left-0'
           }`}
         >
-          {header && (
-            <div className="px-3 py-1.5 font-medium text-foreground-secondary opacity-50 border-b border-border opacity-50 text-center uppercase tracking-wider">
-              {header}
-            </div>
-          )}
-          <div className="max-h-64 overflow-y-auto">
-            {options.length > 0 ? (
-              options.map((option) => (
+          <div className="flex flex-col">
+            {options.map((option) => (
+              <div 
+                key={option.id} 
+                className="relative"
+                onMouseEnter={() => setHoveredOptionId(option.id)}
+              >
                 <button
-                  key={option.id}
                   type="button"
                   onClick={() => {
-                    onChange(option.id);
-                    setOpen(false);
+                    if (!option.subOptions) {
+                      onChange(option.id);
+                      setOpen(false);
+                      setHoveredOptionId(null);
+                    }
                   }}
-                  className={`flex items-center w-full px-3 py-1.5 text-left transition-colors  group ${
-                    option.id === value ? 'bg-accent text-foreground font-medium' : 'text-foreground opacity-80'
+                  className={`flex items-center w-full px-3 py-2 text-left text-ide-regular transition-colors ${
+                    option.id === value && !subValue ? 'bg-accent text-accent-foreground' : 'text-foreground hover:bg-accent hover:text-accent-foreground'
                   }`}
                 >
-                  <span className="w-5 flex-shrink-0">
-                    {option.id === value && (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-accent-foreground">
+                  <span className="w-4 flex-shrink-0">
+                    {option.id === value && !subValue && (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="20 6 9 17 4 12"></polyline>
                       </svg>
                     )}
                   </span>
-                  <span className="truncate">{option.label}</span>
+                  {renderIcon(option.iconPath, "w-4 h-4 mr-2 flex-shrink-0")}
+                  <span className="flex-1 truncate">{option.label}</span>
+                  {option.subOptions && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-40">
+                      <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                  )}
                 </button>
-              ))
-            ) : (
-              <div className="px-3 py-2 text-foreground-secondary opacity-50 italic text-center">No options availables</div>
-            )}
+
+                {/* Second Level Submenu */}
+                {option.subOptions && hoveredOptionId === option.id && (
+                  <div 
+                    className={`absolute z-[101] min-w-[180px] border border-border bg-background-secondary shadow-2xl py-1 rounded-md animate-in fade-in slide-in-from-left-1 duration-75 ${
+                      direction === 'up' ? 'bottom-0 left-full -ml-px' : 'top-0 left-full -ml-px'
+                    }`}
+                  >
+                    {option.subOptions.map((sub) => (
+                      <button
+                        key={sub.id}
+                        type="button"
+                        onClick={() => {
+                          onChange(option.id);
+                          onSubChange?.(option.id, sub.id);
+                          setOpen(false);
+                          setHoveredOptionId(null);
+                        }}
+                        className={`flex items-center w-full px-3 py-2 text-left text-ide-regular transition-colors ${
+                          option.id === value && sub.id === subValue ? 'bg-accent text-accent-foreground' : 'text-foreground hover:bg-accent hover:text-accent-foreground'
+                        }`}
+                      >
+                        <span className="w-4 flex-shrink-0">
+                          {option.id === value && sub.id === subValue && (
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          )}
+                        </span>
+                        <span className="truncate">{sub.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { FileChangeSummary } from '../../types/chat';
 
 interface FileChangesPanelProps {
@@ -13,7 +13,7 @@ interface FileChangesPanelProps {
   onShowDiff?: (fc: FileChangeSummary) => void;
 }
 
-export default function FileChangesPanel({
+const FileChangesPanel = memo(({
   fileChanges,
   totalAdditions,
   totalDeletions,
@@ -23,7 +23,7 @@ export default function FileChangesPanel({
   onKeepAll,
   onOpenFile,
   onShowDiff,
-}: FileChangesPanelProps) {
+}: FileChangesPanelProps) => {
   const [expanded, setExpanded] = useState(true);
   const [confirmUndoAll, setConfirmUndoAll] = useState(false);
 
@@ -156,4 +156,6 @@ export default function FileChangesPanel({
       )}
     </div>
   );
-}
+});
+
+export default FileChangesPanel;

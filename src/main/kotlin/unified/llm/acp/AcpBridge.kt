@@ -43,6 +43,7 @@ private data class AdapterModePayload(val id: String, val displayName: String)
 private data class AdapterPayload(
     val id: String,
     val displayName: String,
+    val iconPath: String,
     val isDefault: Boolean,
     val defaultModelId: String,
     val models: List<AdapterModelPayload>,
@@ -95,6 +96,7 @@ class AcpBridge(
     private var showDiffQuery: JBCefJSQuery? = null
     private var openFileQuery: JBCefJSQuery? = null
     private var openUrlQuery: JBCefJSQuery? = null
+    private var attachFileQuery: JBCefJSQuery? = null
 
     private val promptJobs = ConcurrentHashMap<String, Job>()
     private val downloadStatuses = ConcurrentHashMap<String, String>()
@@ -666,11 +668,59 @@ class AcpBridge(
 
         openUrlQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { url ->
-                if (!url.isNullOrBlank()) {
+                if (url != null && url.isNotBlank()) {
                     runOnEdt {
                         try {
                             com.intellij.ide.BrowserUtil.browse(url)
                         } catch (_: Exception) {}
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        attachFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { chatId ->
+                val id = chatId?.trim().orEmpty().replace("\\", "\\\\").replace("'", "\\'")
+                if (id.isNotEmpty()) {
+                    runOnEdt {
+                        val descriptor = com.intellij.openapi.fileChooser.FileChooserDescriptor(true, false, false, false, false, true)
+                        descriptor.title = "Select Files to Attach"
+                        com.intellij.openapi.fileChooser.FileChooser.chooseFiles(descriptor, service.project, null) { files ->
+                            val results = files.map { file ->
+                                val ioFile = File(file.path)
+                                val size = ioFile.length()
+                                val name = file.name
+                                val mimeType = java.net.URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream"
+                                val base64 = if (size < 2 * 1024 * 1024) {
+                                    try {
+                                        java.util.Base64.getEncoder().encodeToString(ioFile.readBytes())
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                } else {
+                                    null
+                                }
+
+                                val fileId = java.util.UUID.randomUUID().toString().substring(0, 8)
+                                buildJsonObject {
+                                    put("id", fileId)
+                                    put("name", name)
+                                    put("mimeType", mimeType)
+                                    if (base64 != null) {
+                                        put("data", base64)
+                                    } else {
+                                        put("path", file.path)
+                                    }
+                                }.toString()
+                            }
+                            
+                            val jsonArrayStr = results.joinToString(",")
+                            browser.cefBrowser.executeJavaScript(
+                                "if(window.__onAttachmentsAdded) window.__onAttachmentsAdded('$id', [$jsonArrayStr]);",
+                                browser.cefBrowser.url, 0
+                            )
+                        }
                     }
                 }
                 JBCefJSQuery.Response("ok")
@@ -776,6 +826,10 @@ class AcpBridge(
             openUrlQuery?.inject("url") ?: "",
             "openUrl"
         )
+        val attachFileInject = decorateQueryInject(
+            attachFileQuery?.inject("chatId") ?: "",
+            "attachFile"
+        )
 
         val script = """
             (function() {
@@ -854,6 +908,9 @@ class AcpBridge(
                 window.__openUrl = function(url) {
                     try { $openUrlInject } catch (e) { }
                 };
+                window.__attachFile = function(chatId) {
+                    try { $attachFileInject } catch (e) { }
+                };
 
                 // Try prime
                 try { window.__requestAdapters(); } catch (e) {}
@@ -894,6 +951,7 @@ class AcpBridge(
             window.__toggleAgentEnabled = window.__toggleAgentEnabled || function(id, e) {};
             window.__loginAgent = window.__loginAgent || function(id) {};
             window.__logoutAgent = window.__logoutAgent || function(id) {};
+            window.__attachFile = window.__attachFile || function(chatId) {};
         """.trimIndent()
         cefBrowser.executeJavaScript(script, cefBrowser.url, 0)
     }
@@ -945,17 +1003,23 @@ class AcpBridge(
             is ContentBlock.Audio -> {
                 pushContentChunk(chatId, role, "audio", data = content.data, mimeType = content.mimeType, isReplay = isReplay)
             }
-            else -> {
-                try {
-                    val json = Json.encodeToJsonElement(content).jsonObject
-                    val type = json["type"]?.jsonPrimitive?.content ?: ""
-                    if (type == "video") {
-                        val data = json["data"]?.jsonPrimitive?.content ?: ""
-                        val mimeType = json["mimeType"]?.jsonPrimitive?.content ?: ""
-                        pushContentChunk(chatId, role, "video", data = data, mimeType = mimeType, isReplay = isReplay)
+            is ContentBlock.ResourceLink -> {
+                // Determine if it's a data URI or a real path
+                if (content.uri.startsWith("data:")) {
+                    val base64 = content.uri.substringAfter("base64,")
+                    pushContentChunk(chatId, role, "file", data = base64, mimeType = content.mimeType, isReplay = isReplay)
+                } else {
+                    pushContentChunk(chatId, role, "file", text = "[File: ${content.uri}]", mimeType = content.mimeType, isReplay = isReplay)
+                }
+            }
+            is ContentBlock.Resource -> {
+                when (val res = content.resource) {
+                    is EmbeddedResourceResource.BlobResourceContents -> {
+                        pushContentChunk(chatId, role, "file", data = res.blob, mimeType = res.mimeType, isReplay = isReplay)
                     }
-                } catch (e: Exception) {
-                    // Unsupported content types silently ignored
+                    is EmbeddedResourceResource.TextResourceContents -> {
+                        pushContentChunk(chatId, role, "file", text = res.text, mimeType = res.mimeType, isReplay = isReplay)
+                    }
                 }
             }
         }
@@ -1170,9 +1234,25 @@ class AcpBridge(
                 val authStatus = AcpAuthService.getAuthStatus(info.name)
                 val dlStatus = downloadStatuses[info.name] ?: ""
 
+                // Inline SVG icons as base64 so they load correctly in JCEF
+                val iconBase64 = info.iconPath?.let { path ->
+                    try {
+                        val stream = AcpAdapterConfig::class.java.getResourceAsStream(path)
+                        if (stream != null) {
+                            val bytes = stream.use { it.readBytes() }
+                            val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
+                            "data:image/svg+xml;base64,$b64"
+                        } else ""
+                    } catch (e: Exception) {
+                        log.warn("Failed to read icon at $path", e)
+                        ""
+                    }
+                } ?: ""
+
                 AdapterPayload(
                     id = info.name,
                     displayName = info.displayName,
+                    iconPath = iconBase64,
                     isDefault = info.name == defaultName,
                     defaultModelId = info.defaultModelId ?: "",
                     models = info.models.map { AdapterModelPayload(it.id, it.displayName) },
@@ -1244,6 +1324,22 @@ class AcpBridge(
          } catch (_: Exception) { null to null }
     }
     
+    /** Converts a file/video frontend block into an ACP ContentBlock. */
+    private fun fileOrVideoBlock(name: String, mimeType: String, data: String?, path: String?): ContentBlock {
+        if (data != null) {
+            val uri = if (path != null) "file:///${path.replace("\\", "/").trimStart('/')}" else "file:///$name"
+            return ContentBlock.Resource(
+                resource = EmbeddedResourceResource.BlobResourceContents(blob = data, uri = uri, mimeType = mimeType)
+            )
+        }
+        if (path != null) {
+            return ContentBlock.ResourceLink(
+                name = name, uri = "file:///${path.replace("\\", "/").trimStart('/')}", mimeType = mimeType
+            )
+        }
+        return ContentBlock.Text("[File: $name]")
+    }
+
     private fun parseTextPayload(payload: String?): Pair<String?, String?> {
          val raw = payload?.trim().orEmpty()
          if (raw.isEmpty()) return null to null
@@ -1279,6 +1375,14 @@ class AcpBridge(
                             val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "audio/wav"
                             ContentBlock.Audio(data, mimeType)
                         }
+                         "video", "file" -> {
+                             val data = blockObj["data"]?.jsonPrimitive?.content
+                             val path = blockObj["path"]?.jsonPrimitive?.content
+                             val defaultMime = if (type == "video") "video/mp4" else "application/octet-stream"
+                             val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: defaultMime
+                             val name = blockObj["name"]?.jsonPrimitive?.content ?: type!!
+                             fileOrVideoBlock(name, mimeType, data, path)
+                         }
                         else -> {
                             val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
                             ContentBlock.Text(text)
@@ -1287,10 +1391,10 @@ class AcpBridge(
                 }
                 return chatId to blocks
             }
-            
+
             // 2. Fallback to text field
             val textValue = obj["text"]?.jsonPrimitive?.content ?: ""
-            
+
             // 3. If textValue looks like a JSON array of blocks, try to parse it (compatibility with current UI)
             if (textValue.startsWith("[") && textValue.endsWith("]")) {
                 try {
@@ -1307,6 +1411,14 @@ class AcpBridge(
                                 val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
                                 val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "audio/wav"
                                 ContentBlock.Audio(data, mimeType)
+                            }
+                            "video", "file" -> {
+                                val data = blockObj["data"]?.jsonPrimitive?.content
+                                val path = blockObj["path"]?.jsonPrimitive?.content
+                                val defaultMime = if (type == "video") "video/mp4" else "application/octet-stream"
+                                val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: defaultMime
+                                val name = blockObj["name"]?.jsonPrimitive?.content ?: type!!
+                                fileOrVideoBlock(name, mimeType, data, path)
                             }
                             else -> {
                                 val text = blockObj["text"]?.jsonPrimitive?.content ?: ""

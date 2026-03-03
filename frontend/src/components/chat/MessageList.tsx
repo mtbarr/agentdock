@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, memo } from 'react';
 import { Message } from '../../types/chat';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 
 import { ChatLoadingIndicator } from './ChatLoadingIndicator';
 
-export default function MessageList({ 
+function MessageList({ 
   messages,
   onImageClick,
   isSending,
@@ -39,7 +39,7 @@ export default function MessageList({
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="flex-1 min-h-0 overflow-y-auto p-8 space-y-6"
+      className="flex-1 min-h-0 overflow-y-auto p-8 space-y-6 scroll-smooth"
     >
       <div className="max-w-4xl mx-auto">
 
@@ -61,7 +61,7 @@ export default function MessageList({
           return (
             <UserMessage 
               key={message.id} 
-                message={message} 
+              message={message} 
               onImageClick={onImageClick} 
             />
           );
@@ -78,3 +78,5 @@ export default function MessageList({
     </div>
   );
 }
+
+export default memo(MessageList);

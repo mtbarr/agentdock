@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useRef, useEffect } from 'react';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useFileChanges } from '../../hooks/useFileChanges';
 import { AgentOption, FileChangeSummary, HistorySessionMeta } from '../../types/chat';
@@ -32,7 +32,6 @@ export default function ChatSessionView({
     isSending,
     agentOptions,
     selectedAgentId,
-    modelOptions,
     selectedModelId,
     handleModelChange,
     modeOptions,
@@ -85,6 +84,75 @@ export default function ChatSessionView({
     setTimeout(() => setDownloaded(false), 2000);
   };
 
+  // --- Resizing Logic ---
+  const INPUT_MIN_HEIGHT = 144;
+  const INPUT_MIN_HEIGHT_WITH_ATTACHMENTS = 192;
+  const INPUT_MAX_HEIGHT = 424;
+  const INPUT_DEFAULT_HEIGHT = 180;
+  const INPUT_BOTTOM_BAR_BUFFER = 86;
+  const ATTACHMENT_BAR_HEIGHT = 48;
+  const MAX_HEIGHT_RATIO = 0.8;
+
+  const [inputHeight, setInputHeight] = useState(INPUT_DEFAULT_HEIGHT);
+  const [contentHeight, setContentHeight] = useState(0);
+  const isResizingRef = useRef(false);
+  const [isManualSize, setIsManualSize] = useState(false);
+
+  const handleMouseMoveRef = useRef<((e: MouseEvent) => void) | null>(null);
+  const handleMouseUpRef = useRef<(() => void) | null>(null);
+
+  const stopResizing = useCallback(() => {
+    isResizingRef.current = false;
+    document.body.style.cursor = 'default';
+    if (handleMouseMoveRef.current) {
+      document.removeEventListener('mousemove', handleMouseMoveRef.current);
+    }
+    if (handleMouseUpRef.current) {
+      document.removeEventListener('mouseup', handleMouseUpRef.current);
+    }
+  }, []);
+
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    setIsManualSize(true);
+    document.body.style.cursor = 'row-resize';
+
+    handleMouseMoveRef.current = (ev: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const newHeight = window.innerHeight - ev.clientY;
+      const maxHeight = window.innerHeight * MAX_HEIGHT_RATIO;
+      const clampedHeight = Math.max(INPUT_MIN_HEIGHT, Math.min(newHeight, maxHeight));
+      setInputHeight(clampedHeight);
+    };
+
+    handleMouseUpRef.current = stopResizing;
+
+    document.addEventListener('mousemove', handleMouseMoveRef.current);
+    document.addEventListener('mouseup', handleMouseUpRef.current);
+  }, [stopResizing]);
+
+  // Auto-sizing logic: Grow and shrink to fit content
+  useEffect(() => {
+    if (isManualSize) return;
+
+    const hasAttachmentBar = attachments.some(a => !a.isInline);
+    const extraHeight = hasAttachmentBar ? ATTACHMENT_BAR_HEIGHT : 0;
+
+    const totalContentNeeded = contentHeight + INPUT_BOTTOM_BAR_BUFFER + extraHeight;
+    const maxHeightLimit = Math.min(INPUT_MAX_HEIGHT, window.innerHeight * MAX_HEIGHT_RATIO);
+    const minTarget = hasAttachmentBar ? INPUT_MIN_HEIGHT_WITH_ATTACHMENTS : INPUT_MIN_HEIGHT;
+    const clampedTarget = Math.max(minTarget, Math.min(totalContentNeeded, maxHeightLimit));
+
+    setInputHeight(clampedTarget);
+  }, [contentHeight, isManualSize, attachments]);
+
+  useEffect(() => {
+    return () => {
+      stopResizing();
+    };
+  }, [stopResizing]);
+
   return (
     <div className="flex flex-col h-full relative">
       <MessageList 
@@ -107,35 +175,47 @@ export default function ChatSessionView({
         onShowDiff={handleShowDiff}
       />
 
-      <ChatInput
-        inputValue={inputValue}
-        onInputChange={setInputValue}
-        onSend={handleSend}
-        onStop={handleStop}
-        isSending={isSending}
-        
-        agentOptions={agentOptions}
-        selectedAgentId={selectedAgentId}
-        onAgentChange={(id) => {
-          if (onAgentChangeRequest && id !== selectedAgentId) {
-            onAgentChangeRequest(id);
-          }
-        }}
-        
-        modelOptions={modelOptions}
-        selectedModelId={selectedModelId}
-        onModelChange={handleModelChange}
-        
-        modeOptions={modeOptions}
-        selectedModeId={selectedModeId}
-        onModeChange={handleModeChange}
-        
-        hasSelectedAgent={hasSelectedAgent}
-        attachments={attachments}
-        onAttachmentsChange={setAttachments}
-        onImageClick={setSelectedImage}
-      />
+      {/* Resize Handle / Divider */}
+      <div 
+        onMouseDown={startResizing}
+        className="h-[12px] -my-[6px] w-full cursor-row-resize relative z-10 group select-none"
+      >
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px] bg-border transition-colors group-hover:bg-accent" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-[2px] bg-border group-hover:bg-accent rounded-full transition-all" />
+      </div>
 
+      <div style={{ height: `${inputHeight}px` }} className="flex flex-col">
+        <ChatInput
+          chatId={chatId}
+          inputValue={inputValue}
+          onInputChange={setInputValue}
+          onSend={handleSend}
+          onStop={handleStop}
+          isSending={isSending}
+          
+          agentOptions={agentOptions}
+          selectedAgentId={selectedAgentId}
+          onAgentChange={(id) => {
+            if (onAgentChangeRequest && id !== selectedAgentId) {
+              onAgentChangeRequest(id);
+            }
+          }}
+          
+          selectedModelId={selectedModelId}
+          onModelChange={handleModelChange}
+          
+          modeOptions={modeOptions}
+          selectedModeId={selectedModeId}
+          onModeChange={handleModeChange}
+          
+          hasSelectedAgent={hasSelectedAgent}
+          attachments={attachments}
+          onAttachmentsChange={setAttachments}
+          onImageClick={setSelectedImage}
+          onHeightChange={setContentHeight}
+          customHeight={inputHeight}
+        />
+      </div>
 
       {permissionRequest && isActive && (
         <PermissionModal 

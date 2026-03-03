@@ -181,6 +181,14 @@ function buildBlock(chunk: ContentChunk): RichContentBlock {
       return { type: 'audio', data: chunk.data!, mimeType: chunk.mimeType! } as any;
     case 'video':
       return { type: 'video', data: chunk.data!, mimeType: chunk.mimeType! } as any;
+    case 'file':
+      return { 
+        type: 'file', 
+        name: chunk.name || 'file', 
+        mimeType: chunk.mimeType || 'application/octet-stream',
+        data: chunk.data,
+        path: chunk.path
+      } as any;
     case 'tool_call': {
       const entry = buildToolCallEntry(chunk);
       if (!isExploringChunk(chunk)) {
@@ -312,7 +320,7 @@ export function useChatSession(
   const [selectedModelByAgent, setSelectedModelByAgent] = useState<Record<string, string>>({});
   const [selectedModeByAgent, setSelectedModeByAgent] = useState<Record<string, string>>({});
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
-  const [attachments, setAttachments] = useState<{ id: string; data: string; mimeType: string }[]>([]);
+  const [attachments, setAttachments] = useState<{ id: string; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean }[]>([]);
   const [acpSessionId, setAcpSessionId] = useState<string>('');
 
   const pendingBlocksRef = useRef<any[] | null>(null);
@@ -357,8 +365,12 @@ export function useChatSession(
 
   const adapterDisplayName = selectedAgent?.displayName || '';
 
-  const agentOptions: DropdownOption[] = availableAgents.map((agent) => ({ id: agent.id, label: agent.displayName }));
-  const modelOptions: DropdownOption[] = availableModels.map((model) => ({ id: model.id, label: model.displayName }));
+  const agentOptions: DropdownOption[] = availableAgents.map((agent) => ({ 
+    id: agent.id, 
+    label: agent.displayName,
+    iconPath: agent.iconPath,
+    subOptions: agent.models?.map(m => ({ id: m.id, label: m.displayName }))
+  }));
   const modeOptions: DropdownOption[] = availableModes.map((mode) => ({ id: mode.id, label: mode.displayName }));
 
   // Sync selection when agents list changes (passed from parent)
@@ -527,6 +539,16 @@ export function useChatSession(
     };
   }, [chatId, enqueueChunk, flushChunks, adapterDisplayName, selectedModelId, selectedModeId]);
 
+  // Handle native attachments from backend
+  useEffect(() => {
+    const unsub = ACPBridge.onAttachmentsAdded((e) => {
+      const { chatId: cid, files } = e.detail;
+      if (cid !== chatId) return;
+      setAttachments((prev) => [...prev, ...files]);
+    });
+    return unsub;
+  }, [chatId]);
+
   useEffect(() => {
     if (!historySession) return;
     if (!historySession.sessionId || !historySession.adapterName) return;
@@ -646,7 +668,7 @@ export function useChatSession(
       const attId = match[1];
       const att = attachments.find(a => a.id === attId);
       if (att) {
-        blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType });
+        blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType, isInline: true });
         usedAttachmentIds.add(attId);
       } else {
         blocks.push({ type: 'text', text: match[0] }); // Keep as text if not found
@@ -660,7 +682,20 @@ export function useChatSession(
     // Append any attachments that weren't explicitly placed
     attachments.forEach(att => {
       if (!usedAttachmentIds.has(att.id)) {
-        blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType });
+        if (att.mimeType.startsWith('image/') && att.data) {
+          blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType, isInline: false });
+        } else if (att.mimeType.startsWith('audio/') && att.data) {
+          blocks.push({ type: 'audio', data: att.data, mimeType: att.mimeType, isInline: false });
+        } else {
+          blocks.push({ 
+            type: 'file', 
+            name: att.name, 
+            mimeType: att.mimeType, 
+            data: att.data, 
+            path: att.path,
+            isInline: false
+          });
+        }
       }
     });
 
@@ -741,7 +776,6 @@ export function useChatSession(
     setSelectedAgentId,
     agentOptions,
     selectedModelId,
-    modelOptions,
     handleModelChange,
     selectedModeId,
     modeOptions,
@@ -755,7 +789,8 @@ export function useChatSession(
     setAttachments,
     acpSessionId,
     adapterName: selectedAgentId,
-    adapterDisplayName: selectedAgent?.displayName || ''
+    adapterDisplayName: selectedAgent?.displayName || '',
+    adapterIconPath: selectedAgent?.iconPath || ''
   };
 }
 

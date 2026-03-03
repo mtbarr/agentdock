@@ -57,6 +57,7 @@ object AcpAdapterConfig {
         val name: String = "", // Filled after parsing
         val resourceName: String? = null,
         val displayName: String,
+        val iconPath: String? = null,
         val npmPackage: String? = null,
         val npmVersion: String? = null,
         val launchPath: String,

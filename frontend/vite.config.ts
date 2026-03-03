@@ -8,6 +8,7 @@ export default defineConfig({
   build: {
     outDir: '../src/main/resources/webview',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 700,
     rollupOptions: {
       output: {
         entryFileNames: `assets/[name].js`,

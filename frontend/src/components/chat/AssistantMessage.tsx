@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Message } from '../../types/chat';
 import { MarkdownMessage } from './MarkdownMessage';
 import { ContentBlockRenderer } from './blocks/ContentBlockRenderer';
@@ -8,7 +9,7 @@ interface AssistantMessageProps {
   showBorder: boolean;
 }
 
-export function AssistantMessage({ message, onImageClick, showBorder }: AssistantMessageProps) {
+export const AssistantMessage = memo(({ message, onImageClick, showBorder }: AssistantMessageProps) => {
   const renderContent = () => {
     // 1. Check for contentBlocks (new structured format)
     if (message.contentBlocks && message.contentBlocks.length > 0) {
@@ -94,4 +95,4 @@ export function AssistantMessage({ message, onImageClick, showBorder }: Assistan
       </div>
     </div>
   );
-}
+});

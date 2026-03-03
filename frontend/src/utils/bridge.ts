@@ -21,7 +21,8 @@ const EVENT_NAMES = {
   LOG: 'acp-log',
   HISTORY_LIST: 'history-list',
   UNDO_RESULT: 'acp-undo-result',
-  CHANGES_STATE: 'acp-changes-state'
+  CHANGES_STATE: 'acp-changes-state',
+  ATTACHMENTS_ADDED: 'acp-attachments-added'
 };
 
 export const ACPBridge = {
@@ -68,6 +69,10 @@ export const ACPBridge = {
 
     window.__onChangesState = (chatId, state) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.CHANGES_STATE, { detail: { chatId, state } }));
+    };
+
+    window.__onAttachmentsAdded = (chatId, files) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.ATTACHMENTS_ADDED, { detail: { chatId, files } }));
     };
 
 
@@ -137,5 +142,10 @@ export const ACPBridge = {
   onChangesState: (callback: (e: CustomEvent<ChangesStateEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.CHANGES_STATE, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.CHANGES_STATE, callback as EventListener);
+  },
+
+  onAttachmentsAdded: (callback: (e: CustomEvent<{ chatId: string; files: any[] }>) => void) => {
+    window.addEventListener(EVENT_NAMES.ATTACHMENTS_ADDED, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.ATTACHMENTS_ADDED, callback as EventListener);
   }
 };

@@ -746,6 +746,7 @@ class AcpClientService(val project: Project) {
             }
         }
     }
+
 }
 
 private class LineLoggingOutputStream(
@@ -834,9 +835,9 @@ private class LineLoggingInputStream(
         }
     }
 
-    private fun flushRemainder() { 
+    private fun flushRemainder() {
         if (buffer.size() > 0) {
-            flushInternal() 
+            flushInternal()
         }
     }
 }

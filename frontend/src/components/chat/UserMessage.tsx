@@ -1,17 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
-import { Message } from '../../types/chat';
+import { useState, useEffect, useRef, memo } from 'react';
+import { Message, RichContentBlock, TextBlock, ImageBlock, FileBlock } from '../../types/chat';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import { AttachmentItem } from './shared/AttachmentItem';
 
 interface UserMessageProps {
   message: Message;
   onImageClick: (src: string) => void;
 }
 
-export function UserMessage({ message, onImageClick }: UserMessageProps) {
+export const UserMessage = memo(({ message, onImageClick }: UserMessageProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isLargeContent, setIsLargeContent] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const [hoveredImage, setHoveredImage] = useState<{ src: string, x: number, y: number } | null>(null);
 
   useEffect(() => {
     const el = contentRef.current;
@@ -32,42 +32,75 @@ export function UserMessage({ message, onImageClick }: UserMessageProps) {
     return () => observer.disconnect();
   }, [message.content, message.blocks]);
 
+  const getBlocks = () => {
+    const inline: RichContentBlock[] = [];
+    const trailing: RichContentBlock[] = [];
+    if (message.blocks) {
+      message.blocks.forEach(b => {
+        if (b.type === 'file' || (b.type === 'image' && (b as ImageBlock).isInline === false)) {
+          trailing.push(b);
+        } else {
+          inline.push(b);
+        }
+      });
+    }
+    return { inline, trailing };
+  };
+
+  const { inline, trailing } = getBlocks();
+
   const renderContent = () => {
-    if (message.blocks && message.blocks.length > 0) {
+    if (inline.length > 0) {
       return (
         <div className="whitespace-pre-wrap">
-          {message.blocks.map((block, idx) => {
-            if (block.type === 'image' && block.data) {
-              const src = `data:${block.mimeType};base64,${block.data}`;
+          {inline.map((block, idx) => {
+            if (block.type === 'image' && (block as ImageBlock).data) {
+              const img = block as ImageBlock;
               return (
-                <div 
-                  key={idx} 
-                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-border
-                    cursor-pointer align-middle mx-1 bg-background transition-all"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onImageClick(src);
+                <AttachmentItem
+                  key={idx}
+                  att={{
+                    id: String(idx),
+                    name: 'Image',
+                    mimeType: img.mimeType,
+                    data: img.data
                   }}
-                  onMouseEnter={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const parentRect = e.currentTarget.closest('.user-message-bubble')?.getBoundingClientRect();
-                    if (parentRect) {
-                      setHoveredImage({ src, x: rect.left - parentRect.left, y: rect.top - parentRect.top });
-                    }
-                  }}
-                  onMouseLeave={() => setHoveredImage(null)}
-                >
-                  <img src={src} alt="" className="w-3 h-3 object-cover" />
-                  <span className="text-xs font-medium opacity-90">Image</span>
-                </div>
+                  onImageClick={onImageClick}
+                />
               );
             }
-            return <span key={idx}>{(block as any).text || ''}</span>;
+            return <span key={idx}>{block.type === 'text' ? (block as TextBlock).text : ''}</span>;
           })}
         </div>
       );
     }
     return <div className="whitespace-pre-wrap">{message.content}</div>;
+  };
+
+  const renderTrailingAttachments = () => {
+    if (trailing.length === 0) return null;
+    return (
+      <div className="flex flex-wrap gap-2 mt-3 block w-full">
+        {trailing.map((block, idx) => {
+          if (block.type === 'file') {
+            const fb = block as FileBlock;
+            return (
+              <AttachmentItem key={`trail-${idx}`}
+                att={{ id: `trail-${idx}`, name: fb.name, mimeType: fb.mimeType, data: fb.data }}
+                onImageClick={onImageClick}
+              />
+            );
+          }
+          const ib = block as ImageBlock;
+          return (
+            <AttachmentItem key={`trail-${idx}`}
+              att={{ id: `trail-${idx}`, name: 'Image', mimeType: ib.mimeType, data: ib.data }}
+              onImageClick={onImageClick}
+            />
+          );
+        })}
+      </div>
+    );
   };
 
   const formattedDate = message.timestamp ? (() => {
@@ -115,25 +148,9 @@ export function UserMessage({ message, onImageClick }: UserMessageProps) {
               pointer-events-none z-10" />
           )}
 
-          {/* Moved popover outside the clipped area, positioned relative to bubble */}
-          {hoveredImage && (
-            <div
-              className="absolute z-50 pointer-events-none rounded shadow-2xl border border-border"
-              style={{
-                left: hoveredImage.x > 150 ? 'auto' : `${hoveredImage.x}px`,
-                right: hoveredImage.x > 150 ? '0' : 'auto',
-                bottom: `calc(100% - ${hoveredImage.y}px + 8px)`
-              }}
-            >
-              <img
-                src={hoveredImage.src}
-                alt=""
-                className="max-w-[250px] max-h-[250px] rounded-sm object-contain"
-              />
-            </div>
-          )}
+          {renderTrailingAttachments()}
         </div>
       </div>
     </div>
   );
-}
+});

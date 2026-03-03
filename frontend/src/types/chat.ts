@@ -5,9 +5,10 @@ export interface AcpLogEntryPayload {
 }
 
 export interface TextBlock { type: 'text'; text: string; }
-export interface ImageBlock { type: 'image'; data: string; mimeType: string; }
-export interface AudioBlock { type: 'audio'; data: string; mimeType: string; }
-export interface VideoBlock { type: 'video'; data: string; mimeType: string; }
+export interface ImageBlock { type: 'image'; data: string; mimeType: string; isInline?: boolean; }
+export interface AudioBlock { type: 'audio'; data: string; mimeType: string; isInline?: boolean; }
+export interface VideoBlock { type: 'video'; data: string; mimeType: string; isInline?: boolean; }
+export interface FileBlock { type: 'file'; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean; }
 
 export interface ToolCallEntry {
   toolCallId: string;
@@ -31,7 +32,7 @@ export interface PlanEntry {
 
 export interface PlanBlock { type: 'plan'; entries: PlanEntry[]; isReplay?: boolean; }
 
-export type RichContentBlock = TextBlock | ImageBlock | AudioBlock | VideoBlock | ExploringBlock | ToolCallBlock | PlanBlock;
+export type RichContentBlock = TextBlock | ImageBlock | AudioBlock | VideoBlock | FileBlock | ExploringBlock | ToolCallBlock | PlanBlock;
 
 
 
@@ -62,6 +63,7 @@ export interface ModeOption {
 export interface AgentOption {
   id: string;
   displayName: string;
+  iconPath?: string;
   isDefault: boolean;
   defaultModelId?: string;
   models?: ModelOption[];
@@ -88,6 +90,8 @@ export interface PermissionRequest {
 export interface DropdownOption {
   id: string;
   label: string;
+  iconPath?: string;
+  subOptions?: DropdownOption[];
 }
 
 export interface ChatTab {
@@ -114,9 +118,11 @@ export interface HistorySessionMeta {
 export interface ContentChunk {
   chatId: string;
   role: 'user' | 'assistant';
-  type: 'text' | 'thinking' | 'image' | 'audio' | 'video' | 'tool_call' | 'tool_call_update' | 'plan';
+  type: 'text' | 'thinking' | 'image' | 'audio' | 'video' | 'file' | 'tool_call' | 'tool_call_update' | 'plan';
   text?: string;
   data?: string;
+  path?: string;
+  name?: string;
   mimeType?: string;
   isReplay: boolean;
   // tool_call specific
@@ -179,6 +185,7 @@ declare global {
     __showDiff?: (payload: string) => void;
     __openFile?: (payload: string) => void;
     __openUrl?: (url: string) => void;
+    __attachFile?: (chatId: string) => void;
 
     // Callbacks (Backend -> Frontend)
     __onAcpLog?: (payload: AcpLogEntryPayload) => void;
@@ -189,6 +196,7 @@ declare global {
     __onMode?: (chatId: string, modeId: string) => void;
     __onPermissionRequest?: (request: PermissionRequest) => void;
     __onHistoryList?: (list: HistorySessionMeta[]) => void;
+    __onAttachmentsAdded?: (chatId: string, files: { id: string; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean }[]) => void;
 
     __onUndoResult?: (chatId: string, result: UndoResultPayload) => void;
     __onChangesState?: (chatId: string, state: ChangesState) => void;
