@@ -6,6 +6,7 @@ interface TabBarProps {
   activeTabId: string;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
+  onCloseAllTabs: () => void;
   onNewTab: () => void;
   onNewTabWithAgent: (agentId: string) => void;
   agents: AgentOption[];
@@ -43,6 +44,7 @@ export default function TabBar({
   activeTabId,
   onSelectTab,
   onCloseTab,
+  onCloseAllTabs,
   onNewTab,
   onNewTabWithAgent,
   agents,
@@ -135,7 +137,7 @@ export default function TabBar({
           </button>
 
           {menuOpen && (
-            <div className="absolute top-full right-0 mt-1 min-w-[200px] max-h-[80vh] overflow-y-auto bg-background-secondary border border-border rounded-md shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 no-scrollbar">
+            <div className="absolute top-full right-0 mt-1 w-[280px] max-w-[320px] max-h-[80vh] overflow-y-auto bg-background-secondary border border-border rounded-md shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 no-scrollbar">
               
               {/* Open Tabs Section */}
               {tabs.length > 0 && (
@@ -163,6 +165,15 @@ export default function TabBar({
                       )}
                     </button>
                   ))}
+                  <button
+                    onClick={() => {
+                      onCloseAllTabs();
+                      setMenuOpen(false);
+                    }}
+                    className="flex items-center w-full px-3 py-1.5 text-left text-foreground/80 hover:bg-accent hover:text-accent-foreground transition-colors"
+                  >
+                    Close all tabs
+                  </button>
                   <div className="h-[1px] bg-border my-1 mx-2" />
                 </div>
               )}
@@ -185,7 +196,7 @@ export default function TabBar({
                       <span className="mr-2 flex items-center justify-center opacity-70 group-hover:opacity-100">
                         {getAgentIcon(agent.id, agents)}
                       </span>
-                      <span className="truncate">{agent.displayName}</span>
+                      <span className="flex-1 min-w-0 truncate">{agent.displayName}</span>
                     </button>
                   ))
                 ) : (

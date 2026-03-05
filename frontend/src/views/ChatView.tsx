@@ -76,10 +76,8 @@ export function ChatView() {
     const newTabs = tabs.filter((t) => t.id !== id);
     
     if (newTabs.length === 0) {
-      const freshId = nextId('tab');
-      const freshSessionId = nextId('ses');
-      setTabs([{ id: freshId, title: 'Untitled', sessionId: freshSessionId }]);
-      setActiveTabId(freshId);
+      setTabs([]);
+      setActiveTabId('');
       return;
     }
 
@@ -93,6 +91,21 @@ export function ChatView() {
         setActiveTabId(tabs[currentIndex + 1].id);
       }
     }
+  };
+
+  const handleCloseAllTabs = () => {
+    if (typeof window.__stopAgent === 'function') {
+      tabs.forEach((tab) => {
+        try {
+          window.__stopAgent?.(tab.sessionId);
+        } catch (e) {
+          console.warn('[ChatView] Failed to stop agent:', e);
+        }
+      });
+    }
+    setTabs([]);
+    setActiveTabId('');
+    setShowHistory(false);
   };
 
   const handleOpenHistory = (item: HistorySessionMeta) => {
@@ -123,6 +136,7 @@ export function ChatView() {
           setShowHistory(false);
         }}
         onCloseTab={handleCloseTab}
+        onCloseAllTabs={handleCloseAllTabs}
         onNewTab={() => handleNewTab()}
         onNewTabWithAgent={(agentId) => handleNewTab(agentId)}
         agents={availableAgents}
@@ -145,11 +159,56 @@ export function ChatView() {
                   chatId={tab.sessionId}
                   historySession={tab.historySession}
                   availableAgents={availableAgents}
+                  isActive={isTabActive}
                   onAgentChangeRequest={(agentId) => handleNewTab(agentId)}
                />
             </div>
           );
         })}
+
+        {!showHistory && tabs.length === 0 && (
+          <div className="absolute inset-0 w-full h-full z-10 bg-background flex items-center justify-center">
+            <div className="flex flex-col items-center gap-4 max-w-[620px] px-6 text-center">
+              {availableAgents.length === 0 ? (
+                <>
+                  <div className="text-ide-regular text-foreground/85">
+                    No AI agents are currently available.
+                  </div>
+                  <div className="text-sm text-foreground/60">
+                    Install at least one agent and sign in from the plugin Agent Management section.
+                  </div>
+                  <button
+                    onClick={() => window.setView?.('management')}
+                    className="px-4 py-2 rounded-md border border-border bg-background-secondary hover:bg-accent hover:text-accent-foreground transition-colors text-ide-regular"
+                  >
+                    Open Agent Management
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => handleNewTab()}
+                    className="px-4 py-2 rounded-md border border-border bg-background-secondary hover:bg-accent hover:text-accent-foreground transition-colors text-ide-regular"
+                  >
+                    Open new chat
+                  </button>
+                <div className="flex items-center gap-2 flex-wrap justify-center max-w-[520px]">
+                  {availableAgents.map((agent) => (
+                    <button
+                      key={agent.id}
+                      onClick={() => handleNewTab(agent.id)}
+                      className="px-3 py-1.5 rounded-md border border-border bg-background-secondary hover:bg-accent hover:text-accent-foreground transition-colors text-xs flex items-center gap-2"
+                    >
+                      {agent.iconPath && <img src={agent.iconPath} className="w-3.5 h-3.5" alt="" />}
+                      <span>{agent.displayName}</span>
+                    </button>
+                  ))}
+                </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {showHistory && (
             <div className="absolute inset-0 w-full h-full z-20 bg-background">

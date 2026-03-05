@@ -12,6 +12,7 @@ interface ChatSessionProps {
   chatId: string;
   availableAgents: AgentOption[];
   historySession?: HistorySessionMeta;
+  isActive?: boolean;
   onAgentChangeRequest?: (agentId: string) => void;
 }
 
@@ -20,6 +21,7 @@ export default function ChatSessionView({
   chatId,
   availableAgents,
   historySession,
+  isActive = false,
   onAgentChangeRequest
 }: ChatSessionProps) {
   const {
@@ -45,7 +47,8 @@ export default function ChatSessionView({
     setAttachments,
     acpSessionId,
     adapterName,
-    adapterDisplayName
+    adapterDisplayName,
+    adapterIconPath
   } = useChatSession(chatId, availableAgents, initialAgentId, historySession);
 
   const {
@@ -165,6 +168,7 @@ export default function ChatSessionView({
             isSending={isSending}
             status={status}
             agentName={adapterDisplayName}
+            agentIconPath={adapterIconPath}
             isHistoryReplaying={isHistoryReplaying}
           />
         </div>
@@ -230,6 +234,7 @@ export default function ChatSessionView({
             onImageClick={setSelectedImage}
             onHeightChange={setContentHeight}
             customHeight={inputHeight}
+            autoFocus={isActive}
           />
         </div>
       </div>

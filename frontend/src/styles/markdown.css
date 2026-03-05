@@ -82,6 +82,19 @@
 .markdown-body {
     @apply my-4 text-inherit leading-relaxed break-words;
 
+    /* Text cursor only for regular markdown text nodes */
+    & p,
+    & h1,
+    & h2,
+    & h3,
+    & h4,
+    & h5,
+    & h6,
+    & li,
+    & blockquote {
+        cursor: text;
+    }
+
     & p {
         margin-bottom: var(--ide-paragraph-spacing);
     }

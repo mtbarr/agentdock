@@ -69,7 +69,7 @@ export const UserMessage = memo(({ message, onImageClick }: UserMessageProps) =>
                 />
               );
             }
-            return <span key={idx}>{block.type === 'text' ? (block as TextBlock).text : ''}</span>;
+            return <span className="cursor-text" key={idx}>{block.type === 'text' ? (block as TextBlock).text : ''}</span>;
           })}
         </div>
       );

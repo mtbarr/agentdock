@@ -11,6 +11,7 @@ interface MessageListProps {
   isSending?: boolean;
   status?: string;
   agentName?: string;
+  agentIconPath?: string;
   isHistoryReplaying?: boolean;
 }
 
@@ -20,6 +21,7 @@ function MessageList({
   isSending,
   status,
   agentName,
+  agentIconPath,
   isHistoryReplaying = false
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -216,6 +218,16 @@ function MessageList({
             />
           );
         })}
+
+        {visibleMessages.length === 0 && !isSending && !isHistoryReplaying && agentIconPath && (
+          <div className="flex items-center justify-center min-h-[45vh]">
+            <img
+              src={agentIconPath}
+              alt=""
+              className="w-14 h-14 opacity-60 select-none pointer-events-none"
+            />
+          </div>
+        )}
 
         {isSending && !isHistoryReplaying && (
           <div className="flex justify-start mb-8">

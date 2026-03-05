@@ -10,7 +10,7 @@
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="UnifiedLLM" icon="AllIcons.General.Modified" anchor="right"
+        <toolWindow id="UnifiedLLM" icon="/icons/unified_toolwindow.svg" anchor="right"
                     factoryClass="unified.llm.UnifiedLlmToolWindowFactory"/>
     </extensions>
 </idea-plugin>

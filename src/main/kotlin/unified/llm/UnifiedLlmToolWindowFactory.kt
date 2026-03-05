@@ -29,8 +29,10 @@ import unified.llm.acp.AcpBridge
 import unified.llm.history.HistoryBridge
 import java.awt.BorderLayout
 import java.awt.Cursor
+import java.awt.FlowLayout
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.JProgressBar
 
 
 class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
@@ -47,7 +49,15 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val rootPanel = JPanel(BorderLayout())
-        rootPanel.add(JLabel("Initializing AI Chat..."), BorderLayout.CENTER)
+        val loadingPanel = JPanel(FlowLayout(FlowLayout.CENTER, 0, 0))
+        loadingPanel.isOpaque = false
+        val progress = JProgressBar().apply {
+            isIndeterminate = true
+            isBorderPainted = false
+            isStringPainted = false
+        }
+        loadingPanel.add(progress)
+        rootPanel.add(loadingPanel, BorderLayout.CENTER)
         val content = ContentFactory.getInstance().createContent(rootPanel, "", false)
         toolWindow.contentManager.addContent(content)
 

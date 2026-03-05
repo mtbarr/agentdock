@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
@@ -47,6 +47,7 @@ interface ChatInputProps {
   onImageClick: (src: string) => void;
   onHeightChange?: (contentHeight: number) => void;
   customHeight?: number;
+  autoFocus?: boolean;
 }
 
 
@@ -70,7 +71,8 @@ export default function ChatInput({
   onAttachmentsChange,
   onImageClick,
   onHeightChange,
-  customHeight = 180
+  customHeight = 180,
+  autoFocus = false
 }: ChatInputProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
@@ -115,6 +117,18 @@ export default function ChatInput({
     reader.readAsDataURL(file);
   }, [attachments, onAttachmentsChange]);
 
+  useEffect(() => {
+    if (!autoFocus) return;
+    const focusEditor = () => {
+      const editable = editorContainerRef.current?.querySelector('[contenteditable="true"]') as HTMLElement | null;
+      if (editable) {
+        editable.focus();
+      }
+    };
+    const raf = requestAnimationFrame(focusEditor);
+    return () => cancelAnimationFrame(raf);
+  }, [autoFocus, chatId]);
+
   return (
     <div style={{ height: customHeight ? `${customHeight}px` : undefined }} className="flex-shrink-0 px-4 pb-4 pt-2">
       <div className="max-w-4xl mx-auto h-full flex flex-col">
@@ -129,7 +143,7 @@ export default function ChatInput({
           {/* Lexical Editor */}
           <div 
             ref={editorContainerRef}
-            className="relative flex-1 overflow-y-auto rounded-t-ide min-h-0 bg-background-secondary flex flex-col"
+            className="relative flex-1 overflow-y-auto rounded-t-ide min-h-0 bg-background-secondary flex flex-col cursor-text"
           >
             <ChatInputActionsContext.Provider value={{ onImageClick, attachments }}>
               <LexicalComposer initialConfig={initialConfig}>
@@ -188,8 +202,7 @@ export default function ChatInput({
                 placeholder="Select Agent"
                 disabled={isSending}
                 onChange={onAgentChange}
-                onSubChange={(agentId, modelId) => {
-                  onAgentChange(agentId);
+                onSubChange={(_agentId, modelId) => {
                   onModelChange(modelId);
                 }}
               />
