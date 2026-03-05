@@ -4,6 +4,7 @@ import { FileChangeSummary } from '../../types/chat';
 import { Tooltip } from './shared/Tooltip';
 
 interface FileChangesPanelProps {
+  hasPluginEdits: boolean;
   fileChanges: FileChangeSummary[];
   totalAdditions: number;
   totalDeletions: number;
@@ -16,6 +17,7 @@ interface FileChangesPanelProps {
 }
 
 const FileChangesPanel = memo(({
+  hasPluginEdits,
   fileChanges,
   totalAdditions,
   totalDeletions,
@@ -29,7 +31,7 @@ const FileChangesPanel = memo(({
   const [expanded, setExpanded] = useState(false);
   const [confirmUndoAll, setConfirmUndoAll] = useState(false);
 
-  if (fileChanges.length === 0) return null;
+  if (!hasPluginEdits || fileChanges.length === 0) return null;
 
   const getFileName = (path: string) => {
     return path.split(/[\\/]/).pop() || path;
@@ -37,7 +39,7 @@ const FileChangesPanel = memo(({
 
   return (
     <>
-      <div className="border-t border-border w-full" />
+      <div className="border-t bordert-border w-full" />
 
       <div className="px-4 pb-4 pt-3">
         <div className="max-w-4xl mx-auto border border-border rounded-md overflow-hidden bg-editor-bg">

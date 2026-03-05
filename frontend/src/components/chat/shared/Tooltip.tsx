@@ -83,7 +83,7 @@ export const Tooltip: React.FC<TooltipProps> = ({ content, children, delay = 300
             animation: 'tooltip-in 150ms ease-out forwards',
           }}
         >
-          <div className="bg-background border border-border text-foreground text-xs px-2 py-1 rounded-sm whitespace-normal break-all shadow-md">
+          <div className="bg-background border border-border text-foreground text-xs px-2 py-1 rounded-sm w-max max-w-full whitespace-normal break-all shadow-md">
             {content}
           </div>
         </div>,

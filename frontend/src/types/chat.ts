@@ -146,6 +146,7 @@ export interface ToolCallEvent {
   title: string;
   kind?: string;
   status?: string;
+  isReplay?: boolean;
   diffs: ToolCallDiff[];
   locations?: { path: string; line?: number }[];
 }
@@ -164,6 +165,7 @@ export interface ChangesState {
   adapterName: string;
   baseToolCallIndex: number;
   processedFiles: string[];
+  hasPluginEdits?: boolean;
 }
 
 export interface UndoResultPayload {

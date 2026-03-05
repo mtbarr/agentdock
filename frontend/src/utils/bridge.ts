@@ -51,6 +51,7 @@ export const ACPBridge = {
               title: chunk.toolTitle || raw.title || '',
               kind: chunk.toolKind || raw.kind,
               status: chunk.toolStatus || raw.status,
+              isReplay: chunk.isReplay,
               diffs,
               locations: raw.locations,
             };
@@ -63,6 +64,7 @@ export const ACPBridge = {
               title: chunk.toolTitle || raw.title || '',
               kind: chunk.toolKind || raw.kind,
               status: chunk.toolStatus || raw.status,
+              isReplay: chunk.isReplay,
               diffs: [],
             };
             window.dispatchEvent(new CustomEvent(EVENT_NAMES.TOOL_CALL_UPDATE, { detail: { chatId: chunk.chatId, payload } }));

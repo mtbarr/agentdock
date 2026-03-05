@@ -60,6 +60,8 @@ export function useFileChanges(
   const [toolCallEvents, setToolCallEvents] = useState<ToolCallEvent[]>([]);
   const [processedFiles, setProcessedFiles] = useState<string[]>([]);
   const [baseToolCallIndex, setBaseToolCallIndex] = useState(0);
+  const [hasPluginEdits, setHasPluginEdits] = useState(false);
+  const initialHasPluginEditsRef = useRef<boolean | null>(null);
   const [loadedSessionKey, setLoadedSessionKey] = useState('');
   const toolCallEventsRef = useRef<ToolCallEvent[]>([]);
   toolCallEventsRef.current = toolCallEvents;
@@ -81,6 +83,8 @@ export function useFileChanges(
     setProcessedFiles([]);
     setBaseToolCallIndex(0);
     setToolCallEvents([]);
+    setHasPluginEdits(false);
+    initialHasPluginEditsRef.current = null;
 
     try {
       if (window.__getChangesState) {
@@ -95,8 +99,37 @@ export function useFileChanges(
   useEffect(() => {
     const unsubChangesState = ACPBridge.onChangesState((e) => {
       if (e.detail.chatId !== chatId) return;
-      setBaseToolCallIndex(e.detail.state.baseToolCallIndex);
-      setProcessedFiles(e.detail.state.processedFiles);
+      
+      const state = e.detail.state;
+      const hasEdits = Boolean(state.hasPluginEdits);
+      
+      if (initialHasPluginEditsRef.current === null) {
+          initialHasPluginEditsRef.current = hasEdits;
+      }
+
+      let newBaseIndex = state.baseToolCallIndex;
+
+      // If this session loaded with NO plugin edits, and now the backend says it HAS edits,
+      // it means the first live tool call just triggered state creation.
+      // We must update the baseToolCallIndex to bypass all previous replay events (from CLI etc).
+      if (!initialHasPluginEditsRef.current && hasEdits && state.baseToolCallIndex === 0) {
+         const replayCount = toolCallEventsRef.current.filter(ev => ev.isReplay).length;
+         if (replayCount > 0) {
+            newBaseIndex = replayCount;
+            if (window.__keepAll && sessionId && adapterName) {
+               window.__keepAll(JSON.stringify({
+                 sessionId,
+                 adapterName,
+                 toolCallIndex: String(replayCount)
+               }));
+            }
+         }
+         initialHasPluginEditsRef.current = true;
+      }
+
+      setBaseToolCallIndex(newBaseIndex);
+      setProcessedFiles(state.processedFiles);
+      setHasPluginEdits(hasEdits);
     });
 
     const unsubToolCall = ACPBridge.onToolCall((e) => {
@@ -287,6 +320,7 @@ export function useFileChanges(
   }, [sessionId, adapterName, toolCallEvents.length]);
 
   return {
+    hasPluginEdits,
     fileChanges,
     totalAdditions,
     totalDeletions,

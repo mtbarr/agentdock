@@ -146,6 +146,7 @@ object UnifiedHistoryService {
     }
     suspend fun deleteSession(meta: SessionMeta): Boolean = withContext(Dispatchers.IO) {
         try {
+            val mainFile = File(meta.filePath)
             if (mainFile.exists()) {
                 mainFile.delete()
             }

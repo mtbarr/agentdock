@@ -49,6 +49,7 @@ export default function ChatSessionView({
   } = useChatSession(chatId, availableAgents, initialAgentId, historySession);
 
   const {
+    hasPluginEdits,
     fileChanges,
     totalAdditions,
     totalDeletions,
@@ -171,6 +172,7 @@ export default function ChatSessionView({
 
       <div className="flex flex-col shrink-0 relative z-20 shadow-[0_-4px_15px_rgba(0,0,0,0.15)] bg-background">
         <FileChangesPanel
+          hasPluginEdits={hasPluginEdits}
           fileChanges={fileChanges}
           totalAdditions={totalAdditions}
           totalDeletions={totalDeletions}

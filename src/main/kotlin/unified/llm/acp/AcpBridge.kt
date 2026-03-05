@@ -20,6 +20,13 @@ import javax.sound.sampled.Clip
 import org.cef.browser.CefBrowser
 import unified.llm.utils.escapeForJsString
 import java.util.concurrent.ConcurrentHashMap
+import com.intellij.openapi.application.ApplicationManager
+import unified.llm.changes.AgentDiffViewer
+import unified.llm.changes.ChangesState
+import unified.llm.changes.ChangesStateService
+import unified.llm.changes.UndoFileHandler
+import unified.llm.changes.UndoOperation
+
 
 @Serializable
 private data class AdapterToolPayload(val name: String, val path: String)
@@ -567,8 +574,9 @@ class AcpBridge(
                     val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
                     val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
                     if (chatId.isNotEmpty() && sessionId.isNotEmpty() && adapterName.isNotEmpty()) {
-                        val state = ChangesStateService.loadState(sessionId, adapterName) ?: ChangesState(sessionId, adapterName)
-                        pushChangesState(chatId, state)
+                        val state = ChangesStateService.loadState(sessionId, adapterName)
+                        val hasPluginEdits = state != null
+                        pushChangesState(chatId, state ?: ChangesState(sessionId, adapterName), hasPluginEdits)
                     }
                 } catch (e: Exception) {
                 }
@@ -1178,9 +1186,10 @@ class AcpBridge(
         }
     }
 
-    fun pushChangesState(chatId: String, state: ChangesState) {
+    fun pushChangesState(chatId: String, state: ChangesState, hasPluginEdits: Boolean) {
+        val hasPluginEditsStr = if (hasPluginEdits) "true" else "false"
         val processedJson = state.processedFiles.joinToString(",") { escapeJsonString(it) }
-        val payload = """{"sessionId":${escapeJsonString(state.sessionId)},"adapterName":${escapeJsonString(state.adapterName)},"baseToolCallIndex":${state.baseToolCallIndex},"processedFiles":[$processedJson]}"""
+        val payload = """{"sessionId":${escapeJsonString(state.sessionId)},"adapterName":${escapeJsonString(state.adapterName)},"baseToolCallIndex":${state.baseToolCallIndex},"processedFiles":[$processedJson],"hasPluginEdits":$hasPluginEditsStr}"""
         val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
         val escaped = payload.escapeForJsString()
         runOnEdt {
@@ -1200,10 +1209,16 @@ class AcpBridge(
         val adNameValue = service.activeAdapterName(chatId) ?: return
         val diffs = content?.filterIsInstance<ToolCallContent.Diff>() ?: return
         if (diffs.isEmpty()) return
+
+        // First live diff from this plugin should persist state file and mark Edits panel as plugin-owned.
+        if (!ChangesStateService.hasState(sessionId, adNameValue)) {
+            ChangesStateService.ensureState(sessionId, adNameValue)
+        }
+
         val paths = diffs.map { it.path }
         ChangesStateService.removeProcessedFiles(sessionId, adNameValue, paths)
-        val state = ChangesStateService.loadState(sessionId, adNameValue) ?: ChangesState(sessionId, adNameValue)
-        pushChangesState(chatId, state)
+        val state = ChangesStateService.loadState(sessionId, adNameValue) ?: ChangesStateService.ensureState(sessionId, adNameValue)
+        pushChangesState(chatId, state, true)
     }
 
     fun pushAdapters() {

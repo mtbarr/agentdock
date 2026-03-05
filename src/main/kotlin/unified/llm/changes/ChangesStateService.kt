@@ -51,6 +51,10 @@ object ChangesStateService {
         return File(adapterDir, "$sessionId.json")
     }
 
+    fun hasState(sessionId: String, adapterName: String): Boolean {
+        return getStateFile(sessionId, adapterName).exists()
+    }
+
     fun loadState(sessionId: String, adapterName: String): ChangesState? {
         val file = getStateFile(sessionId, adapterName)
         if (!file.exists()) return null
@@ -66,6 +70,14 @@ object ChangesStateService {
         try {
             file.writeText(json.encodeToString(ChangesState.serializer(), state.copy(updatedAt = Instant.now().toEpochMilli())))
         } catch (_: Exception) {}
+    }
+
+    fun ensureState(sessionId: String, adapterName: String): ChangesState {
+        val existing = loadState(sessionId, adapterName)
+        if (existing != null) return existing
+        val created = ChangesState(sessionId, adapterName)
+        saveState(created)
+        return created
     }
 
     fun addProcessedFile(sessionId: String, adapterName: String, filePath: String) {

@@ -367,6 +367,7 @@ class AcpClientService(val project: Project) {
                 }
             }
             "in-session" -> {
+                val sess = context.session ?: return false
                 try {
                     withContext(Dispatchers.IO) { 
                         sess.setModel(ModelId(trimmedModelId)) 
