@@ -1,40 +1,65 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import {
+  $createTextNode,
   $getRoot,
+  $getSelection,
+  $isElementNode,
   $nodesOfType,
+  $isRangeSelection,
+  $isTextNode,
+  COMMAND_PRIORITY_HIGH,
+  KEY_BACKSPACE_COMMAND,
   COMMAND_PRIORITY_CRITICAL,
   KEY_ENTER_COMMAND,
   LexicalEditor
 } from 'lexical';
 import { ImageNode } from './ImageNode';
+import { CodeReferenceNode, $createCodeReferenceNode, $isCodeReferenceNode } from './CodeReferenceNode';
+import { ChatAttachment } from '../../../types/chat';
 
-export function AttachmentsSyncPlugin({ attachments, onAttachmentsChange }: { 
-  attachments: { id: string; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean }[], 
-  onAttachmentsChange: (items: { id: string; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean }[]) => void 
+export function AttachmentsSyncPlugin({ attachments, onAttachmentsChange }: {
+  attachments: ChatAttachment[],
+  onAttachmentsChange: (items: ChatAttachment[]) => void
 }) {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    return editor.registerMutationListener(ImageNode, (mutations) => {
-      let needsRefresh = false;
-      for (const [_, mutation] of mutations) {
+    const syncRemovedAttachments = () => {
+      editor.read(() => {
+        const existingIds = new Set([
+          ...$nodesOfType(ImageNode).map((node) => node.__id),
+          ...$nodesOfType(CodeReferenceNode).map((node) => node.__id),
+        ]);
+        const filtered = attachments.filter((attachment) => !attachment.isInline || existingIds.has(attachment.id));
+        if (filtered.length !== attachments.length) {
+          onAttachmentsChange(filtered);
+        }
+      });
+    };
+
+    const unregisterImage = editor.registerMutationListener(ImageNode, (mutations) => {
+      for (const [, mutation] of mutations) {
         if (mutation === 'destroyed') {
-          needsRefresh = true;
+          syncRemovedAttachments();
           break;
         }
       }
+    });
 
-      if (needsRefresh) {
-        editor.read(() => {
-          const existingIds = new Set($nodesOfType(ImageNode).map(n => n.__id));
-          const filtered = attachments.filter(a => existingIds.has(a.id));
-          if (filtered.length !== attachments.length) {
-            onAttachmentsChange(filtered);
-          }
-        });
+    const unregisterCodeReference = editor.registerMutationListener(CodeReferenceNode, (mutations) => {
+      for (const [, mutation] of mutations) {
+        if (mutation === 'destroyed') {
+          syncRemovedAttachments();
+          break;
+        }
       }
     });
+
+    return () => {
+      unregisterImage();
+      unregisterCodeReference();
+    };
   }, [editor, attachments, onAttachmentsChange]);
 
   return null;
@@ -93,6 +118,108 @@ export function KeyboardPlugin({ onSend, sendMode }: { onSend: () => void, sendM
       COMMAND_PRIORITY_CRITICAL
     );
   }, [editor, onSend, sendMode]);
+
+  return null;
+}
+
+export function InlineAttachmentBackspacePlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_BACKSPACE_COMMAND,
+      () => {
+        let removed = false;
+
+        editor.update(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+
+          const anchorNode = selection.anchor.getNode();
+          let previousNode =
+            $isTextNode(anchorNode) && selection.anchor.offset === 0
+              ? anchorNode.getPreviousSibling()
+              : null;
+
+          if (!previousNode && $isElementNode(anchorNode) && selection.anchor.offset > 0) {
+            previousNode = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
+          }
+
+          if (previousNode && (previousNode instanceof ImageNode || $isCodeReferenceNode(previousNode))) {
+            previousNode.remove();
+            removed = true;
+          }
+        });
+
+        return removed;
+      },
+      COMMAND_PRIORITY_HIGH
+    );
+  }, [editor]);
+
+  return null;
+}
+
+export function ExternalCodeReferencePlugin({
+  isActive,
+  attachments,
+  onAttachmentsChange,
+}: {
+  isActive: boolean;
+  attachments: ChatAttachment[];
+  onAttachmentsChange: (items: ChatAttachment[]) => void;
+}) {
+  const [editor] = useLexicalComposerContext();
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+
+  const onAttachmentsChangeRef = useRef(onAttachmentsChange);
+  onAttachmentsChangeRef.current = onAttachmentsChange;
+
+  useEffect(() => {
+    if (!isActive) return;
+
+    const handleExternalReference = (event: Event) => {
+      const detail = (event as CustomEvent<{ path: string; fileName: string; startLine?: number; endLine?: number }>).detail;
+      if (!detail?.path || !detail?.fileName) return;
+
+      const id = crypto.randomUUID();
+      const attachment: ChatAttachment = {
+        id,
+        path: detail.path,
+        name: detail.fileName,
+        mimeType: 'application/x-code-reference',
+        isInline: true,
+        attachmentType: 'code_ref',
+        startLine: detail.startLine,
+        endLine: detail.endLine,
+      };
+
+      onAttachmentsChangeRef.current([...attachmentsRef.current, attachment]);
+
+      editor.update(() => {
+        const selection = $getSelection();
+        const node = $createCodeReferenceNode(
+          id,
+          detail.path,
+          detail.fileName,
+          detail.startLine,
+          detail.endLine
+        );
+        if ($isRangeSelection(selection)) {
+          selection.insertNodes([node, $createTextNode(' ')]);
+        } else {
+          $getRoot().selectEnd();
+          $getSelection()?.insertNodes([node, $createTextNode(' ')]);
+        }
+      });
+    };
+
+    window.addEventListener('external-code-reference', handleExternalReference as EventListener);
+    return () => {
+      window.removeEventListener('external-code-reference', handleExternalReference as EventListener);
+    };
+  }, [isActive, editor]);
 
   return null;
 }

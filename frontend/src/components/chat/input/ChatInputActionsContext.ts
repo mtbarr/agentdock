@@ -1,8 +1,10 @@
 import { createContext } from 'react';
+import { ChatAttachment } from '../../../types/chat';
 
 export interface ChatInputActions {
   onImageClick: (src: string) => void;
-  attachments: { id: string; name: string; mimeType: string; data?: string; path?: string }[];
+  onOpenFile?: (path: string, line?: number) => void;
+  attachments: ChatAttachment[];
 }
 
 export const ChatInputActionsContext = createContext<ChatInputActions | null>(null);

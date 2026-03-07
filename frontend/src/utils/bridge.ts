@@ -1,4 +1,4 @@
-import { AgentOption, PermissionRequest, HistorySessionMeta, UndoResultPayload, ChangesState, ContentChunk, ToolCallEvent } from '../types/chat';
+import { AgentOption, PermissionRequest, HistorySessionMeta, UndoResultPayload, ChangesState, ContentChunk, ToolCallEvent, ChatAttachment } from '../types/chat';
 
 export interface ContentChunkEvent { chunk: ContentChunk; }
 export interface StatusEvent { chatId: string; status: string; }
@@ -194,7 +194,7 @@ export const ACPBridge = {
     return () => window.removeEventListener(EVENT_NAMES.TOOL_CALL_UPDATE, callback as EventListener);
   },
 
-  onAttachmentsAdded: (callback: (e: CustomEvent<{ chatId: string; files: any[] }>) => void) => {
+  onAttachmentsAdded: (callback: (e: CustomEvent<{ chatId: string; files: ChatAttachment[] }>) => void) => {
     window.addEventListener(EVENT_NAMES.ATTACHMENTS_ADDED, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.ATTACHMENTS_ADDED, callback as EventListener);
   }

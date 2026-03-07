@@ -5,22 +5,24 @@ import { ContentEditable } from '@lexical/react/LexicalContentEditable';
 import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin';
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin';
 import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary';
-import { 
-  $getRoot, 
-  $getSelection, 
-  $isRangeSelection, 
+import {
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
   LexicalEditor,
 } from 'lexical';
 
 import ChatDropdown from './ChatDropdown';
-import { DropdownOption } from '../../types/chat';
+import { ChatAttachment, DropdownOption } from '../../types/chat';
 import AttachmentBar from './input/AttachmentBar';
 import { Tooltip } from './shared/Tooltip';
+import { openFile } from '../../utils/openFile';
 
 // Sub-components & Plugins
 import { ChatInputActionsContext } from './input/ChatInputActionsContext';
 import { ImageNode, $createImageNode } from './input/ImageNode';
-import { AttachmentsSyncPlugin, PasteLogPlugin, KeyboardPlugin, AutoHeightPlugin, ClickToFocusPlugin, ClearEditorPlugin } from './input/ChatInputPlugins';
+import { CodeReferenceNode } from './input/CodeReferenceNode';
+import { AttachmentsSyncPlugin, PasteLogPlugin, KeyboardPlugin, AutoHeightPlugin, ClickToFocusPlugin, ClearEditorPlugin, InlineAttachmentBackspacePlugin, ExternalCodeReferencePlugin } from './input/ChatInputPlugins';
 
 interface ChatInputProps {
   chatId: string;
@@ -42,12 +44,13 @@ interface ChatInputProps {
 
   hasSelectedAgent: boolean;
   
-  attachments: { id: string; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean }[];
-  onAttachmentsChange: (items: { id: string; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean }[]) => void;
+  attachments: ChatAttachment[];
+  onAttachmentsChange: (items: ChatAttachment[]) => void;
   onImageClick: (src: string) => void;
   onHeightChange?: (contentHeight: number) => void;
   customHeight?: number;
   autoFocus?: boolean;
+  isActive?: boolean;
 }
 
 
@@ -72,9 +75,24 @@ export default function ChatInput({
   onImageClick,
   onHeightChange,
   customHeight = 180,
-  autoFocus = false
+  autoFocus = false,
+  isActive = false
 }: ChatInputProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  useEffect(() => {
+    const handleDragHighlight = (e: Event) => {
+      const active = (e as CustomEvent<{ active: boolean }>).detail?.active;
+      setIsDragOver(!!active);
+    };
+    window.addEventListener('drag-highlight', handleDragHighlight as EventListener);
+    return () => window.removeEventListener('drag-highlight', handleDragHighlight as EventListener);
+  }, []);
+
+  const handleOpenFile = useCallback((filePath: string, line?: number) => {
+    openFile(filePath, line);
+  }, []);
 
   const [sendMode, setSendMode] = useState<'enter' | 'ctrl-enter'>(() => {
     return (localStorage.getItem('chat-send-mode') as 'enter' | 'ctrl-enter') || 'enter';
@@ -90,7 +108,7 @@ export default function ChatInput({
 
   const initialConfig = useMemo(() => ({
     namespace: `ChatInput-${chatId}`,
-    nodes: [ImageNode],
+    nodes: [ImageNode, CodeReferenceNode],
     theme: {
       paragraph: 'm-0',
       text: { base: 'text-foreground' },
@@ -143,9 +161,9 @@ export default function ChatInput({
           {/* Lexical Editor */}
           <div 
             ref={editorContainerRef}
-            className="relative flex-1 overflow-y-auto rounded-t-ide min-h-0 bg-background-secondary flex flex-col cursor-text"
+            className={`relative flex-1 overflow-y-auto rounded-t-ide min-h-0 bg-background-secondary flex flex-col cursor-text transition-colors ${isDragOver ? 'ring-2 ring-inset ring-accent/50 bg-accent/5' : ''}`}
           >
-            <ChatInputActionsContext.Provider value={{ onImageClick, attachments }}>
+            <ChatInputActionsContext.Provider value={{ onImageClick, onOpenFile: handleOpenFile, attachments }}>
               <LexicalComposer initialConfig={initialConfig}>
                 <RichTextPlugin
                   contentEditable={
@@ -172,6 +190,12 @@ export default function ChatInput({
                 <AttachmentsSyncPlugin attachments={attachments} onAttachmentsChange={onAttachmentsChange} />
                 <PasteLogPlugin onImagePaste={handleImagePaste} />
                 <KeyboardPlugin onSend={onSend} sendMode={sendMode} />
+                <InlineAttachmentBackspacePlugin />
+                <ExternalCodeReferencePlugin
+                  isActive={isActive}
+                  attachments={attachments}
+                  onAttachmentsChange={onAttachmentsChange}
+                />
                 {onHeightChange && <AutoHeightPlugin onHeightChange={onHeightChange} />}
                 <ClickToFocusPlugin containerRef={editorContainerRef} />
               </LexicalComposer>

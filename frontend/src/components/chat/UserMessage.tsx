@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, memo } from 'react';
-import { Message, RichContentBlock, TextBlock, ImageBlock, FileBlock } from '../../types/chat';
+import { Message, RichContentBlock, TextBlock, ImageBlock, FileBlock, CodeReferenceBlock } from '../../types/chat';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { AttachmentItem } from './shared/AttachmentItem';
+import { CodeReferenceChip } from './shared/CodeReferenceChip';
+import { openFile } from '../../utils/openFile';
 
 interface UserMessageProps {
   message: Message;
@@ -49,6 +51,10 @@ export const UserMessage = memo(({ message, onImageClick }: UserMessageProps) =>
 
   const { inline, trailing } = getBlocks();
 
+  const handleOpenFile = (path: string, startLine?: number) => {
+    openFile(path, startLine ? startLine - 1 : undefined);
+  };
+
   const renderContent = () => {
     if (inline.length > 0) {
       return (
@@ -66,6 +72,19 @@ export const UserMessage = memo(({ message, onImageClick }: UserMessageProps) =>
                     data: img.data
                   }}
                   onImageClick={onImageClick}
+                />
+              );
+            }
+            if (block.type === 'code_ref') {
+              const codeRef = block as CodeReferenceBlock;
+              return (
+                <CodeReferenceChip
+                  key={idx}
+                  fileName={codeRef.name}
+                  path={codeRef.path}
+                  startLine={codeRef.startLine}
+                  endLine={codeRef.endLine}
+                  onClick={() => handleOpenFile(codeRef.path, codeRef.startLine)}
                 />
               );
             }

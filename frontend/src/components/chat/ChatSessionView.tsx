@@ -272,6 +272,7 @@ export default function ChatSessionView({
             onHeightChange={setContentHeight}
             customHeight={inputHeight}
             autoFocus={isActive}
+            isActive={isActive}
           />
         </div>
       </div>

@@ -621,18 +621,17 @@ class AcpBridge(
                         runOnEdt {
                             try {
                                 val resolved = UndoFileHandler.resolveFilePath(service.project, filePath)
-                                val base = service.project.basePath ?: return@runOnEdt
-                                
-                                // Ensure relative paths are resolved against project base
                                 val resolvedFile = File(resolved)
-                                val finalFile = if (resolvedFile.isAbsolute) resolvedFile else File(base, resolved)
+                                val base = service.project.basePath
+                                val finalFile = if (resolvedFile.isAbsolute) {
+                                    resolvedFile
+                                } else if (!base.isNullOrBlank()) {
+                                    File(base, resolved)
+                                } else {
+                                    resolvedFile
+                                }
                                 
                                 val canonical = try { finalFile.canonicalPath } catch (_: Exception) { finalFile.path }
-                                val baseCanonical = try { File(base).canonicalPath } catch (_: Exception) { base }
-
-                                if (!canonical.lowercase().startsWith(baseCanonical.lowercase())) {
-                                    return@runOnEdt
-                                }
                                 
                                 val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(File(canonical))
                                 if (vf != null && vf.exists()) {
@@ -712,6 +711,7 @@ class AcpBridge(
                 JBCefJSQuery.Response("ok")
             }
         }
+
     }
 
     /**
@@ -1388,6 +1388,20 @@ class AcpBridge(
          } catch (_: Exception) { null to null }
     }
 
+    private fun codeRefBlockToText(blockObj: JsonObject): ContentBlock.Text {
+        val path = blockObj["path"]?.jsonPrimitive?.content ?: ""
+        val startLine = blockObj["startLine"]?.jsonPrimitive?.intOrNull
+        val endLine = blockObj["endLine"]?.jsonPrimitive?.intOrNull ?: startLine
+        val text = if (path.isNotBlank() && startLine != null && startLine > 0) {
+            if (startLine == endLine) "@${path}#L${startLine}" else "@${path}#L${startLine}-${endLine}"
+        } else if (path.isNotBlank()) {
+            "@${path}"
+        } else {
+            blockObj["text"]?.jsonPrimitive?.content ?: ""
+        }
+        return ContentBlock.Text(text)
+    }
+
     private fun parseBlocksPayload(payload: String?): Pair<String?, List<ContentBlock>> {
         val raw = payload?.trim().orEmpty()
         if (raw.isEmpty()) return null to emptyList()
@@ -1420,6 +1434,7 @@ class AcpBridge(
                              val name = blockObj["name"]?.jsonPrimitive?.content ?: type!!
                              fileOrVideoBlock(name, mimeType, data, path)
                          }
+                        "code_ref" -> codeRefBlockToText(blockObj)
                         else -> {
                             val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
                             ContentBlock.Text(text)
@@ -1457,6 +1472,7 @@ class AcpBridge(
                                 val name = blockObj["name"]?.jsonPrimitive?.content ?: type!!
                                 fileOrVideoBlock(name, mimeType, data, path)
                             }
+                            "code_ref" -> codeRefBlockToText(blockObj)
                             else -> {
                                 val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
                                 ContentBlock.Text(text)

@@ -66,7 +66,7 @@ export const Tooltip: React.FC<TooltipProps> = ({ content, children, delay = 300
   return (
     <div 
       ref={triggerRef}
-      className="block w-fit max-w-full truncate"
+      className="inline-block w-fit max-w-full align-middle"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >

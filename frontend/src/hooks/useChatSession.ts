@@ -5,6 +5,7 @@ import {
   PermissionRequest,
   DropdownOption,
   HistorySessionMeta,
+  ChatAttachment,
   RichContentBlock,
   TextBlock,
   ExploringBlock,
@@ -41,6 +42,42 @@ let messageCounter = 0;
 let thinkingCounter = 0;
 function nextMessageId(suffix: string): string {
   return `msg-${++messageCounter}-${Date.now()}-${suffix}`;
+}
+
+function codeReferenceText(path: string, startLine?: number, endLine?: number): string {
+  if (!startLine || !endLine) return `@${path}`;
+  return startLine === endLine
+    ? `@${path}#L${startLine}`
+    : `@${path}#L${startLine}-${endLine}`;
+}
+
+function plainTextFromBlocks(blocks: any[]): string {
+  return blocks.map((block) => {
+    if (block.type === 'text') return block.text || '';
+    if (block.type === 'code_ref') return codeReferenceText(block.path, block.startLine, block.endLine);
+    return '';
+  }).join('');
+}
+
+function normalizeOutgoingBlocks(blocks: any[]): any[] {
+  return blocks.filter((block) => {
+    if (!block) return false;
+    if (block.type === 'text') {
+      return typeof block.text === 'string' && block.text.length > 0;
+    }
+    if (block.type === 'code_ref') {
+      return typeof block.path === 'string' && block.path.length > 0;
+    }
+    return true;
+  }).map((block) => {
+    if (block.type === 'code_ref') {
+      return {
+        ...block,
+        text: codeReferenceText(block.path, block.startLine, block.endLine),
+      };
+    }
+    return block;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +358,7 @@ export function useChatSession(
   const [selectedModelByAgent, setSelectedModelByAgent] = useState<Record<string, string>>({});
   const [selectedModeByAgent, setSelectedModeByAgent] = useState<Record<string, string>>({});
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
-  const [attachments, setAttachments] = useState<{ id: string; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean }[]>([]);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [acpSessionId, setAcpSessionId] = useState<string>('');
 
   const pendingBlocksRef = useRef<any[] | null>(null);
@@ -660,7 +697,7 @@ export function useChatSession(
     let currentText = inputValue;
 
     const usedAttachmentIds = new Set<string>();
-    const placeholderRegex = /\[image-([a-z0-9-]+)\]/g;
+    const placeholderRegex = /\[(image|code-ref)-([a-z0-9-]+)\]/g;
     let lastIndex = 0;
     let match;
 
@@ -668,10 +705,25 @@ export function useChatSession(
       const beforeText = currentText.substring(lastIndex, match.index);
       if (beforeText) blocks.push({ type: 'text', text: beforeText });
 
-      const attId = match[1];
+      const attType = match[1];
+      const attId = match[2];
       const att = attachments.find(a => a.id === attId);
       if (att) {
-        blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType, isInline: true });
+        if (attType === 'image') {
+          blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType, isInline: true });
+        } else if (att.attachmentType === 'code_ref' && att.path) {
+          blocks.push({
+            type: 'code_ref',
+            id: att.id,
+            name: att.name,
+            path: att.path,
+            startLine: att.startLine,
+            endLine: att.endLine,
+            isInline: true,
+          });
+        } else {
+          blocks.push({ type: 'text', text: match[0] });
+        }
         usedAttachmentIds.add(attId);
       } else {
         blocks.push({ type: 'text', text: match[0] }); // Keep as text if not found
@@ -684,7 +736,7 @@ export function useChatSession(
 
     // Append any attachments that weren't explicitly placed
     attachments.forEach(att => {
-      if (!usedAttachmentIds.has(att.id)) {
+      if (!usedAttachmentIds.has(att.id) && att.attachmentType !== 'code_ref') {
         if (att.mimeType.startsWith('image/') && att.data) {
           blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType, isInline: false });
         } else if (att.mimeType.startsWith('audio/') && att.data) {
@@ -702,12 +754,15 @@ export function useChatSession(
       }
     });
 
+    const normalizedBlocks = normalizeOutgoingBlocks(blocks);
+    if (normalizedBlocks.length === 0) return;
+
     setIsSending(true);
     const userMessage: Message = {
       id: nextMessageId('user'),
       role: 'user',
-      content: text,
-      blocks: blocks,
+      content: plainTextFromBlocks(normalizedBlocks),
+      blocks: normalizedBlocks,
       timestamp: Date.now(),
     };
     setMessages((prev) => [...prev, userMessage]);
@@ -724,13 +779,13 @@ export function useChatSession(
 
     if (status !== 'ready') {
       // Queue it up
-      pendingBlocksRef.current = blocks;
+      pendingBlocksRef.current = normalizedBlocks;
       return;
     }
 
     try {
       startTimeRef.current = Date.now();
-      window.__sendPrompt(chatId, JSON.stringify(blocks));
+      window.__sendPrompt(chatId, JSON.stringify(normalizedBlocks));
       setPermissionRequest(null);
     } catch (e) {
       console.warn('[useChatSession] Failed to send prompt:', e);

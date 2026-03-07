@@ -53,6 +53,9 @@ function MessageList({
       if (['image', 'audio', 'video', 'file'].includes(block.type)) {
         return 500; // Fixed weight for media/files
       }
+      if (block.type === 'code_ref') {
+        return 50;
+      }
       if (block.type === 'text') {
         return (block as any).text?.length || 0;
       }

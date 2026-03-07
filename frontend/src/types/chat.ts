@@ -4,11 +4,32 @@ export interface AcpLogEntryPayload {
   timestamp: number;
 }
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  data?: string;
+  path?: string;
+  isInline?: boolean;
+  attachmentType?: 'file' | 'code_ref';
+  startLine?: number;
+  endLine?: number;
+}
+
 export interface TextBlock { type: 'text'; text: string; }
 export interface ImageBlock { type: 'image'; data: string; mimeType: string; isInline?: boolean; }
 export interface AudioBlock { type: 'audio'; data: string; mimeType: string; isInline?: boolean; }
 export interface VideoBlock { type: 'video'; data: string; mimeType: string; isInline?: boolean; }
 export interface FileBlock { type: 'file'; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean; }
+export interface CodeReferenceBlock {
+  type: 'code_ref';
+  id?: string;
+  name: string;
+  path: string;
+  startLine?: number;
+  endLine?: number;
+  isInline?: boolean;
+}
 
 export interface ToolCallEntry {
   toolCallId: string;
@@ -32,7 +53,7 @@ export interface PlanEntry {
 
 export interface PlanBlock { type: 'plan'; entries: PlanEntry[]; isReplay?: boolean; }
 
-export type RichContentBlock = TextBlock | ImageBlock | AudioBlock | VideoBlock | FileBlock | ExploringBlock | ToolCallBlock | PlanBlock;
+export type RichContentBlock = TextBlock | ImageBlock | AudioBlock | VideoBlock | FileBlock | CodeReferenceBlock | ExploringBlock | ToolCallBlock | PlanBlock;
 
 
 
@@ -223,7 +244,7 @@ declare global {
     __onMode?: (chatId: string, modeId: string) => void;
     __onPermissionRequest?: (request: PermissionRequest) => void;
     __onHistoryList?: (list: HistorySessionMeta[]) => void;
-    __onAttachmentsAdded?: (chatId: string, files: { id: string; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean }[]) => void;
+    __onAttachmentsAdded?: (chatId: string, files: ChatAttachment[]) => void;
 
     __onUndoResult?: (chatId: string, result: UndoResultPayload) => void;
     __onChangesState?: (chatId: string, state: ChangesState) => void;
