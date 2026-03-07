@@ -117,6 +117,14 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                             JBCefJSQuery.Response("ok")
                         }
 
+                        val repaintQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase)
+                        repaintQuery.addHandler {
+                            ApplicationManager.getApplication().invokeLater({
+                                forceBrowserRepaint(browser)
+                            }, com.intellij.openapi.application.ModalityState.any())
+                            JBCefJSQuery.Response("ok")
+                        }
+
                         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
                             override fun onLoadEnd(cefBrowser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
                                 if (frame.isMain) {
@@ -149,6 +157,15 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                                         });
                                     """.trimIndent()
                                     cefBrowser.executeJavaScript(cursorInjection, cefBrowser.url, 0)
+
+                                    val repaintInjection = """
+                                        window.__requestHostRepaint = function(reason) {
+                                          try {
+                                            ${repaintQuery.inject("reason || ''")}
+                                          } catch (e) {}
+                                        };
+                                    """.trimIndent()
+                                    cefBrowser.executeJavaScript(repaintInjection, cefBrowser.url, 0)
                                     debugBridge?.injectReadySignal(cefBrowser)
                                     debugBridge?.injectDebugApi(cefBrowser)
                                     historyBridge?.injectApi(cefBrowser)
@@ -230,4 +247,18 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
             browser.loadHTML(html)
         }
     }
+
+    private fun forceBrowserRepaint(browser: JBCefBrowser) {
+        val component = browser.component
+        component.invalidate()
+        component.revalidate()
+        component.repaint()
+
+        component.parent?.let { parent ->
+            parent.invalidate()
+            parent.revalidate()
+            parent.repaint()
+        }
+    }
 }
+

@@ -212,6 +212,7 @@ declare global {
     __openFile?: (payload: string) => void;
     __openUrl?: (url: string) => void;
     __attachFile?: (chatId: string) => void;
+    __requestHostRepaint?: (reason?: string) => void;
 
     // Callbacks (Backend -> Frontend)
     __onAcpLog?: (payload: AcpLogEntryPayload) => void;
