@@ -48,6 +48,14 @@ object AcpAdapterConfig {
     )
 
     @Serializable
+    data class CliConfig(
+        val executable: PlatformBinary,
+        val entryPath: String? = null,
+        val args: List<String> = emptyList(),
+        val resumeArgs: List<String> = emptyList()
+    )
+
+    @Serializable
     enum class DistributionType {
         @SerialName("npm") NPM,
         @SerialName("archive") ARCHIVE
@@ -78,10 +86,10 @@ object AcpAdapterConfig {
         val patches: List<String> = emptyList(),
         val historyConfig: HistoryConfig? = null,
         val authConfig: AuthConfig? = null,
+        val cli: CliConfig? = null,
         /**
          * How to handle model changes mid-session:
          * - "restart-resume": restart ACP process and resume the previous session (preserves history)
-         * - "restart": restart ACP process with a new session (history reset)
          * - "in-session": call sess.setModel() without restarting (works if adapter supports it)
          * Default: "in-session"
          */

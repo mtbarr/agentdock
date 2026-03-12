@@ -196,6 +196,14 @@ export const ACPBridge = {
     window.__continueConversationWithSession?.(payload);
   },
 
+  openAgentCli: (adapterId: string) => {
+    window.__openAgentCli?.(adapterId);
+  },
+
+  openHistoryConversationCli: (projectPath: string, conversationId: string) => {
+    window.__openHistoryConversationCli?.({ projectPath, conversationId });
+  },
+
 
   onUndoResult: (callback: (e: CustomEvent<UndoResultEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.UNDO_RESULT, callback as EventListener);

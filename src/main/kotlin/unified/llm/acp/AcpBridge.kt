@@ -1,13 +1,18 @@
 package unified.llm.acp
 
 import com.agentclientprotocol.model.*
+import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
@@ -22,7 +27,6 @@ import javax.sound.sampled.LineEvent
 import org.cef.browser.CefBrowser
 import unified.llm.utils.escapeForJsString
 import java.util.concurrent.ConcurrentHashMap
-import com.intellij.openapi.application.ApplicationManager
 import unified.llm.changes.AgentDiffViewer
 import unified.llm.changes.ChangesState
 import unified.llm.changes.ChangesStateService
@@ -55,7 +59,8 @@ private data class AdapterPayload(
     val authPath: String,
     val authenticating: Boolean,
     val downloading: Boolean,
-    val downloadStatus: String
+    val downloadStatus: String,
+    val cliAvailable: Boolean
 )
 
 private val adapterJson = Json { encodeDefaults = true }
@@ -70,6 +75,7 @@ class AcpBridge(
     private val service: AcpClientService,
     private val scope: CoroutineScope
 ) {
+    private val logger = Logger.getInstance(AcpBridge::class.java)
     private data class SerializedContentBlock(
         val type: String,
         val text: String? = null,
@@ -140,6 +146,8 @@ class AcpBridge(
     private var attachFileQuery: JBCefJSQuery? = null
     private var updateSessionMetadataQuery: JBCefJSQuery? = null
     private var continueConversationQuery: JBCefJSQuery? = null
+    private var openAgentCliQuery: JBCefJSQuery? = null
+    private var openHistoryConversationCliQuery: JBCefJSQuery? = null
 
     private val promptJobs = ConcurrentHashMap<String, Job>()
     private val lastStatusByChatId = ConcurrentHashMap<String, String>()
@@ -354,6 +362,30 @@ class AcpBridge(
                             AcpAuthService.decrementActive(adapterId)
                             pushAdapters() // Refresh UI after attempt
                         }
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        openAgentCliQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                val adapterId = parseIdOnlyPayload(payload)
+                if (adapterId != null) {
+                    scope.launch(Dispatchers.Default) {
+                        openAgentCliInTerminal(adapterId)
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        openHistoryConversationCliQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                val (projectPath, conversationId) = parseHistoryConversationCliPayload(payload)
+                if (projectPath != null && conversationId != null) {
+                    scope.launch(Dispatchers.Default) {
+                        openHistoryConversationCliInTerminal(projectPath, conversationId)
                     }
                 }
                 JBCefJSQuery.Response("ok")
@@ -933,6 +965,8 @@ class AcpBridge(
         val toggleAgentEnabledInject = toggleAgentEnabledQuery?.inject("JSON.stringify({ adapterId: adapterId, enabled: enabled })") ?: ""
         val loginAgentInject = loginAgentQuery?.inject("adapterId") ?: ""
         val logoutAgentInject = logoutAgentQuery?.inject("adapterId") ?: ""
+        val openAgentCliInject = openAgentCliQuery?.inject("adapterId") ?: ""
+        val openHistoryConversationCliInject = openHistoryConversationCliQuery?.inject("JSON.stringify(payload)") ?: ""
         val undoFileInject = undoFileQuery?.inject("payload") ?: ""
         val undoAllFilesInject = undoAllFilesQuery?.inject("payload") ?: ""
         val processFileInject = processFileQuery?.inject("payload") ?: ""
@@ -995,6 +1029,12 @@ class AcpBridge(
                 };
                 window.__logoutAgent = function(adapterId) {
                     try { $logoutAgentInject } catch (e) { }
+                };
+                window.__openAgentCli = function(adapterId) {
+                    try { $openAgentCliInject } catch (e) { }
+                };
+                window.__openHistoryConversationCli = function(payload) {
+                    try { $openHistoryConversationCliInject } catch (e) { }
                 };
                 window.__undoFile = function(payload) {
                     try { $undoFileInject } catch (e) { }
@@ -1072,12 +1112,179 @@ class AcpBridge(
             window.__toggleAgentEnabled = window.__toggleAgentEnabled || function(id, e) {};
             window.__loginAgent = window.__loginAgent || function(id) {};
             window.__logoutAgent = window.__logoutAgent || function(id) {};
+            window.__openAgentCli = window.__openAgentCli || function(id) {};
+            window.__openHistoryConversationCli = window.__openHistoryConversationCli || function(payload) {};
             window.__attachFile = window.__attachFile || function(chatId) {};
             window.__updateSessionMetadata = window.__updateSessionMetadata || function(payload) {};
             window.__continueConversationWithSession = window.__continueConversationWithSession || function(payload) {};
             window.__loadHistoryConversation = window.__loadHistoryConversation || function(chatId, projectPath, conversationId) {};
         """.trimIndent()
         cefBrowser.executeJavaScript(script, cefBrowser.url, 0)
+    }
+
+    private fun openAgentCliInTerminal(adapterId: String) {
+        val (adapterInfo, command) = buildCliCommand(adapterId, emptyList()) ?: return
+        if (command.isBlank()) return
+
+        val adapterRoot = File(AcpAdapterPaths.getDownloadPath(adapterId))
+        val workingDir = service.project.basePath ?: adapterRoot.absolutePath
+        openInIdeTerminal(workingDir, "${adapterInfo.name} CLI", command)
+    }
+
+    private fun openHistoryConversationCliInTerminal(projectPath: String, conversationId: String) {
+        val latestSession = runBlocking {
+            UnifiedHistoryService.getConversationSessions(projectPath, conversationId)
+                .maxByOrNull { it.updatedAt }
+        } ?: return
+
+        val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(latestSession.adapterName) }.getOrNull() ?: return
+        val resumeArgs = adapterInfo.cli?.resumeArgs.orEmpty()
+        if (resumeArgs.isEmpty()) return
+
+        val placeholders = mapOf(
+            "sessionId" to latestSession.sessionId,
+            "conversationId" to conversationId,
+            "projectPath" to projectPath,
+            "adapterId" to latestSession.adapterName
+        )
+        val (_, command) = buildCliCommand(latestSession.adapterName, applyCliPlaceholders(resumeArgs, placeholders)) ?: return
+        if (command.isBlank()) return
+
+        val workingDir = service.project.basePath ?: projectPath
+        openInIdeTerminal(workingDir, "${adapterInfo.name} CLI", command)
+    }
+
+    private fun buildCliCommand(adapterId: String, extraArgs: List<String>): Pair<AcpAdapterConfig.AdapterInfo, String>? {
+        val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterId) }.getOrNull() ?: return null
+        val cli = adapterInfo.cli ?: return null
+        val adapterRoot = File(AcpAdapterPaths.getDownloadPath(adapterId))
+        if (!adapterRoot.isDirectory) return null
+
+        val os = System.getProperty("os.name").lowercase()
+        val executable = if (os.contains("win")) cli.executable.win else cli.executable.unix
+        val entryPath = cli.entryPath?.takeIf { it.isNotBlank() }
+        if (executable.isNullOrBlank()) return null
+
+        val commandParts = mutableListOf<String>()
+        commandParts += resolveCliPath(adapterRoot, executable)
+        if (entryPath != null) {
+            commandParts += resolveCliPath(adapterRoot, entryPath)
+        }
+        commandParts += cli.args
+        commandParts += extraArgs
+
+        return adapterInfo to toShellCommand(commandParts)
+    }
+
+    private fun isIdeTerminalAvailable(): Boolean {
+        return loadIdeTerminalManagerClass() != null
+    }
+
+    private fun openInIdeTerminal(workingDir: String, title: String, command: String): Boolean {
+        val managerClass = loadIdeTerminalManagerClass() ?: return false
+        return runCatching {
+            runOnEdt {
+                val getInstance = managerClass.getMethod("getInstance", com.intellij.openapi.project.Project::class.java)
+                val terminalManager = getInstance.invoke(null, service.project) ?: return@runOnEdt
+                val createShellWidget = managerClass.getMethod(
+                    "createShellWidget",
+                    String::class.java,
+                    String::class.java,
+                    Boolean::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType
+                )
+                createShellWidget.isAccessible = true
+                val widget = createShellWidget.invoke(terminalManager, workingDir, title, true, true) ?: return@runOnEdt
+                val sendCommand = widget.javaClass.methods.firstOrNull { method ->
+                    method.name == "sendCommandToExecute" &&
+                        method.parameterCount == 1 &&
+                        method.parameterTypes[0] == String::class.java
+                } ?: return@runOnEdt
+                sendCommand.isAccessible = true
+                sendCommand.invoke(widget, command)
+            }
+            true
+        }.getOrElse {
+            logger.warn("Failed to open IDE terminal", it)
+            false
+        }
+    }
+
+    private fun loadIdeTerminalManagerClass(): Class<*>? {
+        val className = "org.jetbrains.plugins.terminal.TerminalToolWindowManager"
+        val terminalPluginId = PluginId.getId("org.jetbrains.plugins.terminal")
+        val pluginDescriptor = PluginManagerCore.getPlugin(terminalPluginId)
+        val pluginClassLoader = runCatching {
+            pluginDescriptor
+                ?.javaClass
+                ?.methods
+                ?.firstOrNull { it.name == "getPluginClassLoader" && it.parameterCount == 0 }
+                ?.invoke(pluginDescriptor) as? ClassLoader
+        }.getOrNull()
+
+        val classLoaders = listOfNotNull(
+            pluginClassLoader,
+            javaClass.classLoader,
+            service.project.javaClass.classLoader,
+            ApplicationManager::class.java.classLoader,
+            Thread.currentThread().contextClassLoader
+        ).distinct()
+
+        classLoaders.forEach { classLoader ->
+            val loaded = runCatching { Class.forName(className, false, classLoader) }.getOrNull()
+            if (loaded != null) {
+                return loaded
+            }
+        }
+
+        return null
+    }
+
+    private fun applyCliPlaceholders(values: List<String>, placeholders: Map<String, String>): List<String> {
+        return values.map { value ->
+            placeholders.entries.fold(value) { acc, (key, replacement) ->
+                acc.replace("{$key}", replacement)
+            }
+        }
+    }
+
+    private fun resolveCliPath(adapterRoot: File, raw: String): String {
+        val path = raw.trim()
+        if (path.isEmpty()) return path
+        val file = File(path)
+        if (file.isAbsolute) return file.absolutePath
+        val relative = File(adapterRoot, path.replace("/", File.separator).replace("\\", File.separator))
+        return if (relative.exists()) relative.absolutePath else path
+    }
+
+    private fun toShellCommand(parts: List<String>): String {
+        val filtered = parts.filter { it.isNotBlank() }
+        if (filtered.isEmpty()) return ""
+
+        val os = System.getProperty("os.name").lowercase()
+        return if (os.contains("win")) {
+            val executable = filtered.first()
+            val args = filtered.drop(1).joinToString(" ") { quoteShellArg(it) }
+            buildString {
+                append("& ")
+                append(quoteShellArg(executable))
+                if (args.isNotBlank()) {
+                    append(" ")
+                    append(args)
+                }
+            }
+        } else {
+            filtered.joinToString(" ") { quoteShellArg(it) }
+        }
+    }
+
+    private fun quoteShellArg(value: String): String {
+        val os = System.getProperty("os.name").lowercase()
+        return if (os.contains("win")) {
+            "'" + value.replace("'", "''") + "'"
+        } else {
+            "'" + value.replace("'", "'\"'\"'") + "'"
+        }
     }
     fun pushLogEntry(entry: AcpLogEntry) {
         val payload = """{"direction":"${entry.direction}","json":${escapeJsonString(entry.json)},"timestamp":${entry.timestampMillis}}"""
@@ -1734,7 +1941,7 @@ class AcpBridge(
             put("toolKind", parsed?.get("kind")?.jsonPrimitive?.contentOrNull ?: "")
             put("toolTitle", parsed?.get("title")?.jsonPrimitive?.contentOrNull ?: "")
             put("toolStatus", parsed?.get("status")?.jsonPrimitive?.contentOrNull ?: "")
-            put("toolRawJson", rawJson)
+            put("toolRawJson", truncateStoredToolRawJson(rawJson))
         }
     }
 
@@ -1743,8 +1950,14 @@ class AcpBridge(
             put("role", "assistant")
             put("type", "tool_call_update")
             put("toolCallId", toolCallId)
-            put("toolRawJson", rawJson)
+            put("toolRawJson", truncateStoredToolRawJson(rawJson))
         }
+    }
+
+    private fun truncateStoredToolRawJson(rawJson: String, maxChars: Int = 2_000): String {
+        if (rawJson.length <= maxChars) return rawJson
+        val omitted = rawJson.length - maxChars
+        return rawJson.take(maxChars) + "\n\n[Stored history truncated; $omitted chars omitted]"
     }
 
     private fun buildStoredPlanChunk(plan: SessionUpdate, meta: JsonElement?): JsonObject? {
@@ -1819,6 +2032,7 @@ class AcpBridge(
                 val downloaded = AcpAdapterPaths.isDownloaded(info.id)
                 val authStatus = AcpAuthService.getAuthStatus(info.id)
                 val dlStatus = downloadStatuses[info.id] ?: ""
+                val cliAvailable = downloaded && info.cli != null && isIdeTerminalAvailable()
 
                 // Inline SVG icons as base64 so they load correctly in JCEF
                 val iconBase64 = info.iconPath?.let { path ->
@@ -1850,7 +2064,8 @@ class AcpBridge(
                     authPath = authStatus.authPath ?: "",
                     authenticating = AcpAuthService.isAuthenticating(info.id),
                     downloading = dlStatus.isNotEmpty() && !dlStatus.startsWith("Error"),
-                    downloadStatus = dlStatus
+                    downloadStatus = dlStatus,
+                    cliAvailable = cliAvailable
                 )
             }
 
@@ -2022,6 +2237,19 @@ class AcpBridge(
             val conversationId = obj["conversationId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             Triple(chatId, projectPath, conversationId)
         } catch (_: Exception) { Triple(null, null, null) }
+    }
+
+    private fun parseHistoryConversationCliPayload(payload: String?): Pair<String?, String?> {
+        val raw = payload?.trim().orEmpty()
+        if (raw.isEmpty()) return null to null
+        return try {
+            val obj = Json.parseToJsonElement(raw).jsonObject
+            val projectPath = obj["projectPath"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            val conversationId = obj["conversationId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            projectPath to conversationId
+        } catch (_: Exception) {
+            null to null
+        }
     }
 
     private fun serializeContentBlock(content: ContentBlock, textType: String = "text"): SerializedContentBlock? {

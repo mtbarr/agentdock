@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { AgentOption, ChatTab, TabUiFlags, isAgentRunnable } from '../types/chat';
+import { ACPBridge } from '../utils/bridge';
 
 interface TabBarProps {
   tabs: ChatTab[];
@@ -248,19 +249,39 @@ export default function TabBar({
                 </div>
                 {runnableAgents.length > 0 ? (
                   runnableAgents.map((agent) => (
-                    <button
+                    <div
                       key={agent.id}
-                      onClick={() => {
-                         onNewTabWithAgent(agent.id);
-                         setMenuOpen(false);
-                      }}
-                      className="flex items-center w-full px-3 py-1.5 text-left text-foreground/80 hover:bg-accent hover:text-accent-foreground transition-colors group"
+                      className="flex items-center gap-1 px-1.5 py-0.5"
                     >
-                      <span className="mr-2 flex items-center justify-center opacity-70 group-hover:opacity-100">
-                        {getAgentIcon(agent.id, agents)}
-                      </span>
-                      <span className="flex-1 min-w-0 truncate">{agent.name}</span>
-                    </button>
+                      <button
+                        onClick={() => {
+                           onNewTabWithAgent(agent.id);
+                           setMenuOpen(false);
+                        }}
+                        className="flex items-center flex-1 min-w-0 px-1.5 py-1 text-left text-foreground/80 hover:bg-accent hover:text-accent-foreground transition-colors group rounded"
+                      >
+                        <span className="mr-2 flex items-center justify-center opacity-70 group-hover:opacity-100">
+                          {getAgentIcon(agent.id, agents)}
+                        </span>
+                        <span className="flex-1 min-w-0 truncate">{agent.name}</span>
+                      </button>
+                      {agent.cliAvailable && (
+                        <button
+                          onClick={() => {
+                            ACPBridge.openAgentCli(agent.id);
+                            setMenuOpen(false);
+                          }}
+                          className="flex items-center justify-center w-7 h-7 rounded text-foreground/55 hover:text-foreground hover:bg-accent transition-colors"
+                          title={`Open ${agent.name} in IDE terminal`}
+                          aria-label={`Open ${agent.name} in IDE terminal`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="4 17 10 11 4 5"></polyline>
+                            <line x1="12" y1="19" x2="20" y2="19"></line>
+                          </svg>
+                        </button>
+                      )}
+                    </div>
                   ))
                 ) : (
                   <div className="px-3 py-2 text-xs text-foreground/50 italic text-center">No available agents</div>

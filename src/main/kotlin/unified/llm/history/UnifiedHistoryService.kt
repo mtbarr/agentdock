@@ -970,21 +970,27 @@ object UnifiedHistoryService {
             ?: return@withContext emptyList()
 
         val title = conversation.title.ifBlank { "Untitled" }
+        val availableMetaByKey = collectAvailableSessionMeta(cleanProjectPath)
+            .associateBy { "${it.adapterName}:${it.sessionId}" }
 
         conversation.sessions.map { session ->
+            val sessionMeta = availableMetaByKey["${session.adapterName}:${session.sessionId}"]
+            val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(session.adapterName) }.getOrNull()
+            val fallbackModelId = adapterInfo?.defaultModelId ?: adapterInfo?.models?.firstOrNull()?.modelId
+            val fallbackModeId = adapterInfo?.defaultModeId ?: adapterInfo?.modes?.firstOrNull()?.id
             SessionMeta(
                 sessionId = session.sessionId,
                 adapterName = session.adapterName,
                 conversationId = conversation.id,
                 sessionCount = conversation.sessions.size,
                 promptCount = conversation.promptCount,
-                modelId = null,
-                modeId = null,
+                modelId = sessionMeta?.modelId ?: fallbackModelId,
+                modeId = sessionMeta?.modeId ?: fallbackModeId,
                 projectPath = cleanProjectPath,
                 title = title,
-                filePath = session.sourceFilePath.orEmpty(),
-                createdAt = session.createdAt,
-                updatedAt = session.updatedAt,
+                filePath = sessionMeta?.filePath?.takeIf { it.isNotBlank() } ?: session.sourceFilePath.orEmpty(),
+                createdAt = sessionMeta?.createdAt ?: session.createdAt,
+                updatedAt = sessionMeta?.updatedAt ?: session.updatedAt,
                 allAdapterNames = conversation.sessions.map { it.adapterName }.distinct()
             )
         }
@@ -1057,7 +1063,6 @@ object UnifiedHistoryService {
         updated
     }
 }
-
 
 
 

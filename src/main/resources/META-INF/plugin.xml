@@ -8,7 +8,6 @@
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
-
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="UnifiedLLM" icon="/icons/unified_toolwindow.svg" anchor="right"
                     factoryClass="unified.llm.UnifiedLlmToolWindowFactory"/>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ACPBridge } from '../utils/bridge';
 import type { AgentOption, HistorySessionMeta } from '../types/chat';
 import ConfirmationModal from './ConfirmationModal';
-import { RefreshCw, Trash2, Search, ChevronDown, Pencil, Check, X } from 'lucide-react';
+import { RefreshCw, Trash2, Search, ChevronDown, Pencil, Check, X, Terminal } from 'lucide-react';
 
 interface HistoryPanelProps {
   availableAgents: AgentOption[];
@@ -296,6 +296,7 @@ export default function HistoryPanel({ availableAgents, onOpenSession }: History
 
             const mainAgent = adapterDisplay.get(item.adapterName);
             const mainLabel = mainAgent?.name || item.adapterName;
+            const canOpenCli = !!mainAgent?.cliAvailable;
 
             return (
               <div
@@ -387,6 +388,18 @@ export default function HistoryPanel({ availableAgents, onOpenSession }: History
                     className="flex items-center gap-2 shrink-0 pt-1 relative z-10"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    {canOpenCli && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          ACPBridge.openHistoryConversationCli(item.projectPath, conversationId);
+                        }}
+                        className="p-1 text-foreground-secondary hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Open Conversation in CLI"
+                      >
+                        <Terminal className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={(e) => startEditing(item, e)}
                       className="p-1 text-foreground-secondary hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"

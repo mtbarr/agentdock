@@ -497,29 +497,13 @@ class AcpClientService private constructor(val project: Project) {
                     false
                 }
             }
-            "restart" -> {
-                try {
-                    startAgent(chatId, adapterName, trimmedModelId, resumeSessionId = null, forceRestart = false)
-                    true
-                } catch (e: Exception) {
-                    false
-                }
-            }
-            "in-session" -> {
+            else -> {
                 val sess = context.session ?: return false
                 try {
                     withContext(Dispatchers.IO) { 
                         sess.setModel(ModelId(trimmedModelId)) 
                     }
                     context.activeModelIdRef.set(trimmedModelId)
-                    true
-                } catch (e: Exception) {
-                    false
-                }
-            }
-            else -> {
-                try {
-                    startAgent(chatId, adapterName, trimmedModelId)
                     true
                 } catch (e: Exception) {
                     false
@@ -581,6 +565,8 @@ class AcpClientService private constructor(val project: Project) {
         }
 
         context.statusRef.set(Status.Prompting)
+        var stopReason: String? = null
+        val activeAdapterName = context.activeAdapterNameRef.get()
         try {
             sess.prompt(blocks).collect { event ->
                 when (event) {
@@ -588,10 +574,14 @@ class AcpClientService private constructor(val project: Project) {
                         sessionUpdateHandler?.invoke(chatId, event.update, false, null)
                     }
                     is Event.PromptResponseEvent -> {
-                        emit(AcpEvent.PromptDone(event.response.stopReason.toString()))
+                        stopReason = event.response.stopReason.toString()
                     }
                 }
             }
+            if (!activeAdapterName.isNullOrBlank()) {
+                awaitPendingSessionUpdates(activeAdapterName)
+            }
+            stopReason?.let { emit(AcpEvent.PromptDone(it)) }
         } finally {
             context.statusRef.set(Status.Ready)
         }

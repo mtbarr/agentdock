@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import hljs from '../../utils/highlight';
+import { openFile } from '../../utils/openFile';
 import '../../styles/markdown.css';
 
 // Configure marked with highlight.js integration
@@ -43,7 +44,53 @@ export const MarkdownMessage: React.FC<MarkdownMessageProps> = ({ content }) => 
     }
   }, [content]);
 
+  const handleClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    const anchor = target?.closest('a');
+    if (!anchor) return;
+
+    const rawHref = anchor.getAttribute('href')?.trim();
+    if (!rawHref) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const href = decodeHtmlHref(rawHref);
+    const localFileTarget = parseLocalFileTarget(href);
+    if (localFileTarget) {
+      openFile(localFileTarget.path, localFileTarget.line);
+      return;
+    }
+
+    if (/^https?:\/\//i.test(href)) {
+      window.__openUrl?.(href);
+    }
+  }, []);
+
   return (
-    <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html as string }} />
+    <div
+      className="markdown-body"
+      onClick={handleClick}
+      dangerouslySetInnerHTML={{ __html: html as string }}
+    />
   );
 };
+
+function decodeHtmlHref(href: string): string {
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = href;
+  return textarea.value;
+}
+
+function parseLocalFileTarget(href: string): { path: string; line?: number } | null {
+  const normalized = href.replace(/\\/g, '/');
+  const match = normalized.match(/^(?:\/)?([A-Za-z]:\/.+?)(?:#L(\d+))?$/);
+  if (match) {
+    return {
+      path: match[1],
+      line: match[2] ? Number(match[2]) : undefined,
+    };
+  }
+
+  return null;
+}

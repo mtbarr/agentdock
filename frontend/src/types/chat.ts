@@ -103,6 +103,7 @@ export interface AgentOption {
   authAuthenticated?: boolean;
   authPath?: string;
   authenticating?: boolean;
+  cliAvailable?: boolean;
 }
 
 export function isAgentRunnable(agent: AgentOption): boolean {
@@ -282,6 +283,8 @@ declare global {
     __loadHistoryConversation?: (conversationId: string, projectPath: string, historyConversationId: string) => void;
     __loginAgent?: (adapterId: string) => void;
     __logoutAgent?: (adapterId: string) => void;
+    __openAgentCli?: (adapterId: string) => void;
+    __openHistoryConversationCli?: (payload: { projectPath: string; conversationId: string }) => void;
     __undoFile?: (payload: string) => void;
     __undoAllFiles?: (payload: string) => void;
     __processFile?: (payload: string) => void;
