@@ -1,4 +1,4 @@
-import { AgentOption, PermissionRequest, HistorySessionMeta, UndoResultPayload, ChangesState, ContentChunk, ToolCallEvent, ChatAttachment } from '../types/chat';
+import { AgentOption, PermissionRequest, HistorySessionMeta, HistoryDeleteResultPayload, UndoResultPayload, ChangesState, ContentChunk, ToolCallEvent, ChatAttachment, SessionMetadataUpdatePayload, ContinueConversationPayload } from '../types/chat';
 
 export interface ContentChunkEvent { chunk: ContentChunk; }
 export interface StatusEvent { chatId: string; status: string; }
@@ -7,6 +7,7 @@ export interface ModeEvent { chatId: string; modeId: string; }
 export interface AdaptersEvent { adapters: AgentOption[]; }
 export interface PermissionRequestEvent { request: PermissionRequest; }
 export interface HistoryListEvent { list: HistorySessionMeta[]; }
+export interface HistoryDeleteResultEvent { result: HistoryDeleteResultPayload; }
 export interface UndoResultEvent { chatId: string; result: UndoResultPayload; }
 export interface ChangesStateEvent { chatId: string; state: ChangesState; }
 export interface ToolCallBridgeEvent { chatId: string; payload: ToolCallEvent; }
@@ -21,6 +22,7 @@ const EVENT_NAMES = {
   PERMISSION: 'acp-permission',
   LOG: 'acp-log',
   HISTORY_LIST: 'history-list',
+  HISTORY_DELETE_RESULT: 'history-delete-result',
   UNDO_RESULT: 'acp-undo-result',
   CHANGES_STATE: 'acp-changes-state',
   ATTACHMENTS_ADDED: 'acp-attachments-added',
@@ -58,7 +60,7 @@ export const ACPBridge = {
             const eventName = chunk.type === 'tool_call' ? EVENT_NAMES.TOOL_CALL : EVENT_NAMES.TOOL_CALL_UPDATE;
             window.dispatchEvent(new CustomEvent(eventName, { detail: { chatId: chunk.chatId, payload } }));
           } else if (chunk.type === 'tool_call_update' && (chunk.toolCallId || raw.toolCallId) && (chunk.toolStatus || raw.status)) {
-            // Status-only update (no diffs) — e.g. denied permission or error
+            // Status-only update (no diffs) -- e.g. denied permission or error
             const payload: ToolCallEvent = {
               toolCallId: chunk.toolCallId || raw.toolCallId || '',
               title: chunk.toolTitle || raw.title || '',
@@ -100,6 +102,10 @@ export const ACPBridge = {
 
     window.__onHistoryList = (list) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.HISTORY_LIST, { detail: { list } }));
+    };
+
+    window.__onHistoryDeleteResult = (result) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.HISTORY_DELETE_RESULT, { detail: { result } }));
     };
 
 
@@ -165,12 +171,29 @@ export const ACPBridge = {
     return () => window.removeEventListener(EVENT_NAMES.HISTORY_LIST, callback as EventListener);
   },
   
-  loadHistorySession: (chatId: string, adapterId: string, sessionId: string, modelId?: string, modeId?: string) => {
-    window.__loadHistorySession?.(chatId, adapterId, sessionId, modelId, modeId);
+  onHistoryDeleteResult: (callback: (e: CustomEvent<HistoryDeleteResultEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.HISTORY_DELETE_RESULT, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.HISTORY_DELETE_RESULT, callback as EventListener);
   },
   
-  deleteHistorySession: (meta: HistorySessionMeta) => {
-    window.__deleteHistorySession?.(meta);
+  loadHistoryConversation: (conversationId: string, projectPath: string, historyConversationId: string) => {
+    window.__loadHistoryConversation?.(conversationId, projectPath, historyConversationId);
+  },
+  
+  deleteHistoryConversations: (projectPath: string, conversationIds: string[]) => {
+    window.__deleteHistoryConversations?.({ projectPath, conversationIds });
+  },
+
+  renameHistoryConversation: (projectPath: string, conversationId: string, newTitle: string) => {
+    window.__renameHistoryConversation?.({ projectPath, conversationId, newTitle });
+  },
+
+  updateSessionMetadata: (payload: SessionMetadataUpdatePayload) => {
+    window.__updateSessionMetadata?.(payload);
+  },
+
+  continueConversationWithSession: (payload: ContinueConversationPayload) => {
+    window.__continueConversationWithSession?.(payload);
   },
 
 

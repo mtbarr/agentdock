@@ -7,6 +7,8 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.cef.browser.CefBrowser
@@ -22,8 +24,29 @@ class HistoryBridge(
     private val project: Project,
     private val scope: CoroutineScope
 ) {
+    @Serializable
+    private data class DeleteHistoryPayload(
+        val projectPath: String,
+        val conversationIds: List<String>
+    )
+
+    @Serializable
+    private data class RenameHistoryPayload(
+        val projectPath: String,
+        val conversationId: String,
+        val newTitle: String
+    )
+
+    @Serializable
+    private data class DeleteHistoryResultPayload(
+        val success: Boolean,
+        val requestedConversationIds: List<String>,
+        val failures: List<DeleteConversationFailure> = emptyList()
+    )
+
     private var listHistoryQuery: JBCefJSQuery? = null
     private var deleteHistoryQuery: JBCefJSQuery? = null
+    private var renameHistoryQuery: JBCefJSQuery? = null
 
     fun install() {
         val defaultProjectPath = project.basePath ?: System.getProperty("user.dir")
@@ -49,17 +72,56 @@ class HistoryBridge(
 
                 scope.launch(Dispatchers.Default) {
                     try {
-                        val meta = permissiveJson.decodeFromString<SessionMeta>(payload)
-                        val success = UnifiedHistoryService.deleteSession(meta)
+                        val request = permissiveJson.decodeFromString<DeleteHistoryPayload>(payload)
+                        val result = UnifiedHistoryService.deleteConversations(request.projectPath, request.conversationIds)
+                        val history = UnifiedHistoryService.getHistoryList(request.projectPath)
+                        pushHistoryList(permissiveJson.encodeToString(history))
+                        pushDeleteResult(
+                            DeleteHistoryResultPayload(
+                                success = result.success,
+                                requestedConversationIds = request.conversationIds,
+                                failures = result.failures
+                            )
+                        )
+                    } catch (e: Exception) {
+                        val request = runCatching { permissiveJson.decodeFromString<DeleteHistoryPayload>(payload) }.getOrNull()
+                        if (request != null) {
+                            pushDeleteResult(
+                                DeleteHistoryResultPayload(
+                                    success = false,
+                                    requestedConversationIds = request.conversationIds,
+                                    failures = request.conversationIds.map { conversationId ->
+                                        DeleteConversationFailure(
+                                            conversationId = conversationId,
+                                            message = "Error during deletion: ${e.message ?: e.toString()}"
+                                        )
+                                    }
+                                )
+                            )
+                        }
+                        sendJsError("Error during deletion: ${e.message}")
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
 
+        renameHistoryQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                if (payload.isNullOrBlank()) return@addHandler JBCefJSQuery.Response(null, -1, "Empty payload")
+
+                scope.launch(Dispatchers.Default) {
+                    try {
+                        val request = permissiveJson.decodeFromString<RenameHistoryPayload>(payload)
+                        val success = UnifiedHistoryService.renameConversation(request.projectPath, request.conversationId, request.newTitle)
                         if (success) {
-                            val history = UnifiedHistoryService.getHistoryList(meta.projectPath)
+                            val history = UnifiedHistoryService.getHistoryList(request.projectPath)
                             pushHistoryList(permissiveJson.encodeToString(history))
                         } else {
-                            sendJsError("Failed to delete session ${meta.sessionId}")
+                            sendJsError("Failed to rename conversation")
                         }
                     } catch (e: Exception) {
-                        sendJsError("Error during deletion: ${e.message}")
+                        sendJsError("Error during rename: ${e.message}")
                     }
                 }
                 JBCefJSQuery.Response("ok")
@@ -69,23 +131,33 @@ class HistoryBridge(
 
     fun injectApi(cefBrowser: CefBrowser) {
         val listInject = listHistoryQuery?.inject("projectPath") ?: "console.error('[HistoryBridge] List query not ready')"
-        val deleteInject = deleteHistoryQuery?.inject("JSON.stringify(meta)") ?: "console.error('[HistoryBridge] Delete query not ready')"
+        val deleteInject = deleteHistoryQuery?.inject("JSON.stringify(payload)") ?: "console.error('[HistoryBridge] Delete query not ready')"
+        val renameInject = renameHistoryQuery?.inject("JSON.stringify(payload)") ?: "console.error('[HistoryBridge] Rename query not ready')"
 
         val script = """
             (function() {
                 window.__onHistoryList = window.__onHistoryList || function(list) {};
+                window.__onHistoryDeleteResult = window.__onHistoryDeleteResult || function(result) {};
 
                 window.__requestHistoryList = function(projectPath) {
                     try { $listInject } catch(e) { console.error('[HistoryBridge] Request error', e); }
                 };
 
-                window.__deleteHistorySession = function(meta) {
-                    if (!meta) return;
-                    console.log('[HistoryBridge] Triggering delete for:', meta.sessionId);
+                window.__deleteHistoryConversations = function(payload) {
+                    if (!payload) return;
                     try {
                         $deleteInject
                     } catch(e) {
                         console.error('[HistoryBridge] Critical error during delete:', e);
+                    }
+                };
+
+                window.__renameHistoryConversation = function(payload) {
+                    if (!payload) return;
+                    try {
+                        $renameInject
+                    } catch(e) {
+                        console.error('[HistoryBridge] Critical error during rename:', e);
                     }
                 };
             })();
@@ -98,6 +170,16 @@ class HistoryBridge(
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
                 "if(window.__onHistoryList) window.__onHistoryList(JSON.parse('$escaped'));",
+                browser.cefBrowser.url, 0
+            )
+        }
+    }
+
+    private fun pushDeleteResult(result: DeleteHistoryResultPayload) {
+        val escaped = permissiveJson.encodeToString(result).escapeForJsString()
+        runOnEdt {
+            browser.cefBrowser.executeJavaScript(
+                "if(window.__onHistoryDeleteResult) window.__onHistoryDeleteResult(JSON.parse('$escaped'));",
                 browser.cefBrowser.url, 0
             )
         }

@@ -6,6 +6,7 @@ import {
   DropdownOption,
   HistorySessionMeta,
   ChatAttachment,
+  PendingHandoffContext,
   RichContentBlock,
   TextBlock,
   ExploringBlock,
@@ -16,6 +17,7 @@ import {
 } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
 import { safeParseJson, buildToolCallEntry, extractResultTexts, appendToolOutput, truncateToolOutput } from '../utils/toolCallUtils';
+import { buildConversationHandoffPromptPrefix } from '../utils/conversationHandoff';
 
 function selectPreferredAgentId(agents: AgentOption[], preferredId?: string): string {
   if (preferredId && agents.some((agent) => agent.id === preferredId && isAgentRunnable(agent))) {
@@ -67,6 +69,14 @@ function plainTextFromBlocks(blocks: any[]): string {
   }).join('');
 }
 
+function titleFromFirstPrompt(messages: Message[]): string | undefined {
+  const firstUserMessage = messages.find((message) => message.role === 'user');
+  const raw = firstUserMessage?.content?.replace(/\s+/g, ' ').trim() || '';
+  if (!raw) return undefined;
+  if (raw.length <= 64) return raw;
+  return `${raw.slice(0, 64)}...`;
+}
+
 function normalizeOutgoingBlocks(blocks: any[]): any[] {
   return blocks.filter((block) => {
     if (!block) return false;
@@ -88,8 +98,29 @@ function normalizeOutgoingBlocks(blocks: any[]): any[] {
   });
 }
 
+function prependHandoffContext(blocks: any[], handoffText: string): any[] {
+  const prefix = buildConversationHandoffPromptPrefix(handoffText);
+  if (!prefix) return blocks;
+  return [
+    { type: 'text', text: `${prefix}\n\n` },
+    ...blocks,
+  ];
+}
+
+function stripTransferredContextForDisplay(text: string, role: 'user' | 'assistant', isReplay: boolean): string {
+  if (!isReplay || role !== 'user') return text;
+
+  const markerStart = text.indexOf('[TRANSFERRED CONTEXT]');
+  const markerUserRequest = text.indexOf('[USER REQUEST]');
+  if (markerStart < 0 || markerUserRequest < 0 || markerUserRequest < markerStart) {
+    return text;
+  }
+
+  return text.slice(markerUserRequest + '[USER REQUEST]'.length).trimStart();
+}
+
 // ---------------------------------------------------------------------------
-// Unified chunk processing — THE SINGLE code path for both streaming and replay.
+// Unified chunk processing - THE SINGLE code path for both streaming and replay.
 // Each chunk is { role, type, text?, data?, mimeType?, isReplay }.
 // ---------------------------------------------------------------------------
 
@@ -107,20 +138,52 @@ function setBlocks(msg: Message, blocks: RichContentBlock[]): Message {
   }
 }
 
+function applyAssistantMetadata(messages: Message[], chunk: ContentChunk): Message[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== 'assistant') continue;
+
+    const next = [...messages];
+    next[i] = {
+      ...message,
+      agentId: chunk.agentId ?? message.agentId,
+      agentName: chunk.agentName ?? message.agentName,
+      modelName: chunk.modelName ?? message.modelName,
+      modeName: chunk.modeName ?? message.modeName,
+      promptStartedAtMillis: chunk.promptStartedAtMillis ?? message.promptStartedAtMillis,
+      duration: chunk.durationSeconds ?? message.duration,
+      contextTokensUsed: chunk.contextTokensUsed ?? message.contextTokensUsed,
+      contextWindowSize: chunk.contextWindowSize ?? message.contextWindowSize,
+      metaComplete: true,
+    };
+    return next;
+  }
+
+  return messages;
+}
+
 function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
+  if (chunk.type === 'assistant_meta') {
+    return applyAssistantMetadata(messages, chunk);
+  }
+
+  const displayText = (chunk.type === 'text' || chunk.type === 'thinking')
+    ? stripTransferredContextForDisplay(chunk.text || '', chunk.role, chunk.isReplay)
+    : chunk.text;
+
   // Skip empty text/thinking chunks
-  if ((chunk.type === 'text' || chunk.type === 'thinking') && !chunk.text) return messages;
+  if ((chunk.type === 'text' || chunk.type === 'thinking') && !displayText) return messages;
 
   const newMessages = [...messages];
   let lastMsg = newMessages.length > 0 ? { ...newMessages[newMessages.length - 1] } : null;
 
   // ------ Create new message if role differs or no messages yet ------
   if (!lastMsg || lastMsg.role !== chunk.role) {
-    const block = buildBlock(chunk);
+    const block = buildBlock({ ...chunk, text: displayText });
     const newMsg: Message = {
       id: nextMessageId(chunk.role),
       role: chunk.role,
-      content: chunk.type === 'text' ? (chunk.text || '') : '',
+      content: chunk.type === 'text' ? (displayText || '') : '',
       timestamp: chunk.isReplay ? undefined : Date.now()
     };
     if (chunk.role === 'assistant') {
@@ -132,7 +195,7 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
     return newMessages;
   }
 
-  // ------ Same role — merge into existing message ------
+  // ------ Same role - merge into existing message ------
   const blocks = getBlocks(lastMsg);
   const lastBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
 
@@ -140,9 +203,9 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
     closeStreamingExploring(blocks);
 
     if (lastBlock && lastBlock.type === 'text') {
-      blocks[blocks.length - 1] = { ...lastBlock, text: (lastBlock as TextBlock).text + (chunk.text || '') };
+      blocks[blocks.length - 1] = { ...lastBlock, text: (lastBlock as TextBlock).text + (displayText || '') };
     } else {
-      blocks.push({ type: 'text', text: chunk.text || '' });
+      blocks.push({ type: 'text', text: displayText || '' });
     }
   } else if (chunk.type === 'thinking') {
     // Convert thinking to exploring entry
@@ -154,17 +217,16 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
       // If last entry is thinking, append to it
       if (lastEntry && lastEntry.kind === 'thinking') {
         const existingText = lastEntry.text || '';
-        const separator = chunk.isReplay ? (existingText.endsWith('\n') ? '\n' : '\n\n') : '';
         prevEntries[prevEntries.length - 1] = {
           ...lastEntry,
-          text: existingText + separator + (chunk.text || '')
+          text: existingText + (displayText || '')
         };
       } else {
         // Add new thinking entry
         prevEntries.push({
           toolCallId: `thinking-${++thinkingCounter}`,
           kind: 'thinking',
-          text: chunk.text || '',
+          text: displayText || '',
           rawJson: ''
         });
       }
@@ -179,7 +241,7 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
         entries: [{
           toolCallId: `thinking-${++thinkingCounter}`,
           kind: 'thinking',
-          text: chunk.text || '',
+          text: displayText || '',
           rawJson: ''
         }]
       });
@@ -283,7 +345,7 @@ function handleToolCall(blocks: RichContentBlock[], lastBlock: RichContentBlock 
       blocks.push({ type: 'tool_call', entry, isReplay: chunk.isReplay } as ToolCallBlock);
     }
   } else {
-    // Minor tool — group into exploring block
+    // Minor tool - group into exploring block
     if (lastBlock && lastBlock.type === 'exploring' && ((lastBlock as ExploringBlock).isStreaming || chunk.isReplay)) {
       const prevEntries = [...(lastBlock as ExploringBlock).entries];
       const eIdx = prevEntries.findIndex(e => e.toolCallId === entry.toolCallId);
@@ -359,7 +421,7 @@ function handleToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
     }
   }
 
-  // No existing block found — create one from the update data.
+  // No existing block found - create one from the update data.
   // This handles the case where the initial ToolCall event was not
   // delivered (e.g. it only arrived via requestPermissions, not session/update).
   const entry = buildToolCallEntry(chunk);
@@ -384,7 +446,7 @@ function handleToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
   }
 }
 
-// Apply a batch of chunks atomically — guarantees ordering and no lost updates.
+// Apply a batch of chunks atomically - guarantees ordering and no lost updates.
 function applyChunks(messages: Message[], chunks: ContentChunk[]): Message[] {
   let result = messages;
   for (const chunk of chunks) {
@@ -396,10 +458,12 @@ function applyChunks(messages: Message[], chunks: ContentChunk[]): Message[] {
 // ---------------------------------------------------------------------------
 
 export function useChatSession(
-    chatId: string,
-    availableAgents: AgentOption[],
-    initialAgentId?: string,
-    historySession?: HistorySessionMeta
+  conversationId: string,
+  availableAgents: AgentOption[],
+  initialAgentId?: string,
+  historySession?: HistorySessionMeta,
+  pendingHandoff?: PendingHandoffContext,
+  onHandoffConsumed?: (handoffId: string) => void
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -413,25 +477,39 @@ export function useChatSession(
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [acpSessionId, setAcpSessionId] = useState<string>('');
 
-  const pendingBlocksRef = useRef<any[] | null>(null);
+  const pendingPromptRef = useRef<any[] | null>(null);
+  const pendingHandoffRef = useRef<PendingHandoffContext | null>(null);
+  const consumedHandoffIdRef = useRef<string | null>(null);
   const startedAgentIdRef = useRef<string>('');
   const startedModelIdRef = useRef<string>('');
   const startedModeIdRef = useRef<string>('');
   const historyLoadRequestedRef = useRef<string | null>(null);
   const statusRef = useRef<string>('not started');
   const startTimeRef = useRef<number | null>(null);
+  const historyLoadTimerRef = useRef<number | null>(null);
+  const replaySettleTimerRef = useRef<number | null>(null);
+  const lastMetadataFingerprintRef = useRef<string>('');
+  const allowMetadataUpdateRef = useRef(!historySession);
+  const touchUpdatedAtRef = useRef(!historySession);
 
-  // Buffered chunk queue — chunks are collected here and flushed atomically
+  // Buffered chunk queue - chunks are collected here and flushed atomically
   const chunkBufferRef = useRef<ContentChunk[]>([]);
   const flushScheduledRef = useRef(false);
 
+  const applyBufferedChunks = useCallback((reason: string) => {
+    const chunks = chunkBufferRef.current;
+    chunkBufferRef.current = [];
+    if (chunks.length === 0 && reason !== 'status-ready') return;
+    setMessages(prev => {
+      const result = chunks.length > 0 ? applyChunks(prev, chunks) : prev;
+      return reason === 'status-ready' ? closeAllStreamingThinking(result) : result;
+    });
+  }, []);
+
   const flushChunks = useCallback(() => {
     flushScheduledRef.current = false;
-    const chunks = chunkBufferRef.current;
-    if (chunks.length === 0) return;
-    chunkBufferRef.current = [];
-    setMessages(prev => applyChunks(prev, chunks));
-  }, []);
+    applyBufferedChunks('raf');
+  }, [applyBufferedChunks]);
 
   const enqueueChunk = useCallback((chunk: ContentChunk) => {
     chunkBufferRef.current.push(chunk);
@@ -440,6 +518,14 @@ export function useChatSession(
       requestAnimationFrame(flushChunks);
     }
   }, [flushChunks]);
+
+  const consumeHandoff = useCallback(() => {
+    const handoffId = pendingHandoffRef.current?.id;
+    if (!handoffId) return;
+    consumedHandoffIdRef.current = handoffId;
+    pendingHandoffRef.current = null;
+    onHandoffConsumed?.(handoffId);
+  }, [onHandoffConsumed]);
 
   const selectedAgent = availableAgents.find((agent) => agent.id === selectedAgentId);
   const availableModels = selectedAgent?.models ?? [];
@@ -454,7 +540,6 @@ export function useChatSession(
       : '';
 
   const adapterDisplayName = selectedAgent?.name || '';
-
   const agentOptions: DropdownOption[] = availableAgents.map((agent) => ({ 
     id: agent.id, 
     label: agent.name,
@@ -494,6 +579,21 @@ export function useChatSession(
   }, [availableAgents, initialAgentId]);
 
   useEffect(() => {
+    if (!initialAgentId) return;
+    if (initialAgentId === selectedAgentId) return;
+    if (!availableAgents.some((agent) => agent.id === initialAgentId && isAgentRunnable(agent))) return;
+    allowMetadataUpdateRef.current = false;
+    lastMetadataFingerprintRef.current = '';
+    statusRef.current = 'not started';
+    setStatus('not started');
+    setAcpSessionId('');
+    startedAgentIdRef.current = '';
+    startedModelIdRef.current = '';
+    startedModeIdRef.current = '';
+    setSelectedAgentId(initialAgentId);
+  }, [availableAgents, initialAgentId, selectedAgentId]);
+
+  useEffect(() => {
     if (!historySession) return;
     if (historySession.modelId) {
       setSelectedModelByAgent((prev) => ({
@@ -510,22 +610,66 @@ export function useChatSession(
     if (historySession.sessionId) {
       setAcpSessionId(historySession.sessionId);
     }
+    allowMetadataUpdateRef.current = false;
+    touchUpdatedAtRef.current = false;
+    lastMetadataFingerprintRef.current = '';
   }, [historySession]);
 
+  const startSelectedAgent = useCallback(() => {
+    if (!selectedAgentId || typeof window.__startAgent !== 'function') return false;
+    if (historySession) return false;
+    if (!selectedAgent?.downloaded || (selectedAgent.hasAuthentication && !selectedAgent.authAuthenticated)) {
+      return false;
+    }
+
+    const modelId = selectedModelByAgent[selectedAgentId] || selectedAgent?.defaultModelId;
+
+    try {
+      startedAgentIdRef.current = selectedAgentId;
+      startedModelIdRef.current = modelId || '';
+      // startAgent() already applies the adapter's default mode on the backend.
+      // Keep that as the baseline so we only call __setMode() when the user
+      // selected a different mode than the adapter default.
+      startedModeIdRef.current = selectedAgent?.defaultModeId || '';
+
+      chunkBufferRef.current = [];
+      window.__startAgent(conversationId, selectedAgentId, modelId || undefined);
+      return true;
+    } catch (e) {
+      console.warn('[useChatSession] Failed to auto-start agent:', e);
+      return false;
+    }
+  }, [conversationId, historySession, selectedAgent, selectedAgentId, selectedModelByAgent]);
+
+  useEffect(() => {
+    if (!pendingHandoff) return;
+    if (consumedHandoffIdRef.current === pendingHandoff.id) return;
+    pendingHandoffRef.current = pendingHandoff;
+  }, [pendingHandoff]);
+
   // =========================================================================
-  // Chat Event Listeners (Filtered by chatId)
+  // Chat Event Listeners (filtered by conversationId)
   // =========================================================================
   useEffect(() => {
-
     // --- UNIFIED content handler: one handler for both streaming and replay ---
     const unsubContent = ACPBridge.onContentChunk((e) => {
       const chunk = e.detail.chunk;
-      if (chunk.chatId !== chatId) return;
+      if (chunk.chatId !== conversationId) return;
+      if (chunk.isReplay) {
+        if (replaySettleTimerRef.current !== null) {
+          window.clearTimeout(replaySettleTimerRef.current);
+        }
+        replaySettleTimerRef.current = window.setTimeout(() => {
+          replaySettleTimerRef.current = null;
+          setIsHistoryReplaying(false);
+          setIsSending(false);
+        }, 60);
+      }
       enqueueChunk(chunk);
     });
 
     const unsubStatus = ACPBridge.onStatus((e) => {
-      if (e.detail.chatId !== chatId) return;
+      if (e.detail.chatId !== conversationId) return;
       const s = e.detail.status;
       statusRef.current = s;
       setStatus(s);
@@ -535,68 +679,43 @@ export function useChatSession(
       }
 
       if (s === 'ready') {
-        const endTime = Date.now();
-        const durationSeconds = startTimeRef.current ? (endTime - startTimeRef.current) / 1000 : undefined;
+        if (replaySettleTimerRef.current !== null) {
+          window.clearTimeout(replaySettleTimerRef.current);
+          replaySettleTimerRef.current = null;
+        }
         startTimeRef.current = null;
 
-        // setPermissionRequest(null); - Handled manually or by new requests. Clearing on 'ready' creates race conditions with tool execution pauses.
-        // Flush any remaining buffered chunks immediately before processing status
-        if (chunkBufferRef.current.length > 0) {
-          flushScheduledRef.current = false;
-          const chunks = chunkBufferRef.current;
-          chunkBufferRef.current = [];
-          setMessages(prev => {
-            let result = applyChunks(prev, chunks);
-            result = closeAllStreamingThinking(result);
-            if (result.length > 0) {
-              const last = result[result.length - 1];
-              if (last.role === 'assistant' && durationSeconds !== undefined) {
-                result[result.length - 1] = {
-                  ...last,
-                  duration: durationSeconds,
-                  agentName: adapterDisplayName,
-                  modelName: selectedModelId, // Should ideally be display name
-                  modeName: selectedModeId
-                };
-              }
-            }
-            return result;
-          });
-        } else {
-          setMessages(prev => {
-            const result = closeAllStreamingThinking(prev);
-            if (result.length > 0) {
-              const last = result[result.length - 1];
-              if (last.role === 'assistant' && durationSeconds !== undefined) {
-                result[result.length - 1] = {
-                  ...last,
-                  duration: durationSeconds,
-                  agentName: adapterDisplayName,
-                  modelName: selectedModelId,
-                  modeName: selectedModeId
-                };
-              }
-            }
-            return result;
-          });
-        }
+        // Flush any remaining buffered chunks through the same path as RAF flush.
+        flushScheduledRef.current = false;
+        applyBufferedChunks('status-ready');
 
-        if (!pendingBlocksRef.current) {
+        if (!pendingPromptRef.current) {
           setIsSending(false);
           setIsHistoryReplaying(false);
         }
       }
 
-      if (s === 'ready' && pendingBlocksRef.current && typeof window.__sendPrompt === 'function') {
-        const blocksToSend = pendingBlocksRef.current;
-        pendingBlocksRef.current = null;
+      if (s === 'error') {
+        if (replaySettleTimerRef.current !== null) {
+          window.clearTimeout(replaySettleTimerRef.current);
+          replaySettleTimerRef.current = null;
+        }
+        setIsSending(false);
+        setIsHistoryReplaying(false);
+      }
+
+      if (s === 'ready' && pendingPromptRef.current && typeof window.__sendPrompt === 'function') {
+        const blocksToSend = pendingPromptRef.current;
+        pendingPromptRef.current = null;
 
         setIsSending(true);
         
         // Assistant message is already added in handleSend, we just need to trigger the actual send
         try {
-          window.__sendPrompt(chatId, JSON.stringify(blocksToSend));
+          window.__sendPrompt(conversationId, JSON.stringify(blocksToSend));
+          consumeHandoff();
         } catch (err) {
+          pendingPromptRef.current = blocksToSend;
           console.warn('[useChatSession] Failed to send pending blocks:', err);
           setIsSending(false);
         }
@@ -604,19 +723,21 @@ export function useChatSession(
     });
 
     const unsubSessionId = ACPBridge.onSessionId((e) => {
-      if (e.detail.chatId !== chatId) return;
+      if (e.detail.chatId !== conversationId) return;
       setAcpSessionId(e.detail.sessionId);
+      allowMetadataUpdateRef.current = true;
+      lastMetadataFingerprintRef.current = '';
     });
 
     const unsubMode = ACPBridge.onMode((e) => {
-      if (e.detail.chatId !== chatId) return;
+      if (e.detail.chatId !== conversationId) return;
       startedModeIdRef.current = e.detail.modeId;
     });
 
-    // Permission request — filter by chatId when available
+    // Permission request - filter by chatId when available
     const unsubPermission = ACPBridge.onPermissionRequest((e) => {
       const req = e.detail.request as PermissionRequest;
-      if (req.chatId && req.chatId !== chatId) return;
+      if (req.chatId && req.chatId !== conversationId) return;
       setPermissionRequest(req);
     });
 
@@ -626,79 +747,99 @@ export function useChatSession(
       unsubSessionId();
       unsubMode();
       unsubPermission();
+      if (replaySettleTimerRef.current !== null) {
+        window.clearTimeout(replaySettleTimerRef.current);
+        replaySettleTimerRef.current = null;
+      }
     };
-  }, [chatId, enqueueChunk, flushChunks, adapterDisplayName, selectedModelId, selectedModeId]);
+  }, [conversationId, enqueueChunk, applyBufferedChunks, consumeHandoff]);
 
   // Handle native attachments from backend
   useEffect(() => {
     const unsub = ACPBridge.onAttachmentsAdded((e) => {
       const { chatId: cid, files } = e.detail;
-      if (cid !== chatId) return;
+      if (cid !== conversationId) return;
       setAttachments((prev) => [...prev, ...files]);
     });
     return unsub;
-  }, [chatId]);
+  }, [conversationId]);
 
   useEffect(() => {
     if (!historySession) return;
-    if (!historySession.sessionId || !historySession.adapterName) return;
-    if (historyLoadRequestedRef.current === historySession.sessionId) return;
-    historyLoadRequestedRef.current = historySession.sessionId;
+    const loadRequestKey = historySession.conversationId;
+    if (historyLoadRequestedRef.current === loadRequestKey) return;
 
     chunkBufferRef.current = [];
-    pendingBlocksRef.current = null;
+    pendingPromptRef.current = null;
     setMessages([]);
     setStatus('initializing');
-    setIsSending(true);
+    setIsSending(false);
     setIsHistoryReplaying(true);
 
     startedAgentIdRef.current = historySession.adapterName;
     startedModelIdRef.current = historySession.modelId || '';
     startedModeIdRef.current = historySession.modeId || '';
 
-    ACPBridge.loadHistorySession(
-        chatId,
-        historySession.adapterName,
-        historySession.sessionId,
-        historySession.modelId,
-        historySession.modeId
-    );
-  }, [chatId, historySession]);
+    if (historyLoadTimerRef.current !== null) {
+      window.clearTimeout(historyLoadTimerRef.current);
+      historyLoadTimerRef.current = null;
+    }
+    if (replaySettleTimerRef.current !== null) {
+      window.clearTimeout(replaySettleTimerRef.current);
+      replaySettleTimerRef.current = null;
+    }
 
-  // Auto-start agent once selection is available
-  useEffect(() => {
-    if (!selectedAgentId || typeof window.__startAgent !== 'function') return;
-    if (historySession) return;
-
-    // Only start if downloaded and, when managed by the plugin, authenticated.
-    if (!selectedAgent?.downloaded || (selectedAgent.hasAuthentication && !selectedAgent?.authAuthenticated)) {
-      if (status !== 'not started' && status !== 'error') {
-        setStatus('not started');
+    historyLoadTimerRef.current = window.setTimeout(() => {
+      if (historyLoadRequestedRef.current === loadRequestKey) {
+        return;
       }
-      return;
-    }
+      historyLoadRequestedRef.current = loadRequestKey;
+      ACPBridge.loadHistoryConversation(
+        conversationId,
+        historySession.projectPath,
+        historySession.conversationId
+      );
+      historyLoadTimerRef.current = null;
+    }, 0);
 
-    if (status !== 'not started' && status !== 'error' && startedAgentIdRef.current === selectedAgentId) return;
+    return () => {
+      if (historyLoadTimerRef.current !== null) {
+        window.clearTimeout(historyLoadTimerRef.current);
+        historyLoadTimerRef.current = null;
+      }
+    };
+  }, [conversationId, historySession]);
 
-    const modelId = selectedModelByAgent[selectedAgentId] || selectedAgent?.defaultModelId;
+  useEffect(() => {
+    if (status !== 'ready') return;
+    if (!acpSessionId || !selectedAgentId) return;
+    if (initialAgentId && initialAgentId !== selectedAgentId) return;
+    if (!allowMetadataUpdateRef.current) return;
 
-    try {
-      startedAgentIdRef.current = selectedAgentId;
-      startedModelIdRef.current = modelId || '';
-      startedModeIdRef.current = '';
+    const promptCount = messages.filter((message) => message.role === 'user').length;
+    if (promptCount <= 0) return;
 
-      chunkBufferRef.current = [];
+    const title = titleFromFirstPrompt(messages);
+    const fingerprint = `${acpSessionId}|${selectedAgentId}|${promptCount}|${title || ''}`;
+    if (lastMetadataFingerprintRef.current === fingerprint) return;
 
-      window.__startAgent(chatId, selectedAgentId, modelId || undefined);
-    } catch (e) {
-      console.warn('[useChatSession] Failed to auto-start agent:', e);
-    }
-  }, [chatId, selectedAgentId, status, availableAgents, historySession]); // Re-run if status is reset to 'not started' or 'error'
+    ACPBridge.updateSessionMetadata({
+      conversationId,
+      sessionId: acpSessionId,
+      adapterName: selectedAgentId,
+      promptCount,
+      title,
+      touchUpdatedAt: touchUpdatedAtRef.current
+    });
+    lastMetadataFingerprintRef.current = fingerprint;
+  }, [conversationId, status, acpSessionId, selectedAgentId, initialAgentId, messages]);
+
 
   // Track model changes
   useEffect(() => {
     if (!selectedAgentId || !selectedModelId) return;
     if (status !== 'ready') return;
+    if (initialAgentId && initialAgentId !== selectedAgentId) return;
     if (startedAgentIdRef.current !== selectedAgentId) return;
 
     if (startedModelIdRef.current === selectedModelId) {
@@ -707,17 +848,18 @@ export function useChatSession(
 
     if (typeof window.__setModel !== 'function') return;
     try {
-      window.__setModel(chatId, selectedModelId);
+      window.__setModel(conversationId, selectedAgentId, selectedModelId);
       startedModelIdRef.current = selectedModelId;
     } catch (e) {
       console.warn('[useChatSession] Failed to set model:', e);
     }
-  }, [chatId, selectedAgentId, selectedModelId, status]);
+  }, [conversationId, selectedAgentId, selectedModelId, status, initialAgentId]);
 
   // Track mode changes
   useEffect(() => {
     if (!selectedAgentId || !selectedModeId) return;
     if (status !== 'ready') return;
+    if (initialAgentId && initialAgentId !== selectedAgentId) return;
     if (startedAgentIdRef.current !== selectedAgentId) return;
 
     if (startedModeIdRef.current === selectedModeId) {
@@ -726,16 +868,16 @@ export function useChatSession(
 
     if (typeof window.__setMode !== 'function') return;
     try {
-      window.__setMode(chatId, selectedModeId);
+      window.__setMode(conversationId, selectedAgentId, selectedModeId);
       startedModeIdRef.current = selectedModeId;
     } catch (e) {
       console.warn('[useChatSession] Failed to set mode:', e);
     }
-  }, [chatId, selectedAgentId, selectedModeId, status]);
+  }, [conversationId, selectedAgentId, selectedModeId, status, initialAgentId]);
 
   const handleSend = () => {
     const text = inputValue.trim();
-    if ((!text && attachments.length === 0) || isSending || (status !== 'ready' && status !== 'initializing')) return;
+    if ((!text && attachments.length === 0) || isSending || status === 'prompting') return;
 
     if (typeof window.__sendPrompt !== 'function') return;
 
@@ -803,7 +945,12 @@ export function useChatSession(
 
     const normalizedBlocks = normalizeOutgoingBlocks(blocks);
     if (normalizedBlocks.length === 0) return;
+    const outgoingBlocks = pendingHandoffRef.current
+      ? prependHandoffContext(normalizedBlocks, pendingHandoffRef.current.text)
+      : normalizedBlocks;
 
+    allowMetadataUpdateRef.current = true;
+    touchUpdatedAtRef.current = true;
     setIsSending(true);
     const userMessage: Message = {
       id: nextMessageId('user'),
@@ -815,24 +962,35 @@ export function useChatSession(
     setMessages((prev) => [...prev, userMessage]);
     setInputValue('');
     setAttachments([]);
+    const promptStartedAt = Date.now();
+    startTimeRef.current = promptStartedAt;
     const assistantMessage: Message = {
       id: nextMessageId('assistant'),
       role: 'assistant',
       content: '',
       contentBlocks: [],
       timestamp: Date.now(),
+      agentId: selectedAgentId,
+      agentName: adapterDisplayName,
+      modelName: selectedModelId,
+      modeName: selectedModeId,
+      promptStartedAtMillis: promptStartedAt,
+      metaComplete: false,
     };
     setMessages((prev) => [...prev, assistantMessage]);
 
     if (status !== 'ready') {
       // Queue it up
-      pendingBlocksRef.current = normalizedBlocks;
+      pendingPromptRef.current = outgoingBlocks;
+      if (status === 'not started' || status === 'error') {
+        startSelectedAgent();
+      }
       return;
     }
 
     try {
-      startTimeRef.current = Date.now();
-      window.__sendPrompt(chatId, JSON.stringify(normalizedBlocks));
+      window.__sendPrompt(conversationId, JSON.stringify(outgoingBlocks));
+      consumeHandoff();
       setPermissionRequest(null);
     } catch (e) {
       console.warn('[useChatSession] Failed to send prompt:', e);
@@ -842,7 +1000,7 @@ export function useChatSession(
 
   const handleStop = () => {
     if (typeof window.__cancelPrompt === 'function') {
-      window.__cancelPrompt(chatId);
+      window.__cancelPrompt(conversationId);
       setIsSending(false);
       setPermissionRequest(null);
     }
@@ -860,9 +1018,10 @@ export function useChatSession(
     }
   };
 
-  const handleModelChange = (modelId: string) => {
+  const handleModelChange = (modelId: string, targetAgentId?: string) => {
+    const agentId = targetAgentId || selectedAgentId;
     setSelectedModelByAgent((prev) => (
-        selectedAgentId ? { ...prev, [selectedAgentId]: modelId } : prev
+        agentId ? { ...prev, [agentId]: modelId } : prev
     ));
   };
 
@@ -896,7 +1055,7 @@ export function useChatSession(
     setAttachments,
     acpSessionId,
     adapterName: selectedAgentId,
-    adapterDisplayName: selectedAgent?.name || '',
+    adapterDisplayName,
     adapterIconPath: selectedAgent?.iconPath || ''
   };
 }
@@ -922,3 +1081,12 @@ function closeAllStreamingThinking(messages: Message[]): Message[] {
     { ...lastMsg, contentBlocks: blocks }
   ];
 }
+
+
+
+
+
+
+
+
+

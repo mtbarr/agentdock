@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { ChatTab, AgentOption, HistorySessionMeta, TabUiFlags, TabType, isAgentRunnable } from './types/chat';
+import { ChatTab, AgentOption, HistorySessionMeta, PendingHandoffContext, TabUiFlags, TabType, isAgentRunnable } from './types/chat';
 import { ACPBridge } from './utils/bridge';
 import TabBar from './components/TabBar';
 import ChatSessionView from './components/chat/ChatSessionView';
 import HistoryPanel from './components/HistoryPanel';
 import { AgentManagementView } from './components/AgentManagement';
 import { DesignSystemView } from './components/DesignSystem';
+import ConfirmationModal from './components/ConfirmationModal';
 
 let tabCounter = 0;
 function nextId(prefix: string): string {
@@ -13,18 +14,39 @@ function nextId(prefix: string): string {
 }
 
 const INITIAL_TAB_ID = nextId('tab');
-const INITIAL_SESSION_ID = nextId('ses');
+const INITIAL_CONVERSATION_ID = nextId('conv');
 
 const DEFAULT_TAB_UI: TabUiFlags = { unread: false, atBottom: true, warning: false };
 
+interface TabSessionState {
+  acpSessionId: string;
+  adapterName: string;
+}
+
+interface PendingAgentSwitch {
+  tabId: string;
+  targetAgentId: string;
+  handoffText: string;
+}
+
+interface PendingConversationContinuation {
+  previousSessionId: string;
+  previousAdapterName: string;
+  targetAgentId: string;
+}
+
 function App() {
   const [tabs, setTabs] = useState<ChatTab[]>([
-    { id: INITIAL_TAB_ID, type: 'chat', title: 'Untitled', sessionId: INITIAL_SESSION_ID }
+    { id: INITIAL_TAB_ID, type: 'chat', title: 'Untitled', conversationId: INITIAL_CONVERSATION_ID }
   ]);
   const [activeTabId, setActiveTabId] = useState<string>(INITIAL_TAB_ID);
   const [availableAgents, setAvailableAgents] = useState<AgentOption[]>([]);
   const [tabUi, setTabUi] = useState<Record<string, TabUiFlags>>({});
+  const [tabSessionState, setTabSessionState] = useState<Record<string, TabSessionState>>({});
+  const [pendingAgentSwitch, setPendingAgentSwitch] = useState<PendingAgentSwitch | null>(null);
+  const [pendingHandoffsByTab, setPendingHandoffsByTab] = useState<Record<string, PendingHandoffContext>>({});
   const pendingPermissionRef = useRef<Record<string, boolean>>({});
+  const pendingConversationContinuationsRef = useRef<Record<string, PendingConversationContinuation>>({});
 
   // Refs for stable callbacks
   const tabsRef = useRef(tabs);
@@ -33,10 +55,6 @@ function App() {
   tabUiRef.current = tabUi;
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
-
-  const findTabIdBySessionId = useCallback((sessionId: string) => {
-    return tabsRef.current.find(t => t.sessionId === sessionId)?.id;
-  }, []);
 
   const canUserSeeResponse = useCallback((tabId: string) => {
     const isActive = tabId === activeTabIdRef.current;
@@ -57,6 +75,19 @@ function App() {
       return next;
     });
     delete pendingPermissionRef.current[id];
+    setTabSessionState(prev => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setPendingHandoffsByTab(prev => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    delete pendingConversationContinuationsRef.current[id];
   };
 
   // Initialize Bridge and load cached agents
@@ -86,12 +117,132 @@ function App() {
       ? agentId
       : runnableAgents[0]?.id;
     const newId = nextId('tab');
-    const newSessionId = nextId('ses');
+    const newConversationId = nextId('conv');
     const title = 'Untitled';
-    setTabs((prev) => [...prev, { id: newId, type: 'chat', title, sessionId: newSessionId, agentId: resolvedAgentId }]);
+    setTabs((prev) => [...prev, { id: newId, type: 'chat', title, conversationId: newConversationId, agentId: resolvedAgentId }]);
     initTabUi(newId);
     setActiveTabId(newId);
   }, [runnableAgents]);
+
+  const handleChatSessionStateChange = useCallback((tabId: string, state: TabSessionState) => {
+    setTabSessionState(prev => {
+      const current = prev[tabId];
+      if (current?.acpSessionId === state.acpSessionId && current?.adapterName === state.adapterName) {
+        return prev;
+      }
+      return { ...prev, [tabId]: state };
+    });
+
+    const pendingContinuation = pendingConversationContinuationsRef.current[tabId];
+    if (!pendingContinuation) return;
+    if (!state.acpSessionId || !state.adapterName) return;
+    if (state.acpSessionId === pendingContinuation.previousSessionId) return;
+    if (state.adapterName !== pendingContinuation.targetAgentId) return;
+
+    const tab = tabsRef.current.find(item => item.id === tabId);
+    ACPBridge.continueConversationWithSession({
+      previousSessionId: pendingContinuation.previousSessionId,
+      previousAdapterName: pendingContinuation.previousAdapterName,
+      sessionId: state.acpSessionId,
+      adapterName: state.adapterName,
+      title: tab?.title
+    });
+    delete pendingConversationContinuationsRef.current[tabId];
+  }, []);
+
+  const requestAgentSwitch = useCallback((tabId: string, payload: { agentId: string; handoffText: string }) => {
+    const tab = tabsRef.current.find(item => item.id === tabId);
+    if (!tab || tab.type !== 'chat') return;
+
+    const currentSession = tabSessionState[tabId];
+    const hasConversationToContinue = Boolean(currentSession?.acpSessionId && payload.handoffText.trim());
+    if (!hasConversationToContinue) {
+      setTabs(prev => prev.map(item => (
+        item.id === tabId
+          ? { ...item, agentId: payload.agentId, historySession: undefined }
+          : item
+      )));
+      setActiveTabId(tabId);
+      return;
+    }
+
+    setPendingAgentSwitch({
+      tabId,
+      targetAgentId: payload.agentId,
+      handoffText: payload.handoffText,
+    });
+  }, [tabSessionState]);
+
+  const handleContinueInNewTab = useCallback(() => {
+    if (!pendingAgentSwitch) return;
+
+    const closingTab = tabsRef.current.find(item => item.id === pendingAgentSwitch.tabId);
+    if (closingTab?.type === 'chat' && typeof window.__stopAgent === 'function') {
+      try {
+        window.__stopAgent(closingTab.conversationId);
+      } catch (e) {
+        console.warn('[App] Failed to stop agent:', e);
+      }
+    }
+
+    const resolvedAgentId = runnableAgents.some(agent => agent.id === pendingAgentSwitch.targetAgentId)
+      ? pendingAgentSwitch.targetAgentId
+      : runnableAgents[0]?.id;
+    const newId = nextId('tab');
+    const newConversationId = nextId('conv');
+    const title = 'Untitled';
+
+    setTabs(prev => {
+      const remaining = prev.filter(item => item.id !== pendingAgentSwitch.tabId);
+      return [...remaining, { id: newId, type: 'chat', title, conversationId: newConversationId, agentId: resolvedAgentId }];
+    });
+    cleanupTabUi(pendingAgentSwitch.tabId);
+    setActiveTabId(newId);
+    setPendingAgentSwitch(null);
+  }, [pendingAgentSwitch, runnableAgents]);
+
+  const handleContinueInCurrentConversation = useCallback(() => {
+    if (!pendingAgentSwitch) return;
+
+    const currentSession = tabSessionState[pendingAgentSwitch.tabId];
+    if (currentSession?.acpSessionId && currentSession.adapterName) {
+      const handoffContext: PendingHandoffContext = {
+        id: nextId('handoff'),
+        sourceSessionId: currentSession.acpSessionId,
+        sourceAgentId: currentSession.adapterName,
+        targetAgentId: pendingAgentSwitch.targetAgentId,
+        text: pendingAgentSwitch.handoffText,
+      };
+
+      pendingConversationContinuationsRef.current[pendingAgentSwitch.tabId] = {
+        previousSessionId: currentSession.acpSessionId,
+        previousAdapterName: currentSession.adapterName,
+        targetAgentId: pendingAgentSwitch.targetAgentId,
+      };
+      setPendingHandoffsByTab(prev => ({
+        ...prev,
+        [pendingAgentSwitch.tabId]: handoffContext,
+      }));
+    }
+
+    setTabs(prev => prev.map(tab => (
+      tab.id === pendingAgentSwitch.tabId
+        ? { ...tab, agentId: pendingAgentSwitch.targetAgentId, historySession: undefined }
+        : tab
+    )));
+    setActiveTabId(pendingAgentSwitch.tabId);
+    setPendingAgentSwitch(null);
+  }, [pendingAgentSwitch, tabSessionState]);
+
+  const handleHandoffConsumed = useCallback((tabId: string, handoffId: string) => {
+    setPendingHandoffsByTab(prev => {
+      const current = prev[tabId];
+      if (!current || current.id !== handoffId) return prev;
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+  }, []);
 
   /** Open a singleton tab of the given type (management/design/history). If already open, just switch to it. */
   const openSingletonTab = useCallback((type: TabType, title: string) => {
@@ -101,8 +252,7 @@ function App() {
       return;
     }
     const newId = nextId('tab');
-    const newSessionId = nextId('ses');
-    setTabs(prev => [...prev, { id: newId, type, title, sessionId: newSessionId }]);
+    setTabs(prev => [...prev, { id: newId, type, title, conversationId: newId }]);
     setActiveTabId(newId);
   }, []);
 
@@ -110,7 +260,7 @@ function App() {
     const closingTab = tabs.find(t => t.id === id);
     if (closingTab?.type === 'chat' && typeof window.__stopAgent === 'function') {
       try {
-        window.__stopAgent(closingTab.sessionId);
+        window.__stopAgent(closingTab.conversationId);
       } catch (e) {
         console.warn('[App] Failed to stop agent:', e);
       }
@@ -141,7 +291,7 @@ function App() {
     if (typeof window.__stopAgent === 'function') {
       tabs.forEach((tab) => {
         if (tab.type === 'chat') {
-          try { window.__stopAgent?.(tab.sessionId); } catch (e) {}
+          try { window.__stopAgent?.(tab.conversationId); } catch (e) {}
         }
       });
     }
@@ -152,24 +302,28 @@ function App() {
   };
 
   const handleOpenHistory = (item: HistorySessionMeta) => {
-    const newId = nextId('tab');
-    const newSessionId = nextId('ses');
-    const title = item.title || 'Untitled';
-
-    // Close the history tab
-    const historyTab = tabsRef.current.find(t => t.type === 'history');
-    if (historyTab) {
-      setTabs(prev => prev.filter(t => t.id !== historyTab.id));
+    const conversationKey = item.conversationId;
+    const existing = tabsRef.current.find((tab) => {
+      if (tab.type !== 'chat') return false;
+      if (tab.conversationId === conversationKey) return true;
+      return tab.historySession?.conversationId === conversationKey;
+    });
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
     }
+
+    const newId = nextId('tab');
+    const title = item.title || 'Untitled';
 
     // Open the history session as a new chat tab
     setTabs((prev) => [
-      ...prev.filter(t => t.type !== 'history'),
+      ...prev,
       {
         id: newId,
         type: 'chat',
         title,
-        sessionId: newSessionId,
+        conversationId: conversationKey,
         agentId: item.adapterName,
         historySession: item
       }
@@ -178,9 +332,7 @@ function App() {
     setActiveTabId(newId);
   };
 
-  const handleAssistantActivity = useCallback((sessionId: string) => {
-    const tabId = findTabIdBySessionId(sessionId);
-    if (!tabId) return;
+  const handleAssistantActivity = useCallback((tabId: string) => {
     if (pendingPermissionRef.current[tabId] || tabUiRef.current[tabId]?.warning) {
       setTabUi(prev => prev[tabId]?.unread ? { ...prev, [tabId]: { ...prev[tabId], unread: false } } : prev);
       return;
@@ -190,20 +342,16 @@ function App() {
       return;
     }
     setTabUi(prev => ({ ...prev, [tabId]: { ...prev[tabId], unread: true } }));
-  }, [findTabIdBySessionId, canUserSeeResponse]);
+  }, [canUserSeeResponse]);
 
-  const handleAtBottomChange = useCallback((sessionId: string, isAtBottom: boolean) => {
-    const tabId = findTabIdBySessionId(sessionId);
-    if (!tabId) return;
+  const handleAtBottomChange = useCallback((tabId: string, isAtBottom: boolean) => {
     setTabUi(prev => ({ ...prev, [tabId]: { ...prev[tabId], atBottom: isAtBottom } }));
     if (isAtBottom && canUserSeeResponse(tabId)) {
       setTabUi(prev => prev[tabId]?.unread ? { ...prev, [tabId]: { ...prev[tabId], unread: false } } : prev);
     }
-  }, [findTabIdBySessionId, canUserSeeResponse]);
+  }, [canUserSeeResponse]);
 
-  const handlePermissionRequestChange = useCallback((sessionId: string, hasPendingPermission: boolean) => {
-    const tabId = findTabIdBySessionId(sessionId);
-    if (!tabId) return;
+  const handlePermissionRequestChange = useCallback((tabId: string, hasPendingPermission: boolean) => {
     pendingPermissionRef.current[tabId] = hasPendingPermission;
     setTabUi(prev => {
       const current = prev[tabId];
@@ -212,7 +360,7 @@ function App() {
       if (!needsUpdate) return prev;
       return { ...prev, [tabId]: { ...current, unread: false, warning: hasPendingPermission } };
     });
-  }, [findTabIdBySessionId]);
+  }, []);
 
   useEffect(() => {
     if (!activeTabId) return;
@@ -244,27 +392,29 @@ function App() {
       />
 
       <div className="flex-1 relative min-h-0">
-        {/* All tabs — keep mounted for state preservation, toggle visibility */}
+        {/* All tabs -- keep mounted for state preservation, toggle visibility */}
         {tabs.map((tab) => {
           const isTabActive = tab.id === activeTabId;
-          const isVisible = isTabActive;
 
           return (
             <div
               key={tab.id}
-              className={`absolute inset-0 w-full h-full bg-background ${isVisible ? 'z-10 visible' : 'z-0 invisible'}`}
+              className={`absolute inset-0 w-full h-full bg-background ${isTabActive ? 'z-10 visible' : 'z-0 invisible'}`}
             >
               {tab.type === 'chat' && (
                 <ChatSessionView
                   initialAgentId={tab.agentId}
-                  chatId={tab.sessionId}
+                  conversationId={tab.conversationId}
                   historySession={tab.historySession}
+                  pendingHandoff={pendingHandoffsByTab[tab.id]}
                   availableAgents={runnableAgents}
                   isActive={isTabActive}
-                  onAssistantActivity={handleAssistantActivity}
-                  onAtBottomChange={handleAtBottomChange}
-                  onPermissionRequestChange={handlePermissionRequestChange}
-                  onAgentChangeRequest={(agentId) => handleNewTab(agentId)}
+                  onAssistantActivity={() => handleAssistantActivity(tab.id)}
+                  onAtBottomChange={(isAtBottom) => handleAtBottomChange(tab.id, isAtBottom)}
+                  onPermissionRequestChange={(hasPendingPermission) => handlePermissionRequestChange(tab.id, hasPendingPermission)}
+                  onAgentChangeRequest={(payload) => requestAgentSwitch(tab.id, payload)}
+                  onHandoffConsumed={(handoffId) => handleHandoffConsumed(tab.id, handoffId)}
+                  onSessionStateChange={(state) => handleChatSessionStateChange(tab.id, state)}
                 />
               )}
               {tab.type === 'management' && <AgentManagementView />}
@@ -321,8 +471,23 @@ function App() {
           </div>
         )}
       </div>
+
+      <ConfirmationModal
+        isOpen={pendingAgentSwitch !== null}
+        title="Switch Agent"
+        message="Choose whether to continue this conversation in the current tab or start a new conversation with the new agent."
+        confirmLabel="Continue Here"
+        confirmVariant="primary"
+        secondaryActionLabel="New Conversation"
+        onSecondaryAction={handleContinueInNewTab}
+        showCancelButton={false}
+        onConfirm={handleContinueInCurrentConversation}
+        onCancel={() => setPendingAgentSwitch(null)}
+      />
     </div>
   );
 }
 
 export default App;
+
+

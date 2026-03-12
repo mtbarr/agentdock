@@ -49,7 +49,7 @@ export function extractResultTexts(json: Record<string, any>): string | undefine
   return texts.length > 0 ? texts.join('\n\n') : undefined;
 }
 
-const MAX_TOOL_OUTPUT_CHARS = 20000;
+const MAX_TOOL_OUTPUT_CHARS = 2000;
 
 export function truncateToolOutput(text: string, maxChars: number = MAX_TOOL_OUTPUT_CHARS): { text: string; truncated: boolean; originalLength: number } {
   const originalLength = text.length;

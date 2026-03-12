@@ -4,20 +4,20 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import unified.llm.acp.AcpAdapterConfig
 import java.io.File
 import java.time.Instant
 
 interface HistoryParser {
-    fun parseMeta(
+    fun parseSessions(
         file: File,
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         historyConfig: AcpAdapterConfig.HistoryConfig,
         projectPath: String
-    ): SessionMeta?
+    ): List<SessionMeta>
 }
 
 object HistoryParserRegistry {
@@ -25,7 +25,10 @@ object HistoryParserRegistry {
         "json_array" to JsonArrayParser(),
         "jsonl_stream" to JsonlStreamParser(),
         "json_object" to JsonObjectParser(),
-        "jsonl_event_stream" to JsonlEventStreamParser()
+        "jsonl_event_stream" to JsonlEventStreamParser(),
+        "root_user_jsonl" to RootUserJsonlParser(),
+        "session_index" to SessionIndexParser(),
+        "session_dir_mtime" to SessionDirMtimeParser()
     )
 
     fun getParser(strategy: String): HistoryParser? = parsers[strategy]
@@ -41,10 +44,15 @@ private fun parseTimestamp(value: String?): Long? {
     return value.toLongOrNull() ?: runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
 }
 
-private fun fallbackTitle(raw: String?): String = raw?.trim().orEmpty().ifBlank { "Untitled Session" }.take(80)
+private fun fallbackTitle(raw: String?): String {
+    val normalized = raw?.trim().orEmpty().ifBlank { "Untitled Session" }
+    if (normalized.length <= 64) return normalized
+    return normalized.take(64) + "..."
+}
 
 // Maximum lines to scan when parsing JSONL files to extract title and metadata
 private const val MAX_LINES_TO_SCAN = 40
+private val historyJson = Json { ignoreUnknownKeys = true }
 
 private fun canonicalizePath(path: String?): String {
     val value = path?.trim().orEmpty()
@@ -64,15 +72,13 @@ private fun JsonElement.stringAtPath(path: String?): String? {
 }
 
 private class JsonArrayParser : HistoryParser {
-    private val json = Json { ignoreUnknownKeys = true }
-
-    override fun parseMeta(
+    override fun parseSessions(
         file: File,
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         historyConfig: AcpAdapterConfig.HistoryConfig,
         projectPath: String
-    ): SessionMeta? {
-        val root = runCatching { json.parseToJsonElement(file.readText()).jsonObject }.getOrNull() ?: return null
+    ): List<SessionMeta> {
+        val root = runCatching { historyJson.parseToJsonElement(file.readText()).jsonObject }.getOrNull() ?: return emptyList()
         val sessionId = root.stringOrNull("sessionId") ?: root.stringOrNull("id") ?: file.nameWithoutExtension
         val firstMessage = root["messages"]?.jsonArray?.firstOrNull()?.jsonObject
         val title = fallbackTitle(
@@ -87,7 +93,7 @@ private class JsonArrayParser : HistoryParser {
             ?: parseTimestamp(root.stringOrNull("startTime"))
             ?: updatedAt
 
-        return SessionMeta(
+        return listOf(SessionMeta(
             sessionId = sessionId,
             adapterName = adapterInfo.id,
             modelId = adapterInfo.defaultModelId,
@@ -97,25 +103,23 @@ private class JsonArrayParser : HistoryParser {
             filePath = file.absolutePath,
             createdAt = createdAt,
             updatedAt = updatedAt
-        )
+        ))
     }
 }
 
 private class JsonlStreamParser : HistoryParser {
-    private val json = Json { ignoreUnknownKeys = true }
-
-    override fun parseMeta(
+    override fun parseSessions(
         file: File,
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         historyConfig: AcpAdapterConfig.HistoryConfig,
         projectPath: String
-    ): SessionMeta? {
+    ): List<SessionMeta> {
         var title: String? = null
         runCatching {
             file.useLines { lines ->
                 for ((index, line) in lines.withIndex().take(MAX_LINES_TO_SCAN)) {
                     if (!line.trimStart().startsWith("{")) continue
-                    val obj = json.parseToJsonElement(line).jsonObject
+                    val obj = historyJson.parseToJsonElement(line).jsonObject
 
                     val role = obj.stringOrNull("role")?.lowercase()
                     val text = obj.stringOrNull("content") ?: obj.stringOrNull("text")
@@ -127,7 +131,7 @@ private class JsonlStreamParser : HistoryParser {
             }
         }
 
-        return SessionMeta(
+        return listOf(SessionMeta(
             sessionId = file.nameWithoutExtension,
             adapterName = adapterInfo.id,
             modelId = adapterInfo.defaultModelId,
@@ -137,25 +141,23 @@ private class JsonlStreamParser : HistoryParser {
             filePath = file.absolutePath,
             createdAt = file.lastModified(),
             updatedAt = file.lastModified()
-        )
+        ))
     }
 }
 
 private class JsonObjectParser : HistoryParser {
-    private val json = Json { ignoreUnknownKeys = true }
-
-    override fun parseMeta(
+    override fun parseSessions(
         file: File,
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         historyConfig: AcpAdapterConfig.HistoryConfig,
         projectPath: String
-    ): SessionMeta? {
-        val root = runCatching { json.parseToJsonElement(file.readText()).jsonObject }.getOrNull() ?: return null
+    ): List<SessionMeta> {
+        val root = runCatching { historyJson.parseToJsonElement(file.readText()).jsonObject }.getOrNull() ?: return emptyList()
         val sessionId = root.stringOrNull("sessionId") ?: root.stringOrNull("id") ?: file.nameWithoutExtension
         val title = fallbackTitle(root.stringOrNull("title") ?: root["metadata"]?.jsonObject?.stringOrNull("name"))
         val updatedAt = root.stringOrNull("updatedAt")?.toLongOrNull() ?: file.lastModified()
 
-        return SessionMeta(
+        return listOf(SessionMeta(
             sessionId = sessionId,
             adapterName = adapterInfo.id,
             modelId = adapterInfo.defaultModelId,
@@ -165,19 +167,17 @@ private class JsonObjectParser : HistoryParser {
             filePath = file.absolutePath,
             createdAt = updatedAt,
             updatedAt = updatedAt
-        )
+        ))
     }
 }
 
 private class JsonlEventStreamParser : HistoryParser {
-    private val json = Json { ignoreUnknownKeys = true }
-
-    override fun parseMeta(
+    override fun parseSessions(
         file: File,
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         historyConfig: AcpAdapterConfig.HistoryConfig,
         projectPath: String
-    ): SessionMeta? {
+    ): List<SessionMeta> {
         val expectedProjectPath = canonicalizePath(projectPath)
         var sessionId: String? = null
         var createdAt: Long? = null
@@ -189,7 +189,7 @@ private class JsonlEventStreamParser : HistoryParser {
             file.useLines { lines ->
                 for (line in lines.take(200)) {
                     if (!line.trimStart().startsWith("{")) continue
-                    val element = json.parseToJsonElement(line)
+                    val element = historyJson.parseToJsonElement(line)
                     val type = element.stringAtPath("type")
 
                     if (type == "session_meta") {
@@ -211,10 +211,10 @@ private class JsonlEventStreamParser : HistoryParser {
             }
         }
 
-        if (sessionProjectPath.isNullOrBlank()) return null
-        if (expectedProjectPath.isNotBlank() && sessionProjectPath != expectedProjectPath) return null
+        if (sessionProjectPath.isNullOrBlank()) return emptyList()
+        if (expectedProjectPath.isNotBlank() && sessionProjectPath != expectedProjectPath) return emptyList()
 
-        return SessionMeta(
+        return listOf(SessionMeta(
             sessionId = sessionId ?: file.nameWithoutExtension,
             adapterName = adapterInfo.id,
             modelId = adapterInfo.defaultModelId,
@@ -224,6 +224,143 @@ private class JsonlEventStreamParser : HistoryParser {
             filePath = file.absolutePath,
             createdAt = createdAt ?: file.lastModified(),
             updatedAt = updatedAt ?: file.lastModified()
+        ))
+    }
+}
+
+private class RootUserJsonlParser : HistoryParser {
+    override fun parseSessions(
+        file: File,
+        adapterInfo: AcpAdapterConfig.AdapterInfo,
+        historyConfig: AcpAdapterConfig.HistoryConfig,
+        projectPath: String
+    ): List<SessionMeta> {
+        val expectedProjectPath = canonicalizePath(projectPath)
+        var sessionId: String? = null
+        var createdAt: Long? = null
+        var title: String? = null
+        var isConversation = false
+
+        runCatching {
+            file.useLines { lines ->
+                for (line in lines.take(100)) {
+                    if (!line.trimStart().startsWith("{")) continue
+                    val root = historyJson.parseToJsonElement(line).jsonObject
+                    val type = root.stringOrNull("type")?.lowercase()
+                    if (type != "user") continue
+                    val parentUuid = (root["parentUuid"] as? JsonPrimitive)?.contentOrNull
+                    if (!parentUuid.isNullOrBlank()) continue
+                    if ((root["isSidechain"] as? JsonPrimitive)?.content == "true") continue
+
+                    val cwd = canonicalizePath(root.stringOrNull("cwd"))
+                    if (expectedProjectPath.isNotBlank() && cwd != expectedProjectPath) continue
+
+                    val message = root["message"]?.jsonObject ?: continue
+                    if (message.stringOrNull("role")?.lowercase() != "user") continue
+                    val text = message["content"]?.jsonArray
+                        ?.firstOrNull()
+                        ?.jsonObject
+                        ?.stringOrNull("text")
+                        ?.trim()
+                    if (text.isNullOrBlank()) continue
+
+                    sessionId = root.stringOrNull("sessionId") ?: file.nameWithoutExtension
+                    createdAt = parseTimestamp(root.stringOrNull("timestamp"))
+                    title = text
+                    isConversation = true
+                    break
+                }
+            }
+        }
+
+        if (!isConversation) return emptyList()
+
+        return listOf(
+            SessionMeta(
+                sessionId = sessionId ?: file.nameWithoutExtension,
+                adapterName = adapterInfo.id,
+                modelId = adapterInfo.defaultModelId,
+                modeId = adapterInfo.defaultModeId,
+                projectPath = projectPath,
+                title = fallbackTitle(title),
+                filePath = file.absolutePath,
+                createdAt = createdAt ?: file.lastModified(),
+                updatedAt = file.lastModified()
+            )
         )
+    }
+}
+
+private class SessionIndexParser : HistoryParser {
+    override fun parseSessions(
+        file: File,
+        adapterInfo: AcpAdapterConfig.AdapterInfo,
+        historyConfig: AcpAdapterConfig.HistoryConfig,
+        projectPath: String
+    ): List<SessionMeta> {
+        val root = runCatching { historyJson.parseToJsonElement(file.readText()).jsonObject }.getOrNull() ?: return emptyList()
+        val expectedProjectPath = canonicalizePath(projectPath)
+        val entries = root["entries"]?.jsonArray.orEmpty()
+
+        return entries.mapNotNull { element ->
+            val entry = element as? JsonObject ?: return@mapNotNull null
+            val sessionProjectPath = canonicalizePath(entry.stringOrNull("projectPath"))
+            if (sessionProjectPath.isBlank()) return@mapNotNull null
+            if (expectedProjectPath.isNotBlank() && sessionProjectPath != expectedProjectPath) return@mapNotNull null
+
+            val sessionId = entry.stringOrNull("sessionId")?.trim().orEmpty()
+            val fullPath = entry.stringOrNull("fullPath")?.trim().orEmpty()
+            if (sessionId.isBlank() || fullPath.isBlank()) return@mapNotNull null
+            if (!File(fullPath).isFile) return@mapNotNull null
+
+            val updatedAt = parseTimestamp(entry.stringOrNull("modified"))
+                ?: file.lastModified()
+            val createdAt = parseTimestamp(entry.stringOrNull("created")) ?: updatedAt
+            val title = fallbackTitle(entry.stringOrNull("firstPrompt"))
+
+            SessionMeta(
+                sessionId = sessionId,
+                adapterName = adapterInfo.id,
+                modelId = adapterInfo.defaultModelId,
+                modeId = adapterInfo.defaultModeId,
+                projectPath = projectPath,
+                title = title,
+                filePath = fullPath,
+                createdAt = createdAt,
+                updatedAt = updatedAt
+            )
+        }
+    }
+}
+
+private class SessionDirMtimeParser : HistoryParser {
+    override fun parseSessions(
+        file: File,
+        adapterInfo: AcpAdapterConfig.AdapterInfo,
+        historyConfig: AcpAdapterConfig.HistoryConfig,
+        projectPath: String
+    ): List<SessionMeta> {
+        val sessionDir = file.parentFile ?: return emptyList()
+        val sessionId = sessionDir.name.takeIf { it.isNotBlank() } ?: return emptyList()
+
+        val timestamps = mutableListOf(
+            file.lastModified(),
+            File(sessionDir, "store.db-shm").takeIf { it.isFile }?.lastModified() ?: 0L,
+            File(sessionDir, "store.db-wal").takeIf { it.isFile }?.lastModified() ?: 0L,
+            sessionDir.lastModified()
+        )
+        val updatedAt = timestamps.maxOrNull() ?: file.lastModified()
+
+        return listOf(SessionMeta(
+            sessionId = sessionId,
+            adapterName = adapterInfo.id,
+            modelId = adapterInfo.defaultModelId,
+            modeId = adapterInfo.defaultModeId,
+            projectPath = projectPath,
+            title = "Untitled Session",
+            filePath = file.absolutePath,
+            createdAt = updatedAt,
+            updatedAt = updatedAt
+        ))
     }
 }

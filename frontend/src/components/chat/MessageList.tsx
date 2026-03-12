@@ -1,6 +1,5 @@
 import { useLayoutEffect, useRef, memo, useState, useMemo } from 'react';
-import { Message, RichContentBlock, ExploringBlock, ToolCallBlock, PlanBlock } from '../../types/chat';
-import { Loader2 } from 'lucide-react';
+import { Message, RichContentBlock, ExploringBlock, ToolCallBlock, PlanBlock, AgentOption } from '../../types/chat';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { ChatLoadingIndicator } from './ChatLoadingIndicator';
@@ -13,6 +12,7 @@ interface MessageListProps {
   status?: string;
   agentName?: string;
   agentIconPath?: string;
+  availableAgents: AgentOption[];
   isHistoryReplaying?: boolean;
 }
 
@@ -24,6 +24,7 @@ function MessageList({
   status,
   agentName,
   agentIconPath,
+  availableAgents,
   isHistoryReplaying = false
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -181,24 +182,17 @@ function MessageList({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
-      {isHistoryReplaying && (
+      {isHistoryReplaying && messages.length === 0 && status === 'initializing' && (
         <div className="absolute inset-0 flex items-center justify-center z-10">
-          <div className="flex items-center gap-3 text-foreground-secondary text-sm">
-            <Loader2 className="w-5 h-5 animate-spin" />
-            <span>
-              {messages.length === 0
-                ? `Connect to ${agentName || 'agent'}...` 
-                : 'Loading chat...'}
-            </span>
+          <div className="text-foreground-secondary text-sm">
+            {`Connect to ${agentName || 'agent'}...`}
           </div>
         </div>
       )}
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className={`flex-1 min-h-0 overflow-y-auto p-8 space-y-6 ${
-          isHistoryReplaying ? 'opacity-0' : 'opacity-100 transition-opacity duration-300'
-        }`}
+        className="flex-1 min-h-0 overflow-y-auto p-8 space-y-6 opacity-100 transition-opacity duration-300"
       >
       <div className="max-w-4xl mx-auto w-full flex flex-col">
         
@@ -223,12 +217,17 @@ function MessageList({
           const isLast = index === visibleMessages.length - 1;
 
           if (isAssistant) {
+            const resolvedAgentIconPath = message.agentId
+              ? availableAgents.find((agent) => agent.id === message.agentId)?.iconPath
+              : undefined;
+
             return (
               <AssistantMessage 
                 key={message.id} 
                 message={message} 
                 onImageClick={onImageClick} 
                 showBorder={!isLast}
+                agentIconPath={resolvedAgentIconPath}
               />
             );
           }

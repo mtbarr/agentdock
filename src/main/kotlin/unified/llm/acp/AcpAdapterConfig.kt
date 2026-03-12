@@ -19,9 +19,16 @@ object AcpAdapterConfig {
     data class ModelInfo(val modelId: String, val name: String)
 
     @Serializable
+    data class HistoryCleanupConfig(
+        val strategy: String = "delete_source_file"
+    )
+
+    @Serializable
     data class HistoryConfig(
         val parserStrategy: String,
-        val pathTemplate: String
+        val pathTemplate: String,
+        val indexPathTemplate: String? = null,
+        val cleanup: HistoryCleanupConfig = HistoryCleanupConfig()
     )
 
     @Serializable

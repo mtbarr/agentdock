@@ -53,7 +53,7 @@ function pathsMatch(path1: string, path2: string): boolean {
 }
 
 export function useFileChanges(
-  chatId: string,
+  conversationId: string,
   sessionId: string,
   adapterName: string
 ) {
@@ -88,17 +88,17 @@ export function useFileChanges(
 
     try {
       if (window.__getChangesState) {
-        window.__getChangesState(JSON.stringify({ chatId, sessionId, adapterName }));
+        window.__getChangesState(JSON.stringify({ chatId: conversationId, sessionId, adapterName }));
       }
     } catch (err) {
       console.error('[useFileChanges] Failed to load changes state:', err);
     }
-  }, [chatId, sessionId, adapterName, loadedSessionKey]);
+  }, [conversationId, sessionId, adapterName, loadedSessionKey]);
 
   // Listen for changes state from backend + tool call events
   useEffect(() => {
     const unsubChangesState = ACPBridge.onChangesState((e) => {
-      if (e.detail.chatId !== chatId) return;
+      if (e.detail.chatId !== conversationId) return;
       
       const state = e.detail.state;
       const hasEdits = Boolean(state.hasPluginEdits);
@@ -133,7 +133,7 @@ export function useFileChanges(
     });
 
     const unsubToolCall = ACPBridge.onToolCall((e) => {
-      if (e.detail.chatId !== chatId) return;
+      if (e.detail.chatId !== conversationId) return;
       const payload = e.detail.payload;
       if (payload.diffs && payload.diffs.length > 0) {
         // Backend removes from processedFiles only for live (non-replay) tool calls and pushes state via onChangesState
@@ -142,7 +142,7 @@ export function useFileChanges(
     });
 
     const unsubToolCallUpdate = ACPBridge.onToolCallUpdate((e) => {
-      if (e.detail.chatId !== chatId) return;
+      if (e.detail.chatId !== conversationId) return;
       const payload = e.detail.payload;
       const hasDiffs = payload.diffs && payload.diffs.length > 0;
 
@@ -177,7 +177,7 @@ export function useFileChanges(
       unsubToolCall();
       unsubToolCallUpdate();
     };
-  }, [chatId, sessionId, adapterName]);
+  }, [conversationId, sessionId, adapterName]);
 
   // Compute file changes from accumulated tool call events
   const fileChanges = useMemo<FileChangeSummary[]>(() => {
@@ -228,6 +228,7 @@ export function useFileChanges(
 
   const totalAdditions = useMemo(() => fileChanges.reduce((sum, fc) => sum + fc.additions, 0), [fileChanges]);
   const totalDeletions = useMemo(() => fileChanges.reduce((sum, fc) => sum + fc.deletions, 0), [fileChanges]);
+  const effectiveHasPluginEdits = hasPluginEdits || fileChanges.length > 0;
 
   /** Remove all diffs for given file paths from accumulated tool call events */
   const removeDiffsForFiles = useCallback((paths: Set<string>) => {
@@ -246,7 +247,7 @@ export function useFileChanges(
 
     if (window.__undoFile) {
       window.__undoFile(JSON.stringify({
-        chatId,
+        chatId: conversationId,
         filePath: fc.filePath,
         status: fc.status,
         operations: fc.operations,
@@ -262,12 +263,12 @@ export function useFileChanges(
     }
     // Remove this file's diffs from events so old ops won't be re-counted
     removeDiffsForFiles(new Set([filePath]));
-  }, [chatId, sessionId, adapterName, fileChanges, removeDiffsForFiles]);
+  }, [conversationId, sessionId, adapterName, fileChanges, removeDiffsForFiles]);
 
   const handleUndoAllFiles = useCallback(() => {
     if (window.__undoAllFiles) {
       window.__undoAllFiles(JSON.stringify({
-        chatId,
+        chatId: conversationId,
         files: fileChanges.map((fc) => ({
           filePath: fc.filePath,
           status: fc.status,
@@ -293,7 +294,7 @@ export function useFileChanges(
     }
     // Remove all files' diffs from events
     removeDiffsForFiles(allPaths);
-  }, [chatId, sessionId, adapterName, fileChanges, removeDiffsForFiles]);
+  }, [conversationId, sessionId, adapterName, fileChanges, removeDiffsForFiles]);
 
   const handleKeepFile = useCallback((filePath: string) => {
     if (window.__processFile && sessionId && adapterName) {
@@ -320,7 +321,7 @@ export function useFileChanges(
   }, [sessionId, adapterName, toolCallEvents.length]);
 
   return {
-    hasPluginEdits,
+    hasPluginEdits: effectiveHasPluginEdits,
     fileChanges,
     totalAdditions,
     totalDeletions,

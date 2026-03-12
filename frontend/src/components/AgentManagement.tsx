@@ -198,6 +198,7 @@ export function AgentManagementView() {
         title="Confirm Deletion"
         message={`Delete local files for ${agents.find(a => a.id === confirmDeleteId)?.name || ''}?`}
         onConfirm={performDelete}
+        confirmLabel="Delete"
         onCancel={() => setConfirmDeleteId(null)}
       />
     </div>

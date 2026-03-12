@@ -13,7 +13,6 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
 import java.io.File
 import java.io.BufferedInputStream
 import javax.sound.sampled.AudioFormat
@@ -29,6 +28,8 @@ import unified.llm.changes.ChangesState
 import unified.llm.changes.ChangesStateService
 import unified.llm.changes.UndoFileHandler
 import unified.llm.changes.UndoOperation
+import unified.llm.history.ConversationAssistantMetadata
+import unified.llm.history.UnifiedHistoryService
 
 
 @Serializable
@@ -69,6 +70,49 @@ class AcpBridge(
     private val service: AcpClientService,
     private val scope: CoroutineScope
 ) {
+    private data class SerializedContentBlock(
+        val type: String,
+        val text: String? = null,
+        val data: String? = null,
+        val mimeType: String? = null
+    )
+
+    private data class LivePromptCapture(
+        val captureId: String,
+        val projectPath: String,
+        val conversationId: String,
+        val sessionId: String,
+        val adapterName: String,
+        val blocks: List<JsonObject>,
+        val startedAtMillis: Long,
+        val assistantMeta: ConversationAssistantMetadata?,
+        var contextTokensUsed: Long? = null,
+        var contextWindowSize: Long? = null,
+        val events: MutableList<JsonObject> = mutableListOf()
+    )
+
+    private data class ReplaySessionCapture(
+        val sessionId: String,
+        val adapterName: String,
+        val prompts: MutableList<ReplayPromptCapture> = mutableListOf()
+    )
+
+    private data class ReplayPromptCapture(
+        val blocks: MutableList<JsonObject> = mutableListOf(),
+        val events: MutableList<JsonObject> = mutableListOf(),
+        var assistantMeta: ConversationAssistantMetadata? = null
+    )
+
+    private data class HistoryReplayCapture(
+        val projectPath: String,
+        val conversationId: String,
+        var currentSessionId: String? = null,
+        var currentAdapterName: String? = null,
+        var currentModelId: String? = null,
+        var currentModeId: String? = null,
+        val sessions: MutableList<ReplaySessionCapture> = mutableListOf()
+    )
+
     private var sendPromptQuery: JBCefJSQuery? = null
     private var startAgentQuery: JBCefJSQuery? = null
     private var setModelQuery: JBCefJSQuery? = null
@@ -78,7 +122,7 @@ class AcpBridge(
     private var stopAgentQuery: JBCefJSQuery? = null
     private var respondPermissionQuery: JBCefJSQuery? = null
     private var readyQuery: JBCefJSQuery? = null
-    private var loadSessionQuery: JBCefJSQuery? = null
+    private var loadConversationQuery: JBCefJSQuery? = null
     private var downloadAgentQuery: JBCefJSQuery? = null
     private var deleteAgentQuery: JBCefJSQuery? = null
     private var toggleAgentEnabledQuery: JBCefJSQuery? = null
@@ -94,10 +138,16 @@ class AcpBridge(
     private var openFileQuery: JBCefJSQuery? = null
     private var openUrlQuery: JBCefJSQuery? = null
     private var attachFileQuery: JBCefJSQuery? = null
+    private var updateSessionMetadataQuery: JBCefJSQuery? = null
+    private var continueConversationQuery: JBCefJSQuery? = null
 
     private val promptJobs = ConcurrentHashMap<String, Job>()
     private val lastStatusByChatId = ConcurrentHashMap<String, String>()
     private val downloadStatuses = ConcurrentHashMap<String, String>()
+    private val replaySeqByChatId = ConcurrentHashMap<String, Int>()
+    private val livePromptCaptures = ConcurrentHashMap<String, LivePromptCapture>()
+    private val historyReplayCaptures = ConcurrentHashMap<String, HistoryReplayCapture>()
+    private val suppressReplayForChatIds = ConcurrentHashMap.newKeySet<String>()
 
     companion object {
         const val START_AGENT_TIMEOUT_MS = 45_000L
@@ -105,39 +155,89 @@ class AcpBridge(
 
     fun install() {
         service.setOnLogEntry { pushLogEntry(it) }
-        // Each JS query below: frontend calls window.__* → JBCefJSQuery → addHandler → Kotlin logic → Response
+        // Each JS query below: frontend calls window.__* ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ JBCefJSQuery ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ addHandler ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Kotlin logic ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Response
         service.setOnPermissionRequest { pushPermissionRequest(it) }
         service.setOnSessionUpdate { chatId: String, update: SessionUpdate, isReplay: Boolean, _meta: JsonElement? ->
+            if (isReplay && suppressReplayForChatIds.contains(chatId)) {
+                return@setOnSessionUpdate
+            }
+            val captureOnlyReplay = isReplay && historyReplayCaptures.containsKey(chatId)
+            val sessionId = if (captureOnlyReplay) {
+                historyReplayCaptures[chatId]?.currentSessionId.orEmpty()
+            } else {
+                service.sessionId(chatId).orEmpty()
+            }
+            val adapterName = if (captureOnlyReplay) {
+                historyReplayCaptures[chatId]?.currentAdapterName.orEmpty()
+            } else {
+                service.activeAdapterName(chatId).orEmpty()
+            }
             when (update) {
                 is SessionUpdate.UserMessageChunk -> {
                     // During live prompting the frontend already adds the user message,
                     // so only push the echo during replay to reconstruct the conversation.
                     if (isReplay) {
-                        pushContentBlock(chatId, "user", update.content, isThought = false, isReplay = true)
+                        recordReplayUserBlock(chatId, sessionId, adapterName, update.content)
+                        if (!captureOnlyReplay) {
+                            pushContentBlock(chatId, "user", update.content, isThought = false, isReplay = true)
+                        }
                     }
                 }
                 is SessionUpdate.AgentMessageChunk -> {
-                    pushContentBlock(chatId, "assistant", update.content, isThought = false, isReplay = isReplay)
+                    recordContentBlock(chatId, sessionId, adapterName, "assistant", update.content, isThought = false, isReplay = isReplay)
+                    if (!captureOnlyReplay) {
+                        pushContentBlock(chatId, "assistant", update.content, isThought = false, isReplay = isReplay)
+                    }
                 }
                 is SessionUpdate.AgentThoughtChunk -> {
-                    pushContentBlock(chatId, "assistant", update.content, isThought = true, isReplay = isReplay)
+                    recordContentBlock(chatId, sessionId, adapterName, "assistant", update.content, isThought = true, isReplay = isReplay)
+                    if (!captureOnlyReplay) {
+                        pushContentBlock(chatId, "assistant", update.content, isThought = true, isReplay = isReplay)
+                    }
                 }
-                is SessionUpdate.CurrentModeUpdate -> pushMode(chatId, update.currentModeId.value)
+                is SessionUpdate.CurrentModeUpdate -> {
+                    if (!captureOnlyReplay) {
+                        pushMode(chatId, update.currentModeId.value)
+                    }
+                }
                 is SessionUpdate.ToolCall -> {
                     if (!isReplay) removeProcessedFilesForDiffs(chatId, update.content)
                     val json = try { Json.encodeToString(update) } catch (_: Exception) { update.toString() }
-                    pushToolCallChunk(chatId, json, isReplay)
+                    recordStoredEvent(
+                        chatId,
+                        sessionId,
+                        adapterName,
+                        buildStoredToolCallChunk(json),
+                        isReplay
+                    )
+                    if (!captureOnlyReplay) {
+                        pushToolCallChunk(chatId, json, isReplay)
+                    }
                 }
                 is SessionUpdate.ToolCallUpdate -> {
                     if (!isReplay) removeProcessedFilesForDiffs(chatId, update.content)
                     val json = try { Json.encodeToString(update) } catch (_: Exception) { update.toString() }
-                    pushToolCallUpdateChunk(chatId, update.toolCallId.value, json, isReplay)
+                    recordStoredEvent(
+                        chatId,
+                        sessionId,
+                        adapterName,
+                        buildStoredToolCallUpdateChunk(update.toolCallId.value, json),
+                        isReplay
+                    )
+                    if (!captureOnlyReplay) {
+                        pushToolCallUpdateChunk(chatId, update.toolCallId.value, json, isReplay)
+                    }
                 }
                 else -> {
-                    if (isPlanUpdate(update, _meta)) {
-                        pushPlanChunk(chatId, update, isReplay, _meta)
-                } else {
-                }
+                    val usage = extractUsageUpdate(update, _meta)
+                    if (usage != null) {
+                        recordUsageUpdate(chatId, sessionId, adapterName, usage.first, usage.second, isReplay)
+                    } else if (isPlanUpdate(update, _meta)) {
+                        buildStoredPlanChunk(update, _meta)?.let { recordStoredEvent(chatId, sessionId, adapterName, it, isReplay) }
+                        if (!captureOnlyReplay) {
+                            pushPlanChunk(chatId, update, isReplay, _meta)
+                        }
+                    }
                 }
             }
         }
@@ -292,9 +392,10 @@ class AcpBridge(
 
         setModelQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { payload ->
-                val (chatId, modelId) = parseIdPayload(payload, "modelId")
+                val (chatId, adapterId, modelId) = parseScopedIdPayload(payload, "modelId")
                 scope.launch(Dispatchers.Default) {
-                    if (chatId == null || modelId == null) return@launch
+                    if (chatId == null || adapterId == null || modelId == null) return@launch
+                    if (service.activeAdapterName(chatId) != adapterId) return@launch
                     pushStatus(chatId, "initializing")
                     try {
                         val ok = service.setModel(chatId, modelId)
@@ -311,9 +412,10 @@ class AcpBridge(
 
         setModeQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { payload ->
-                val (chatId, modeId) = parseIdPayload(payload, "modeId")
+                val (chatId, adapterId, modeId) = parseScopedIdPayload(payload, "modeId")
                 scope.launch(Dispatchers.Default) {
-                    if (chatId == null || modeId == null) return@launch
+                    if (chatId == null || adapterId == null || modeId == null) return@launch
+                    if (service.activeAdapterName(chatId) != adapterId) return@launch
                     pushStatus(chatId, "initializing")
                     try {
                         val ok = service.setMode(chatId, modeId)
@@ -337,21 +439,24 @@ class AcpBridge(
 
         sendPromptQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { payload ->
-                val (chatId, blocks) = parseBlocksPayload(payload)
+                val parsed = parseBlocksPayload(payload)
+                val chatId = parsed.chatId
+                val blocks = parsed.blocks
                 if (chatId != null && blocks.isNotEmpty()) {
                     val job = scope.launch(Dispatchers.Default) {
-                        // Cancel any previous prompt via ACP protocol before starting a new one
-                        service.cancel(chatId)
-                        
                         pushStatus(chatId, "prompting")
+                        val captureId = beginLivePromptCapture(chatId, parsed.rawBlocks)
                         try {
                             service.prompt(chatId, blocks).collect { event ->
                                 when (event) {
-                                    is AcpEvent.AgentText -> Unit
-                                    is AcpEvent.AgentThought -> Unit
-                                    is AcpEvent.PromptDone -> pushStatus(chatId, "ready")
+                                    is AcpEvent.PromptDone -> {
+                                        flushLivePromptCapture(chatId, captureId)?.let { pushAssistantMetaChunk(chatId, it) }
+                                        pushStatus(chatId, "ready")
+                                    }
                                     is AcpEvent.Error -> {
                                         pushContentChunk(chatId, "assistant", "text", text = "[Error: ${event.message}]", isReplay = false)
+                                        appendLivePromptTextEvent(chatId, "[Error: ${event.message}]", captureId)
+                                        flushLivePromptCapture(chatId, captureId)?.let { pushAssistantMetaChunk(chatId, it) }
                                     }
                                 }
                             }
@@ -359,6 +464,8 @@ class AcpBridge(
                             throw e
                         } catch (e: Exception) {
                             pushContentChunk(chatId, "assistant", "text", text = "[Error: ${e.message ?: e.toString()}]", isReplay = false)
+                            appendLivePromptTextEvent(chatId, "[Error: ${e.message ?: e.toString()}]", captureId)
+                            flushLivePromptCapture(chatId, captureId)?.let { pushAssistantMetaChunk(chatId, it) }
                             pushStatus(chatId, service.status(chatId).name.lowercase())
                         } finally {
                             promptJobs.remove(chatId)
@@ -377,6 +484,8 @@ class AcpBridge(
                     scope.launch(Dispatchers.Default) {
                         service.cancel(chatId)
                         pushContentChunk(chatId, "assistant", "text", text = "\n\n[Cancelled]\n\n", isReplay = false)
+                        appendLivePromptTextEvent(chatId, "\n\n[Cancelled]\n\n")
+                        flushLivePromptCapture(chatId)?.let { pushAssistantMetaChunk(chatId, it) }
                         pushStatus(chatId, "ready")
                     }
                 }
@@ -413,23 +522,76 @@ class AcpBridge(
             }
         }
 
-        loadSessionQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+        loadConversationQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { payload ->
-                val (chatId, adapterId, sessionId, modelId, modeId) = parseLoadPayload(payload)
-                if (chatId != null && adapterId != null && sessionId != null) {
+                val (chatId, projectPath, conversationId) = parseConversationLoadPayload(payload)
+                if (chatId != null && projectPath != null && conversationId != null) {
                     scope.launch(Dispatchers.Default) {
-                        pushStatus(chatId, "initializing")
+                        replaySeqByChatId[chatId] = 0
                         try {
-                            withTimeout(START_AGENT_TIMEOUT_MS) {
-                                service.loadSession(chatId, adapterId, sessionId, modelId, modeId)
+                            val storedConversation = UnifiedHistoryService.loadConversationReplay(projectPath, conversationId)
+                            if (storedConversation != null) {
+                                replayStoredConversation(chatId, storedConversation)
+
+                                val lastStoredSession = storedConversation.sessions.lastOrNull()
+                                    ?: throw IllegalStateException("Conversation replay '$conversationId' is empty")
+                                pushSessionId(chatId, lastStoredSession.sessionId)
+
+                                scope.launch(Dispatchers.Default) {
+                                    try {
+                                        suppressReplayForChatIds.add(chatId)
+                                        try {
+                                            withTimeout(START_AGENT_TIMEOUT_MS) {
+                                                service.loadSession(
+                                                    chatId = chatId,
+                                                    adapterName = lastStoredSession.adapterName,
+                                                    sessionId = lastStoredSession.sessionId
+                                                )
+                                            }
+                                        } finally {
+                                            suppressReplayForChatIds.remove(chatId)
+                                        }
+                                        pushStatus(chatId, service.status(chatId).name.lowercase())
+                                        pushSessionId(chatId, service.sessionId(chatId))
+                                        pushMode(chatId, service.activeModeId(chatId))
+                                    } catch (e: Exception) {
+                                        pushStatus(chatId, "error")
+                                        pushContentChunk(chatId, "assistant", "text", text = "[Error: ${e.message ?: e.toString()}]", isReplay = false)
+                                    }
+                                }
+                            } else {
+                                val sessionsChain = UnifiedHistoryService.getConversationSessions(projectPath, conversationId)
+                                if (sessionsChain.isEmpty()) {
+                                    throw IllegalStateException("Conversation '$conversationId' not found")
+                                }
+                                pushStatus(chatId, "initializing")
+                                startHistoryReplayCapture(chatId, projectPath, conversationId)
+                                sessionsChain.forEach { session ->
+                                    beginImportedReplaySession(chatId, session.sessionId, session.adapterName, session.modelId, session.modeId)
+                                    withTimeout(START_AGENT_TIMEOUT_MS) {
+                                        service.loadSession(
+                                            chatId,
+                                            session.adapterName,
+                                            session.sessionId,
+                                            session.modelId,
+                                            session.modeId
+                                        )
+                                    }
+                                }
+                                flushHistoryReplayCapture(chatId)
+                                val refreshedConversation = UnifiedHistoryService.loadConversationReplay(projectPath, conversationId)
+                                if (refreshedConversation != null) {
+                                    replayStoredConversation(chatId, refreshedConversation)
+                                }
+
+                                val lastSession = sessionsChain.last()
+                                pushStatus(chatId, service.status(chatId).name.lowercase())
+                                pushSessionId(chatId, service.sessionId(chatId))
+                                pushMode(chatId, service.activeModeId(chatId))
                             }
-                            // awaitPendingSessionUpdates is now called inside loadSession()
-                            // before status transitions to Ready, guaranteeing all replay
-                            // chunks have been dispatched.
-                            pushStatus(chatId, service.status(chatId).name.lowercase())
-                            pushSessionId(chatId, service.sessionId(chatId))
-                            pushMode(chatId, service.activeModeId(chatId))
                         } catch (e: Exception) {
+                            discardHistoryReplayCapture(chatId)
+                            replaySeqByChatId.remove(chatId)
                             pushStatus(chatId, "error")
                             pushContentChunk(chatId, "assistant", "text", text = "[Error: ${e.message ?: e.toString()}]", isReplay = false)
                         }
@@ -506,7 +668,7 @@ class AcpBridge(
                     val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
                     val filePath = obj["filePath"]?.jsonPrimitive?.content ?: ""
                     if (sessionId.isNotEmpty() && adapterName.isNotEmpty() && filePath.isNotEmpty()) {
-                        ChangesStateService.addProcessedFile(sessionId, adapterName, filePath)
+                        ChangesStateService.addProcessedFile(service.project.basePath.orEmpty(), sessionId, adapterName, filePath)
                     }
                 } catch (e: Exception) {
                 }
@@ -522,7 +684,7 @@ class AcpBridge(
                     val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
                     val toolCallIndex = obj["toolCallIndex"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
                     if (sessionId.isNotEmpty() && adapterName.isNotEmpty()) {
-                        ChangesStateService.setBaseIndex(sessionId, adapterName, toolCallIndex)
+                        ChangesStateService.setBaseIndex(service.project.basePath.orEmpty(), sessionId, adapterName, toolCallIndex)
                     }
                 } catch (e: Exception) {
                 }
@@ -538,7 +700,7 @@ class AcpBridge(
                     val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
                     val filePaths = obj["filePaths"]?.jsonArray?.mapNotNull { it.jsonPrimitive?.content } ?: emptyList()
                     if (sessionId.isNotEmpty() && adapterName.isNotEmpty() && filePaths.isNotEmpty()) {
-                        ChangesStateService.removeProcessedFiles(sessionId, adapterName, filePaths)
+                        ChangesStateService.removeProcessedFiles(service.project.basePath.orEmpty(), sessionId, adapterName, filePaths)
                     }
                 } catch (e: Exception) {
                 }
@@ -554,7 +716,7 @@ class AcpBridge(
                     val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
                     val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
                     if (chatId.isNotEmpty() && sessionId.isNotEmpty() && adapterName.isNotEmpty()) {
-                        val state = ChangesStateService.loadState(sessionId, adapterName)
+                        val state = ChangesStateService.loadState(service.project.basePath.orEmpty(), sessionId, adapterName)
                         val hasPluginEdits = state != null
                         pushChangesState(chatId, state ?: ChangesState(sessionId, adapterName), hasPluginEdits)
                     }
@@ -642,8 +804,8 @@ class AcpBridge(
 
         attachFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
             addHandler { chatId ->
-                val id = chatId?.trim().orEmpty().replace("\\", "\\\\").replace("'", "\\'")
-                if (id.isNotEmpty()) {
+                val normalizedChatId = chatId?.trim().orEmpty()
+                if (normalizedChatId.isNotEmpty()) {
                     runOnEdt {
                         val descriptor = com.intellij.openapi.fileChooser.FileChooserDescriptor(true, false, false, false, false, true)
                         descriptor.title = "Select Files to Attach"
@@ -678,10 +840,71 @@ class AcpBridge(
                             
                             val jsonArrayStr = results.joinToString(",")
                             browser.cefBrowser.executeJavaScript(
-                                "if(window.__onAttachmentsAdded) window.__onAttachmentsAdded('$id', [$jsonArrayStr]);",
+                                "if(window.__onAttachmentsAdded) window.__onAttachmentsAdded(${jsStringLiteral(normalizedChatId)}, [$jsonArrayStr]);",
                                 browser.cefBrowser.url, 0
                             )
                         }
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        updateSessionMetadataQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                        val sessionId = obj["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        val adapterName = obj["adapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        val promptCount = obj["promptCount"]?.jsonPrimitive?.intOrNull ?: 0
+                        val title = obj["title"]?.jsonPrimitive?.contentOrNull
+                        val touchUpdatedAt = obj["touchUpdatedAt"]?.jsonPrimitive?.booleanOrNull ?: false
+                        val conversationId = obj["conversationId"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        if (conversationId.isNotEmpty() && sessionId.isNotEmpty() && adapterName.isNotEmpty()) {
+                            UnifiedHistoryService.upsertRuntimeSessionMetadata(
+                                projectPath = service.project.basePath,
+                                conversationId = conversationId,
+                                sessionId = sessionId,
+                                adapterName = adapterName,
+                                promptCount = promptCount,
+                                titleCandidate = title,
+                                touchUpdatedAt = touchUpdatedAt
+                            )
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        continueConversationQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+                        val previousSessionId = obj["previousSessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        val previousAdapterName = obj["previousAdapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        val sessionId = obj["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        val adapterName = obj["adapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        val title = obj["title"]?.jsonPrimitive?.contentOrNull
+                        if (
+                            previousSessionId.isNotEmpty() &&
+                            previousAdapterName.isNotEmpty() &&
+                            sessionId.isNotEmpty() &&
+                            adapterName.isNotEmpty()
+                        ) {
+                            UnifiedHistoryService.appendSessionToConversation(
+                                projectPath = service.project.basePath,
+                                previousSessionId = previousSessionId,
+                                previousAdapterName = previousAdapterName,
+                                sessionId = sessionId,
+                                adapterName = adapterName,
+                                titleCandidate = title
+                            )
+                        }
+                    } catch (_: Exception) {
                     }
                 }
                 JBCefJSQuery.Response("ok")
@@ -696,102 +919,32 @@ class AcpBridge(
      * (injectReadySignal runs first on page load and only sets no-op stubs for __on* and __downloadAgent etc.)
      */
     fun injectDebugApi(cefBrowser: CefBrowser) {
-        val startAgentInject = decorateQueryInject(
-            startAgentQuery?.inject("JSON.stringify({ chatId: chatId, adapterId: (adapterId || ''), modelId: (modelId || '') })") ?: "",
-            "startAgent"
-        )
-        val setModelInject = decorateQueryInject(
-            setModelQuery?.inject("JSON.stringify({ chatId: chatId, modelId: modelId })") ?: "",
-            "setModel"
-        )
-        val setModeInject = decorateQueryInject(
-            setModeQuery?.inject("JSON.stringify({ chatId: chatId, modeId: modeId })") ?: "",
-            "setMode"
-        )
-        val listAdaptersInject = decorateQueryInject(
-            listAdaptersQuery?.inject("") ?: "",
-            "listAdapters"
-        )
-        val sendPromptInject = decorateQueryInject(
-            sendPromptQuery?.inject("JSON.stringify({ chatId: chatId, text: message })") ?: "",
-            "sendPrompt"
-        )
-        val cancelPromptInject = decorateQueryInject(
-            cancelPromptQuery?.inject("chatId") ?: "",
-            "cancelPrompt"
-        )
-        val stopAgentInject = decorateQueryInject(
-            stopAgentQuery?.inject("chatId") ?: "",
-            "stopAgent"
-        )
-        val respondPermissionInject = decorateQueryInject(
-            respondPermissionQuery?.inject("JSON.stringify({ requestId: requestId, decision: decision })") ?: "",
-            "respondPermission"
-        )
-        val loadSessionInject = decorateQueryInject(
-            loadSessionQuery?.inject("JSON.stringify({ chatId: chatId, adapterId: (adapterId || ''), sessionId: (sessionId || ''), modelId: (modelId || ''), modeId: (modeId || '') })") ?: "",
-            "loadSession"
-        )
-        val downloadAgentInject = decorateQueryInject(
-            downloadAgentQuery?.inject("adapterId") ?: "",
-            "downloadAgent"
-        )
-        val deleteAgentInject = decorateQueryInject(
-            deleteAgentQuery?.inject("adapterId") ?: "",
-            "deleteAgent"
-        )
-        val toggleAgentEnabledInject = decorateQueryInject(
-            toggleAgentEnabledQuery?.inject("JSON.stringify({ adapterId: adapterId, enabled: enabled })") ?: "",
-            "toggleAgentEnabled"
-        )
-        val loginAgentInject = decorateQueryInject(
-            loginAgentQuery?.inject("adapterId") ?: "",
-            "loginAgent"
-        )
-        val logoutAgentInject = decorateQueryInject(
-            logoutAgentQuery?.inject("adapterId") ?: "",
-            "logoutAgent"
-        )
-        val undoFileInject = decorateQueryInject(
-            undoFileQuery?.inject("payload") ?: "",
-            "undoFile"
-        )
-        val undoAllFilesInject = decorateQueryInject(
-            undoAllFilesQuery?.inject("payload") ?: "",
-            "undoAllFiles"
-        )
-        val processFileInject = decorateQueryInject(
-            processFileQuery?.inject("payload") ?: "",
-            "processFile"
-        )
-        val keepAllInject = decorateQueryInject(
-            keepAllQuery?.inject("payload") ?: "",
-            "keepAll"
-        )
-        val removeProcessedFilesInject = decorateQueryInject(
-            removeProcessedFilesQuery?.inject("payload") ?: "",
-            "removeProcessedFiles"
-        )
-        val getChangesStateInject = decorateQueryInject(
-            getChangesStateQuery?.inject("payload") ?: "",
-            "getChangesState"
-        )
-        val showDiffInject = decorateQueryInject(
-            showDiffQuery?.inject("payload") ?: "",
-            "showDiff"
-        )
-        val openFileInject = decorateQueryInject(
-            openFileQuery?.inject("payload") ?: "",
-            "openFile"
-        )
-        val openUrlInject = decorateQueryInject(
-            openUrlQuery?.inject("url") ?: "",
-            "openUrl"
-        )
-        val attachFileInject = decorateQueryInject(
-            attachFileQuery?.inject("chatId") ?: "",
-            "attachFile"
-        )
+        val startAgentInject = startAgentQuery?.inject("JSON.stringify({ chatId: chatId, adapterId: (adapterId || ''), modelId: (modelId || '') })") ?: ""
+        val setModelInject = setModelQuery?.inject("JSON.stringify({ chatId: chatId, adapterId: (adapterId || ''), modelId: modelId })") ?: ""
+        val setModeInject = setModeQuery?.inject("JSON.stringify({ chatId: chatId, adapterId: (adapterId || ''), modeId: modeId })") ?: ""
+        val listAdaptersInject = listAdaptersQuery?.inject("") ?: ""
+        val sendPromptInject = sendPromptQuery?.inject("JSON.stringify({ chatId: chatId, text: message })") ?: ""
+        val cancelPromptInject = cancelPromptQuery?.inject("chatId") ?: ""
+        val stopAgentInject = stopAgentQuery?.inject("chatId") ?: ""
+        val respondPermissionInject = respondPermissionQuery?.inject("JSON.stringify({ requestId: requestId, decision: decision })") ?: ""
+        val loadConversationInject = loadConversationQuery?.inject("JSON.stringify({ chatId: chatId, projectPath: (projectPath || ''), conversationId: (conversationId || '') })") ?: ""
+        val downloadAgentInject = downloadAgentQuery?.inject("adapterId") ?: ""
+        val deleteAgentInject = deleteAgentQuery?.inject("adapterId") ?: ""
+        val toggleAgentEnabledInject = toggleAgentEnabledQuery?.inject("JSON.stringify({ adapterId: adapterId, enabled: enabled })") ?: ""
+        val loginAgentInject = loginAgentQuery?.inject("adapterId") ?: ""
+        val logoutAgentInject = logoutAgentQuery?.inject("adapterId") ?: ""
+        val undoFileInject = undoFileQuery?.inject("payload") ?: ""
+        val undoAllFilesInject = undoAllFilesQuery?.inject("payload") ?: ""
+        val processFileInject = processFileQuery?.inject("payload") ?: ""
+        val keepAllInject = keepAllQuery?.inject("payload") ?: ""
+        val removeProcessedFilesInject = removeProcessedFilesQuery?.inject("payload") ?: ""
+        val getChangesStateInject = getChangesStateQuery?.inject("payload") ?: ""
+        val showDiffInject = showDiffQuery?.inject("payload") ?: ""
+        val openFileInject = openFileQuery?.inject("payload") ?: ""
+        val openUrlInject = openUrlQuery?.inject("url") ?: ""
+        val attachFileInject = attachFileQuery?.inject("chatId") ?: ""
+        val updateSessionMetadataInject = updateSessionMetadataQuery?.inject("JSON.stringify(payload)") ?: ""
+        val continueConversationInject = continueConversationQuery?.inject("JSON.stringify(payload)") ?: ""
 
         val script = """
             (function() {
@@ -804,10 +957,10 @@ class AcpBridge(
                         $startAgentInject
                     } catch (e) { }
                 };
-                window.__setModel = function(chatId, modelId) {
+                window.__setModel = function(chatId, adapterId, modelId) {
                     try { $setModelInject } catch (e) { }
                 };
-                window.__setMode = function(chatId, modeId) {
+                window.__setMode = function(chatId, adapterId, modeId) {
                     try { $setModeInject } catch (e) { }
                 };
                 window.__sendPrompt = function(chatId, message) {
@@ -825,8 +978,8 @@ class AcpBridge(
                 window.__respondPermission = function(requestId, decision) {
                     try { $respondPermissionInject } catch (e) { }
                 };
-                window.__loadHistorySession = function(chatId, adapterId, sessionId, modelId, modeId) {
-                    try { $loadSessionInject } catch (e) { }
+                window.__loadHistoryConversation = function(chatId, projectPath, conversationId) {
+                    try { $loadConversationInject } catch (e) { }
                 };
                 window.__downloadAgent = function(adapterId) {
                     try { $downloadAgentInject } catch (e) { }
@@ -873,6 +1026,12 @@ class AcpBridge(
                 window.__attachFile = function(chatId) {
                     try { $attachFileInject } catch (e) { }
                 };
+                window.__updateSessionMetadata = function(payload) {
+                    try { $updateSessionMetadataInject } catch (e) { }
+                };
+                window.__continueConversationWithSession = function(payload) {
+                    try { $continueConversationInject } catch (e) { }
+                };
 
                 // Try prime
                 try { window.__requestAdapters(); } catch (e) {}
@@ -914,10 +1073,12 @@ class AcpBridge(
             window.__loginAgent = window.__loginAgent || function(id) {};
             window.__logoutAgent = window.__logoutAgent || function(id) {};
             window.__attachFile = window.__attachFile || function(chatId) {};
+            window.__updateSessionMetadata = window.__updateSessionMetadata || function(payload) {};
+            window.__continueConversationWithSession = window.__continueConversationWithSession || function(payload) {};
+            window.__loadHistoryConversation = window.__loadHistoryConversation || function(chatId, projectPath, conversationId) {};
         """.trimIndent()
         cefBrowser.executeJavaScript(script, cefBrowser.url, 0)
     }
-
     fun pushLogEntry(entry: AcpLogEntry) {
         val payload = """{"direction":"${entry.direction}","json":${escapeJsonString(entry.json)},"timestamp":${entry.timestampMillis}}"""
         val escaped = payload.escapeForJsString()
@@ -931,10 +1092,11 @@ class AcpBridge(
 
     /**
      * Unified content delivery: ALL content (live streaming + history replay) goes
-     * through this single method → single __onContentChunk JS callback.
+     * through this single method ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ single __onContentChunk JS callback.
      * The frontend processes every chunk with one and the same code path.
      */
     fun pushContentChunk(chatId: String, role: String, type: String, text: String? = null, data: String? = null, mimeType: String? = null, isReplay: Boolean = false) {
+        val replaySeq = nextReplaySeq(chatId, isReplay)
         val parts = mutableListOf<String>()
         parts.add("\"chatId\":${escapeJsonString(chatId)}")
         parts.add("\"role\":${escapeJsonString(role)}")
@@ -943,51 +1105,27 @@ class AcpBridge(
         if (data != null) parts.add("\"data\":${escapeJsonString(data)}")
         if (mimeType != null) parts.add("\"mimeType\":${escapeJsonString(mimeType)}")
         parts.add("\"isReplay\":$isReplay")
+        if (replaySeq != null) parts.add("\"replaySeq\":$replaySeq")
         val json = "{${parts.joinToString(",")}}"
-        runOnEdt {
-            browser.cefBrowser.executeJavaScript(
-                "if(window.__onContentChunk) window.__onContentChunk($json);",
-                browser.cefBrowser.url, 0
-            )
-        }
+        dispatchContentChunkJson(json)
     }
 
     /** Convenience: send a ContentBlock from the ACP SDK through the unified pipeline. */
     private fun pushContentBlock(chatId: String, role: String, content: ContentBlock, isThought: Boolean, isReplay: Boolean) {
-        when (content) {
-            is ContentBlock.Text -> {
-                val type = if (isThought) "thinking" else "text"
-                pushContentChunk(chatId, role, type, text = content.text, isReplay = isReplay)
-            }
-            is ContentBlock.Image -> {
-                pushContentChunk(chatId, role, "image", data = content.data, mimeType = content.mimeType, isReplay = isReplay)
-            }
-            is ContentBlock.Audio -> {
-                pushContentChunk(chatId, role, "audio", data = content.data, mimeType = content.mimeType, isReplay = isReplay)
-            }
-            is ContentBlock.ResourceLink -> {
-                // Determine if it's a data URI or a real path
-                if (content.uri.startsWith("data:")) {
-                    val base64 = content.uri.substringAfter("base64,")
-                    pushContentChunk(chatId, role, "file", data = base64, mimeType = content.mimeType, isReplay = isReplay)
-                } else {
-                    pushContentChunk(chatId, role, "file", text = "[File: ${content.uri}]", mimeType = content.mimeType, isReplay = isReplay)
-                }
-            }
-            is ContentBlock.Resource -> {
-                when (val res = content.resource) {
-                    is EmbeddedResourceResource.BlobResourceContents -> {
-                        pushContentChunk(chatId, role, "file", data = res.blob, mimeType = res.mimeType, isReplay = isReplay)
-                    }
-                    is EmbeddedResourceResource.TextResourceContents -> {
-                        pushContentChunk(chatId, role, "file", text = res.text, mimeType = res.mimeType, isReplay = isReplay)
-                    }
-                }
-            }
-        }
+        val serialized = serializeContentBlock(content, if (isThought) "thinking" else "text") ?: return
+        pushContentChunk(
+            chatId = chatId,
+            role = role,
+            type = serialized.type,
+            text = serialized.text,
+            data = serialized.data,
+            mimeType = serialized.mimeType,
+            isReplay = isReplay
+        )
     }
 
     fun pushToolCallChunk(chatId: String, rawJson: String, isReplay: Boolean = false) {
+        val replaySeq = nextReplaySeq(chatId, isReplay)
         val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { null }
         val toolCallId = parsed?.get("toolCallId")?.jsonPrimitive?.contentOrNull ?: ""
         val kind = parsed?.get("kind")?.jsonPrimitive?.contentOrNull ?: ""
@@ -1004,16 +1142,13 @@ class AcpBridge(
         parts.add("\"toolTitle\":${escapeJsonString(title)}")
         parts.add("\"toolStatus\":${escapeJsonString(status)}")
         parts.add("\"toolRawJson\":${escapeJsonString(rawJson)}")
+        if (replaySeq != null) parts.add("\"replaySeq\":$replaySeq")
         val json = "{${parts.joinToString(",")}}"
-        runOnEdt {
-            browser.cefBrowser.executeJavaScript(
-                "if(window.__onContentChunk) window.__onContentChunk($json);",
-                browser.cefBrowser.url, 0
-            )
-        }
+        dispatchContentChunkJson(json)
     }
 
     fun pushToolCallUpdateChunk(chatId: String, toolCallId: String, rawJson: String, isReplay: Boolean = false) {
+        val replaySeq = nextReplaySeq(chatId, isReplay)
         val parts = mutableListOf<String>()
         parts.add("\"chatId\":${escapeJsonString(chatId)}")
         parts.add("\"role\":\"assistant\"")
@@ -1021,15 +1156,60 @@ class AcpBridge(
         parts.add("\"isReplay\":$isReplay")
         parts.add("\"toolCallId\":${escapeJsonString(toolCallId)}")
         parts.add("\"toolRawJson\":${escapeJsonString(rawJson)}")
+        if (replaySeq != null) parts.add("\"replaySeq\":$replaySeq")
         val json = "{${parts.joinToString(",")}}"
-        runOnEdt {
-            browser.cefBrowser.executeJavaScript(
-                "if(window.__onContentChunk) window.__onContentChunk($json);",
-                browser.cefBrowser.url, 0
-            )
-        }
+        dispatchContentChunkJson(json)
     }
 
+
+    private fun recordUsageUpdate(
+        chatId: String,
+        sessionId: String,
+        adapterName: String,
+        used: Long?,
+        size: Long?,
+        isReplay: Boolean
+    ) {
+        if (isReplay) {
+            val capture = historyReplayCaptures[chatId] ?: return
+            if (sessionId.isBlank() || adapterName.isBlank()) return
+            val session = getOrCreateReplaySession(capture, sessionId, adapterName)
+            val prompt = getOrCreateReplayPrompt(session, startNewIfNeeded = false)
+            val current = prompt.assistantMeta ?: buildAssistantMetadata(
+                adapterName = adapterName,
+                modelId = capture.currentModelId,
+                modeId = capture.currentModeId
+            )
+            prompt.assistantMeta = current?.copy(
+                contextTokensUsed = used ?: current.contextTokensUsed,
+                contextWindowSize = size ?: current.contextWindowSize
+            )
+            return
+        }
+
+        val capture = livePromptCaptures[chatId] ?: return
+        if (used != null) capture.contextTokensUsed = used
+        if (size != null) capture.contextWindowSize = size
+    }
+
+    private fun extractUsageUpdate(update: SessionUpdate, meta: JsonElement?): Pair<Long?, Long?>? {
+        val updateObj = when {
+            meta is JsonObject -> meta["update"]?.jsonObject ?: meta
+            else -> try {
+                Json.parseToJsonElement(Json.encodeToString(update)).jsonObject
+            } catch (_: Exception) {
+                null
+            }
+        } ?: return null
+
+        if (updateObj["sessionUpdate"]?.jsonPrimitive?.contentOrNull != "usage_update") {
+            return null
+        }
+
+        val used = updateObj["used"]?.jsonPrimitive?.longOrNull
+        val size = updateObj["size"]?.jsonPrimitive?.longOrNull
+        return used to size
+    }
 
     private fun isPlanUpdate(update: SessionUpdate, _meta: JsonElement?): Boolean {
         // Check via raw JSON-RPC metadata (available during replay)
@@ -1057,6 +1237,7 @@ class AcpBridge(
     }
 
     fun pushPlanChunk(chatId: String, plan: SessionUpdate, isReplay: Boolean = false, _meta: JsonElement? = null) {
+        val replaySeq = nextReplaySeq(chatId, isReplay)
         val entries = try {
             extractPlanEntries(plan, _meta)
         } catch (e: Exception) {
@@ -1072,13 +1253,28 @@ class AcpBridge(
             put("role", "assistant")
             put("type", "plan")
             put("isReplay", isReplay)
+            if (replaySeq != null) put("replaySeq", replaySeq)
             put("planEntries", entries)
         }
 
         val json = chunk.toString()
+        dispatchContentChunkJson(json)
+    }
+
+    private fun nextReplaySeq(chatId: String, isReplay: Boolean): Int? {
+        if (!isReplay) return null
+        return replaySeqByChatId.compute(chatId) { _, prev -> (prev ?: 0) + 1 }
+    }
+
+    private fun dispatchContentChunkJson(json: String) {
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onContentChunk) window.__onContentChunk($json);",
+                """
+                if(window.__onContentChunk){
+                    var __chunk = $json;
+                    window.__onContentChunk(__chunk);
+                }
+                """.trimIndent(),
                 browser.cefBrowser.url, 0
             )
         }
@@ -1087,11 +1283,11 @@ class AcpBridge(
 
     fun pushStatus(chatId: String, status: String) {
         val previousStatus = lastStatusByChatId.put(chatId, status)
-        val escaped = status.replace("\\", "\\\\").replace("'", "\\'")
-        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val escapedStatus = jsStringLiteral(status)
+        val escapedChatId = jsStringLiteral(chatId)
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onStatus) window.__onStatus('$id', '$escaped');",
+                "if(window.__onStatus) window.__onStatus($escapedChatId, $escapedStatus);",
                 browser.cefBrowser.url, 0
             )
         }
@@ -1102,11 +1298,11 @@ class AcpBridge(
 
     fun pushMode(chatId: String, modeId: String?) {
         if (modeId == null) return
-        val escaped = modeId.replace("\\", "\\\\").replace("'", "\\'")
-        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val escapedModeId = jsStringLiteral(modeId)
+        val escapedChatId = jsStringLiteral(chatId)
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onMode) window.__onMode('$id', '$escaped');",
+                "if(window.__onMode) window.__onMode($escapedChatId, $escapedModeId);",
                 browser.cefBrowser.url, 0
             )
         }
@@ -1114,25 +1310,26 @@ class AcpBridge(
 
     fun pushSessionId(chatId: String, sid: String?) {
         if (sid == null) return
-        val escaped = sid.replace("\\", "\\\\").replace("'", "\\'")
-        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val escapedSessionId = jsStringLiteral(sid)
+        val escapedChatId = jsStringLiteral(chatId)
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onSessionId) window.__onSessionId('$id', '$escaped');",
+                "if(window.__onSessionId) window.__onSessionId($escapedChatId, $escapedSessionId);",
                 browser.cefBrowser.url, 0
             )
         }
     }
 
     fun pushPermissionRequest(request: PermissionRequest) {
-        val escapedTitle = request.title.escapeForJsString()
-        val escapedChatId = request.chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val requestIdLiteral = jsStringLiteral(request.requestId)
+        val chatIdLiteral = jsStringLiteral(request.chatId)
+        val titleLiteral = jsStringLiteral(request.title)
         val optionsJson = request.options.joinToString(",") { opt ->
-            "{optionId: '${opt.optionId.value.escapeForJsString()}', label: '${opt.name.escapeForJsString()}'}"
+            "{optionId: ${jsStringLiteral(opt.optionId.value)}, label: ${jsStringLiteral(opt.name)}}"
         }
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onPermissionRequest) window.__onPermissionRequest({ requestId: '${request.requestId}', chatId: '$escapedChatId', title: '$escapedTitle', options: [$optionsJson] });",
+                "if(window.__onPermissionRequest) window.__onPermissionRequest({ requestId: $requestIdLiteral, chatId: $chatIdLiteral, title: $titleLiteral, options: [$optionsJson] });",
                 browser.cefBrowser.url, 0
             )
         }
@@ -1193,11 +1390,11 @@ class AcpBridge(
 
     fun pushUndoResult(chatId: String, result: unified.llm.changes.UndoResult) {
         val successStr = if (result.success) "true" else "false"
-        val msgEscaped = result.message.escapeForJsString()
-        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val messageLiteral = jsStringLiteral(result.message)
+        val chatIdLiteral = jsStringLiteral(chatId)
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onUndoResult) window.__onUndoResult('$id', {success:$successStr,message:'$msgEscaped'});",
+                "if(window.__onUndoResult) window.__onUndoResult($chatIdLiteral, {success:$successStr,message:$messageLiteral});",
                 browser.cefBrowser.url, 0
             )
         }
@@ -1207,11 +1404,11 @@ class AcpBridge(
         val hasPluginEditsStr = if (hasPluginEdits) "true" else "false"
         val processedJson = state.processedFiles.joinToString(",") { escapeJsonString(it) }
         val payload = """{"sessionId":${escapeJsonString(state.sessionId)},"adapterName":${escapeJsonString(state.adapterName)},"baseToolCallIndex":${state.baseToolCallIndex},"processedFiles":[$processedJson],"hasPluginEdits":$hasPluginEditsStr}"""
-        val id = chatId.replace("\\", "\\\\").replace("'", "\\'")
+        val chatIdLiteral = jsStringLiteral(chatId)
         val escaped = payload.escapeForJsString()
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
-                "if(window.__onChangesState) window.__onChangesState('$id', JSON.parse('$escaped'));",
+                "if(window.__onChangesState) window.__onChangesState($chatIdLiteral, JSON.parse('$escaped'));",
                 browser.cefBrowser.url, 0
             )
         }
@@ -1228,14 +1425,389 @@ class AcpBridge(
         if (diffs.isEmpty()) return
 
         // First live diff from this plugin should persist state file and mark Edits panel as plugin-owned.
-        if (!ChangesStateService.hasState(sessionId, adNameValue)) {
-            ChangesStateService.ensureState(sessionId, adNameValue)
+        val projectPath = service.project.basePath.orEmpty()
+        if (!ChangesStateService.hasState(projectPath, sessionId, adNameValue)) {
+            ChangesStateService.ensureState(projectPath, sessionId, adNameValue)
         }
 
         val paths = diffs.map { it.path }
-        ChangesStateService.removeProcessedFiles(sessionId, adNameValue, paths)
-        val state = ChangesStateService.loadState(sessionId, adNameValue) ?: ChangesStateService.ensureState(sessionId, adNameValue)
+        ChangesStateService.removeProcessedFiles(projectPath, sessionId, adNameValue, paths)
+        val state = ChangesStateService.loadState(projectPath, sessionId, adNameValue) ?: ChangesStateService.ensureState(projectPath, sessionId, adNameValue)
         pushChangesState(chatId, state, true)
+    }
+
+    private fun beginLivePromptCapture(chatId: String, blocks: List<JsonObject>): String? {
+        val projectPath = service.project.basePath.orEmpty()
+        val sessionId = service.sessionId(chatId).orEmpty()
+        val adapterName = service.activeAdapterName(chatId).orEmpty()
+        if (projectPath.isBlank() || sessionId.isBlank() || adapterName.isBlank()) return null
+        val captureId = "prompt-${System.nanoTime()}"
+        livePromptCaptures[chatId] = LivePromptCapture(
+            captureId = captureId,
+            projectPath = projectPath,
+            conversationId = chatId,
+            sessionId = sessionId,
+            adapterName = adapterName,
+            blocks = blocks,
+            startedAtMillis = System.currentTimeMillis(),
+            assistantMeta = buildAssistantMetadata(
+                adapterName = adapterName,
+                modelId = service.activeModelId(chatId),
+                modeId = service.activeModeId(chatId)
+            )
+        )
+        return captureId
+    }
+
+    private fun appendLivePromptTextEvent(chatId: String, text: String, expectedCaptureId: String? = null) {
+        val capture = livePromptCaptures[chatId] ?: return
+        if (expectedCaptureId != null && capture.captureId != expectedCaptureId) return
+        capture.events.add(buildStoredContentChunk("assistant", "text", text = text))
+    }
+
+    private fun flushLivePromptCapture(chatId: String, expectedCaptureId: String? = null): ConversationAssistantMetadata? {
+        val capture = livePromptCaptures[chatId] ?: return null
+        if (expectedCaptureId != null && capture.captureId != expectedCaptureId) return null
+        livePromptCaptures.remove(chatId)
+        if (capture.blocks.isEmpty() && capture.events.isEmpty()) return null
+        val durationSeconds = ((System.currentTimeMillis() - capture.startedAtMillis).coerceAtLeast(0L)) / 1000.0
+        val assistantMeta = capture.assistantMeta?.copy(
+            promptStartedAtMillis = capture.startedAtMillis,
+            durationSeconds = durationSeconds,
+            contextTokensUsed = capture.contextTokensUsed,
+            contextWindowSize = capture.contextWindowSize
+        ) ?: buildAssistantMetadata(
+            adapterName = capture.adapterName,
+            promptStartedAtMillis = capture.startedAtMillis,
+            durationSeconds = durationSeconds,
+            contextTokensUsed = capture.contextTokensUsed,
+            contextWindowSize = capture.contextWindowSize
+        )
+        UnifiedHistoryService.appendConversationPrompt(
+            projectPath = capture.projectPath,
+            conversationId = capture.conversationId,
+            sessionId = capture.sessionId,
+            adapterName = capture.adapterName,
+            blocks = capture.blocks,
+            events = capture.events,
+            assistantMeta = assistantMeta
+        )
+        return assistantMeta
+    }
+
+    private fun startHistoryReplayCapture(
+        chatId: String,
+        projectPath: String,
+        conversationId: String
+    ) {
+        if (projectPath.isBlank() || conversationId.isBlank()) return
+        historyReplayCaptures[chatId] = HistoryReplayCapture(
+            projectPath = projectPath,
+            conversationId = conversationId
+        )
+    }
+
+    private fun beginImportedReplaySession(
+        chatId: String,
+        sessionId: String,
+        adapterName: String,
+        modelId: String?,
+        modeId: String?
+    ) {
+        val capture = historyReplayCaptures[chatId] ?: return
+        capture.currentSessionId = sessionId.takeIf { it.isNotBlank() }
+        capture.currentAdapterName = adapterName.takeIf { it.isNotBlank() }
+        capture.currentModelId = modelId?.takeIf { it.isNotBlank() }
+        capture.currentModeId = modeId?.takeIf { it.isNotBlank() }
+    }
+
+    private fun discardHistoryReplayCapture(chatId: String) {
+        historyReplayCaptures.remove(chatId)
+    }
+
+    private fun flushHistoryReplayCapture(chatId: String) {
+        val capture = historyReplayCaptures.remove(chatId) ?: return
+        val sessions = capture.sessions
+            .filter { it.prompts.isNotEmpty() }
+            .map { session ->
+                unified.llm.history.ConversationSessionReplayEntry(
+                    sessionId = session.sessionId,
+                    adapterName = session.adapterName,
+                    prompts = session.prompts.map { prompt ->
+                        unified.llm.history.ConversationPromptReplayEntry(
+                            blocks = prompt.blocks,
+                            events = prompt.events,
+                            assistantMeta = prompt.assistantMeta
+                        )
+                    }
+                )
+            }
+        if (sessions.isEmpty()) return
+        UnifiedHistoryService.saveConversationReplay(
+            projectPath = capture.projectPath,
+            conversationId = capture.conversationId,
+            data = unified.llm.history.ConversationReplayData(sessions = sessions)
+        )
+    }
+
+    private fun recordReplayUserBlock(chatId: String, sessionId: String, adapterName: String, content: ContentBlock) {
+        val capture = historyReplayCaptures[chatId] ?: return
+        if (sessionId.isBlank() || adapterName.isBlank()) return
+        val block = storedPromptBlockFromContentBlock(content) ?: return
+        val session = getOrCreateReplaySession(capture, sessionId, adapterName)
+        val prompt = getOrCreateReplayPrompt(session, startNewIfNeeded = true)
+        prompt.blocks.add(block)
+    }
+
+    private fun recordContentBlock(
+        chatId: String,
+        sessionId: String,
+        adapterName: String,
+        role: String,
+        content: ContentBlock,
+        isThought: Boolean,
+        isReplay: Boolean
+    ) {
+        val stored = storedEventFromContentBlock(role, content, isThought) ?: return
+        recordStoredEvent(chatId, sessionId, adapterName, stored, isReplay)
+    }
+
+    private fun recordStoredEvent(
+        chatId: String,
+        sessionId: String,
+        adapterName: String,
+        event: JsonObject,
+        isReplay: Boolean
+    ) {
+        if (isReplay) {
+            val capture = historyReplayCaptures[chatId] ?: return
+            if (sessionId.isBlank() || adapterName.isBlank()) return
+            val session = getOrCreateReplaySession(capture, sessionId, adapterName)
+            val prompt = getOrCreateReplayPrompt(session, startNewIfNeeded = false)
+            val role = event["role"]?.jsonPrimitive?.contentOrNull
+            if (role == "assistant" && prompt.assistantMeta == null) {
+                prompt.assistantMeta = buildAssistantMetadata(
+                    adapterName = adapterName,
+                    modelId = capture.currentModelId,
+                    modeId = capture.currentModeId
+                )
+            }
+            prompt.events.add(event)
+            return
+        }
+
+        val capture = livePromptCaptures[chatId] ?: return
+        capture.events.add(event)
+    }
+
+    private fun getOrCreateReplaySession(
+        capture: HistoryReplayCapture,
+        sessionId: String,
+        adapterName: String
+    ): ReplaySessionCapture {
+        val existing = capture.sessions.firstOrNull {
+            it.sessionId == sessionId && it.adapterName == adapterName
+        }
+        if (existing != null) return existing
+        return ReplaySessionCapture(sessionId = sessionId, adapterName = adapterName).also {
+            capture.sessions.add(it)
+        }
+    }
+
+    private fun getOrCreateReplayPrompt(
+        session: ReplaySessionCapture,
+        startNewIfNeeded: Boolean
+    ): ReplayPromptCapture {
+        val current = session.prompts.lastOrNull()
+        if (current == null) {
+            return ReplayPromptCapture().also { session.prompts.add(it) }
+        }
+        if (startNewIfNeeded && current.events.isNotEmpty()) {
+            return ReplayPromptCapture().also { session.prompts.add(it) }
+        }
+        return current
+    }
+
+    private fun storedPromptBlockFromContentBlock(content: ContentBlock): JsonObject? {
+        val serialized = serializeContentBlock(content) ?: return null
+        return buildJsonObject {
+            put("type", serialized.type)
+            serialized.text?.let { put("text", it) }
+            serialized.data?.let { put("data", it) }
+            serialized.mimeType?.let { put("mimeType", it) }
+        }
+    }
+
+    private fun storedEventFromContentBlock(role: String, content: ContentBlock, isThought: Boolean): JsonObject? {
+        val serialized = serializeContentBlock(content, if (isThought) "thinking" else "text") ?: return null
+        return buildStoredContentChunk(
+            role = role,
+            type = serialized.type,
+            text = serialized.text,
+            data = serialized.data,
+            mimeType = serialized.mimeType
+        )
+    }
+
+    private fun buildStoredContentChunk(
+        role: String,
+        type: String,
+        text: String? = null,
+        data: String? = null,
+        mimeType: String? = null
+    ): JsonObject {
+        return buildJsonObject {
+            put("role", role)
+            put("type", type)
+            if (text != null) put("text", text)
+            if (data != null) put("data", data)
+            if (mimeType != null) put("mimeType", mimeType)
+        }
+    }
+
+    private fun buildAssistantMetadata(
+        adapterName: String,
+        modelId: String? = null,
+        modeId: String? = null,
+        promptStartedAtMillis: Long? = null,
+        durationSeconds: Double? = null,
+        contextTokensUsed: Long? = null,
+        contextWindowSize: Long? = null
+    ): ConversationAssistantMetadata? {
+        val cleanAdapterName = adapterName.trim()
+        if (cleanAdapterName.isBlank()) return null
+
+        val adapterInfo = runCatching { AcpAdapterPaths.getAdapterInfo(cleanAdapterName) }.getOrNull()
+        val cleanModelId = modelId?.trim()?.takeIf { it.isNotBlank() }
+        val cleanModeId = modeId?.trim()?.takeIf { it.isNotBlank() }
+
+        return ConversationAssistantMetadata(
+            agentId = cleanAdapterName,
+            agentName = adapterInfo?.name ?: cleanAdapterName,
+            modelId = cleanModelId,
+            modelName = cleanModelId?.let { model ->
+                adapterInfo?.models?.firstOrNull { it.modelId == model }?.name ?: model
+            },
+            modeId = cleanModeId,
+            modeName = cleanModeId?.let { mode ->
+                adapterInfo?.modes?.firstOrNull { it.id == mode }?.name ?: mode
+            },
+            promptStartedAtMillis = promptStartedAtMillis,
+            durationSeconds = durationSeconds,
+            contextTokensUsed = contextTokensUsed,
+            contextWindowSize = contextWindowSize
+        )
+    }
+
+    fun pushAssistantMetaChunk(
+        chatId: String,
+        metadata: ConversationAssistantMetadata,
+        isReplay: Boolean = false
+    ) {
+        val replaySeq = nextReplaySeq(chatId, isReplay)
+        val parts = mutableListOf<String>()
+        parts.add("\"chatId\":${escapeJsonString(chatId)}")
+        parts.add("\"role\":\"assistant\"")
+        parts.add("\"type\":\"assistant_meta\"")
+        parts.add("\"isReplay\":$isReplay")
+        metadata.agentId?.let { parts.add("\"agentId\":${escapeJsonString(it)}") }
+        metadata.agentName?.let { parts.add("\"agentName\":${escapeJsonString(it)}") }
+        metadata.modelId?.let { parts.add("\"modelId\":${escapeJsonString(it)}") }
+        metadata.modelName?.let { parts.add("\"modelName\":${escapeJsonString(it)}") }
+        metadata.modeId?.let { parts.add("\"modeId\":${escapeJsonString(it)}") }
+        metadata.modeName?.let { parts.add("\"modeName\":${escapeJsonString(it)}") }
+        metadata.promptStartedAtMillis?.let { parts.add("\"promptStartedAtMillis\":$it") }
+        metadata.durationSeconds?.let { parts.add("\"durationSeconds\":$it") }
+        metadata.contextTokensUsed?.let { parts.add("\"contextTokensUsed\":$it") }
+        metadata.contextWindowSize?.let { parts.add("\"contextWindowSize\":$it") }
+        if (replaySeq != null) parts.add("\"replaySeq\":$replaySeq")
+        val json = "{${parts.joinToString(",")}}"
+        dispatchContentChunkJson(json)
+    }
+
+    private fun buildStoredToolCallChunk(rawJson: String): JsonObject {
+        val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { null }
+        return buildJsonObject {
+            put("role", "assistant")
+            put("type", "tool_call")
+            put("toolCallId", parsed?.get("toolCallId")?.jsonPrimitive?.contentOrNull ?: "")
+            put("toolKind", parsed?.get("kind")?.jsonPrimitive?.contentOrNull ?: "")
+            put("toolTitle", parsed?.get("title")?.jsonPrimitive?.contentOrNull ?: "")
+            put("toolStatus", parsed?.get("status")?.jsonPrimitive?.contentOrNull ?: "")
+            put("toolRawJson", rawJson)
+        }
+    }
+
+    private fun buildStoredToolCallUpdateChunk(toolCallId: String, rawJson: String): JsonObject {
+        return buildJsonObject {
+            put("role", "assistant")
+            put("type", "tool_call_update")
+            put("toolCallId", toolCallId)
+            put("toolRawJson", rawJson)
+        }
+    }
+
+    private fun buildStoredPlanChunk(plan: SessionUpdate, meta: JsonElement?): JsonObject? {
+        val entries = extractPlanEntries(plan, meta) ?: return null
+        if (entries.isEmpty()) return null
+        return buildJsonObject {
+            put("role", "assistant")
+            put("type", "plan")
+            put("planEntries", entries)
+        }
+    }
+
+    private fun replayStoredConversation(chatId: String, data: unified.llm.history.ConversationReplayData) {
+        data.sessions.forEach { session ->
+            session.prompts.forEach { prompt ->
+                prompt.blocks.forEach { block ->
+                    dispatchStoredPromptBlock(chatId, block)
+                }
+                prompt.events.forEach { event ->
+                    dispatchStoredContentChunk(chatId, event)
+                }
+                prompt.assistantMeta?.let { meta ->
+                    pushAssistantMetaChunk(chatId, meta, isReplay = true)
+                }
+            }
+        }
+    }
+
+    private fun dispatchStoredPromptBlock(chatId: String, block: JsonObject) {
+        val type = block["type"]?.jsonPrimitive?.contentOrNull ?: "text"
+        when (type) {
+            "image", "audio", "video", "file" -> {
+                dispatchStoredContentChunk(
+                    chatId,
+                    buildJsonObject {
+                        put("role", "user")
+                        put("type", type)
+                        block["data"]?.let { put("data", it) }
+                        block["text"]?.let { put("text", it) }
+                        block["mimeType"]?.let { put("mimeType", it) }
+                    }
+                )
+            }
+            "code_ref" -> {
+                val text = codeRefBlockToText(block).text
+                dispatchStoredContentChunk(chatId, buildStoredContentChunk("user", "text", text = text))
+            }
+            else -> {
+                val text = block["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                dispatchStoredContentChunk(chatId, buildStoredContentChunk("user", "text", text = text))
+            }
+        }
+    }
+
+    private fun dispatchStoredContentChunk(chatId: String, stored: JsonObject) {
+        val replaySeq = nextReplaySeq(chatId, true)
+        val payload = buildJsonObject {
+            put("chatId", chatId)
+            stored.forEach { (key, value) -> put(key, value) }
+            put("isReplay", true)
+            if (replaySeq != null) put("replaySeq", replaySeq)
+        }
+        dispatchContentChunkJson(payload.toString())
     }
 
     fun pushAdapters() {
@@ -1296,13 +1868,8 @@ class AcpBridge(
 
     private fun runOnEdt(action: () -> Unit) = ApplicationManager.getApplication().invokeLater(action)
 
-    private fun decorateQueryInject(injectCode: String, actionName: String): String {
-        return injectCode
-            .replace("onSuccess: function(response) {}", "onSuccess: function(response) {}")
-            .replace("onFailure: function(error_code, error_message) {}", "onFailure: function(e, m) {}")
-    }
-
     private fun escapeJsonString(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\""
+    private fun jsStringLiteral(value: String) = "'${value.escapeForJsString()}'"
 
     private fun parseIdOnlyPayload(payload: String?): String? {
         return payload?.trim()?.takeIf { it.isNotEmpty() }
@@ -1320,15 +1887,16 @@ class AcpBridge(
         } catch (_: Exception) { Triple(null, null, null) }
     }
 
-    private fun parseIdPayload(payload: String?, idKey: String): Pair<String?, String?> {
-         val raw = payload?.trim().orEmpty()
-         if (raw.isEmpty()) return null to null
-         return try {
-             val obj = Json.parseToJsonElement(raw).jsonObject
-             val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-             val idVal = obj[idKey]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-             chatId to idVal
-         } catch (_: Exception) { null to null }
+    private fun parseScopedIdPayload(payload: String?, idKey: String): Triple<String?, String?, String?> {
+        val raw = payload?.trim().orEmpty()
+        if (raw.isEmpty()) return Triple(null, null, null)
+        return try {
+            val obj = Json.parseToJsonElement(raw).jsonObject
+            val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            val adapterId = obj["adapterId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            val idVal = obj[idKey]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            Triple(chatId, adapterId, idVal)
+        } catch (_: Exception) { Triple(null, null, null) }
     }
     
     /** Converts a file/video frontend block into an ACP ContentBlock. */
@@ -1347,17 +1915,6 @@ class AcpBridge(
         return ContentBlock.Text("[File: $name]")
     }
 
-    private fun parseTextPayload(payload: String?): Pair<String?, String?> {
-         val raw = payload?.trim().orEmpty()
-         if (raw.isEmpty()) return null to null
-         return try {
-             val obj = Json.parseToJsonElement(raw).jsonObject
-             val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-             val text = obj["text"]?.jsonPrimitive?.content
-             chatId to text
-         } catch (_: Exception) { null to null }
-    }
-
     private fun codeRefBlockToText(blockObj: JsonObject): ContentBlock.Text {
         val path = blockObj["path"]?.jsonPrimitive?.content ?: ""
         val startLine = blockObj["startLine"]?.jsonPrimitive?.intOrNull
@@ -1372,46 +1929,27 @@ class AcpBridge(
         return ContentBlock.Text(text)
     }
 
-    private fun parseBlocksPayload(payload: String?): Pair<String?, List<ContentBlock>> {
+    private data class ParsedBlocksPayload(
+        val chatId: String?,
+        val blocks: List<ContentBlock>,
+        val rawBlocks: List<JsonObject>
+    )
+
+    private fun parseBlocksPayload(payload: String?): ParsedBlocksPayload {
         val raw = payload?.trim().orEmpty()
-        if (raw.isEmpty()) return null to emptyList()
+        if (raw.isEmpty()) return ParsedBlocksPayload(null, emptyList(), emptyList())
         return try {
             val obj = Json.parseToJsonElement(raw).jsonObject
             val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            
+
             // 1. Try to get blocks directly if present
             val blocksElement = obj["blocks"]
             if (blocksElement != null) {
-                val blocks = blocksElement.jsonArray.map { blockEl ->
-                    val blockObj = blockEl.jsonObject
-                    val type = blockObj["type"]?.jsonPrimitive?.content
-                    when (type) {
-                        "image" -> {
-                            val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
-                            val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "image/png"
-                            ContentBlock.Image(data, mimeType)
-                        }
-                        "audio" -> {
-                            val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
-                            val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "audio/wav"
-                            ContentBlock.Audio(data, mimeType)
-                        }
-                         "video", "file" -> {
-                             val data = blockObj["data"]?.jsonPrimitive?.content
-                             val path = blockObj["path"]?.jsonPrimitive?.content
-                             val defaultMime = if (type == "video") "video/mp4" else "application/octet-stream"
-                             val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: defaultMime
-                             val name = blockObj["name"]?.jsonPrimitive?.content ?: type!!
-                             fileOrVideoBlock(name, mimeType, data, path)
-                         }
-                        "code_ref" -> codeRefBlockToText(blockObj)
-                        else -> {
-                            val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
-                            ContentBlock.Text(text)
-                        }
-                    }
-                }
-                return chatId to blocks
+                return ParsedBlocksPayload(
+                    chatId = chatId,
+                    blocks = parseContentBlocks(blocksElement),
+                    rawBlocks = blocksElement.jsonArray.mapNotNull { it as? JsonObject }
+                )
             }
 
             // 2. Fallback to text field
@@ -1420,55 +1958,98 @@ class AcpBridge(
             // 3. If textValue looks like a JSON array of blocks, try to parse it (compatibility with current UI)
             if (textValue.startsWith("[") && textValue.endsWith("]")) {
                 try {
-                    val blocks = Json.parseToJsonElement(textValue).jsonArray.map { blockEl ->
-                        val blockObj = blockEl.jsonObject
-                        val type = blockObj["type"]?.jsonPrimitive?.content
-                        when (type) {
-                            "image" -> {
-                                val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
-                                val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "image/png"
-                                ContentBlock.Image(data, mimeType)
-                            }
-                            "audio" -> {
-                                val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
-                                val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "audio/wav"
-                                ContentBlock.Audio(data, mimeType)
-                            }
-                            "video", "file" -> {
-                                val data = blockObj["data"]?.jsonPrimitive?.content
-                                val path = blockObj["path"]?.jsonPrimitive?.content
-                                val defaultMime = if (type == "video") "video/mp4" else "application/octet-stream"
-                                val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: defaultMime
-                                val name = blockObj["name"]?.jsonPrimitive?.content ?: type!!
-                                fileOrVideoBlock(name, mimeType, data, path)
-                            }
-                            "code_ref" -> codeRefBlockToText(blockObj)
-                            else -> {
-                                val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
-                                ContentBlock.Text(text)
-                            }
-                        }
+                    val rawBlocks = Json.parseToJsonElement(textValue).jsonArray.mapNotNull { it as? JsonObject }
+                    val blocks = parseContentBlocks(JsonArray(rawBlocks))
+                    if (blocks.isNotEmpty()) {
+                        return ParsedBlocksPayload(chatId = chatId, blocks = blocks, rawBlocks = rawBlocks)
                     }
-                    if (blocks.isNotEmpty()) return chatId to blocks
                 } catch (_: Exception) {}
             }
             
             // 4. Final fallback: treat as plain text
-            return chatId to listOf(ContentBlock.Text(textValue))
-        } catch (_: Exception) { null to emptyList() }
+            ParsedBlocksPayload(
+                chatId = chatId,
+                blocks = listOf(ContentBlock.Text(textValue)),
+                rawBlocks = listOf(
+                    buildJsonObject {
+                        put("type", "text")
+                        put("text", textValue)
+                    }
+                )
+            )
+        } catch (_: Exception) { ParsedBlocksPayload(null, emptyList(), emptyList()) }
     }
 
-    private fun parseLoadPayload(payload: String?): List<String?> {
+    private fun parseContentBlocks(blocksElement: JsonElement): List<ContentBlock> {
+        return blocksElement.jsonArray.map { blockEl ->
+            val blockObj = blockEl.jsonObject
+            val type = blockObj["type"]?.jsonPrimitive?.content
+            when (type) {
+                "image" -> {
+                    val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
+                    val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "image/png"
+                    ContentBlock.Image(data, mimeType)
+                }
+                "audio" -> {
+                    val data = blockObj["data"]?.jsonPrimitive?.content ?: ""
+                    val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: "audio/wav"
+                    ContentBlock.Audio(data, mimeType)
+                }
+                "video", "file" -> {
+                    val data = blockObj["data"]?.jsonPrimitive?.content
+                    val path = blockObj["path"]?.jsonPrimitive?.content
+                    val defaultMime = if (type == "video") "video/mp4" else "application/octet-stream"
+                    val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: defaultMime
+                    val name = blockObj["name"]?.jsonPrimitive?.content ?: type!!
+                    fileOrVideoBlock(name, mimeType, data, path)
+                }
+                "code_ref" -> codeRefBlockToText(blockObj)
+                else -> {
+                    val text = blockObj["text"]?.jsonPrimitive?.content ?: ""
+                    ContentBlock.Text(text)
+                }
+            }
+        }
+    }
+
+    private fun parseConversationLoadPayload(payload: String?): Triple<String?, String?, String?> {
         val raw = payload?.trim().orEmpty()
-        if (raw.isEmpty()) return listOf(null, null, null, null, null)
+        if (raw.isEmpty()) return Triple(null, null, null)
         return try {
             val obj = Json.parseToJsonElement(raw).jsonObject
             val chatId = obj["chatId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            val adapterId = obj["adapterId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            val sessionId = obj["sessionId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            val modelId = obj["modelId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            val modeId = obj["modeId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            listOf(chatId, adapterId, sessionId, modelId, modeId)
-        } catch (_: Exception) { listOf(null, null, null, null, null) }
+            val projectPath = obj["projectPath"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            val conversationId = obj["conversationId"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            Triple(chatId, projectPath, conversationId)
+        } catch (_: Exception) { Triple(null, null, null) }
+    }
+
+    private fun serializeContentBlock(content: ContentBlock, textType: String = "text"): SerializedContentBlock? {
+        return when (content) {
+            is ContentBlock.Text -> SerializedContentBlock(type = textType, text = content.text)
+            is ContentBlock.Image -> SerializedContentBlock(type = "image", data = content.data, mimeType = content.mimeType)
+            is ContentBlock.Audio -> SerializedContentBlock(type = "audio", data = content.data, mimeType = content.mimeType)
+            is ContentBlock.ResourceLink -> {
+                if (content.uri.startsWith("data:")) {
+                    SerializedContentBlock(type = "file", data = content.uri.substringAfter("base64,"), mimeType = content.mimeType)
+                } else {
+                    SerializedContentBlock(type = "file", text = "[File: ${content.uri}]", mimeType = content.mimeType)
+                }
+            }
+            is ContentBlock.Resource -> {
+                when (val res = content.resource) {
+                    is EmbeddedResourceResource.BlobResourceContents -> SerializedContentBlock(
+                        type = "file",
+                        data = res.blob,
+                        mimeType = res.mimeType
+                    )
+                    is EmbeddedResourceResource.TextResourceContents -> SerializedContentBlock(
+                        type = "file",
+                        text = res.text,
+                        mimeType = res.mimeType
+                    )
+                }
+            }
+        }
     }
 }

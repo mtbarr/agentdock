@@ -65,10 +65,15 @@ export interface Message {
   blocks?: RichContentBlock[];
   timestamp?: number;
   // Meta-information
+  agentId?: string;
   agentName?: string;
   modelName?: string;
   modeName?: string;
+  promptStartedAtMillis?: number;
   duration?: number;
+  contextTokensUsed?: number;
+  contextWindowSize?: number;
+  metaComplete?: boolean;
 }
 
 export interface ModelOption {
@@ -130,14 +135,29 @@ export interface ChatTab {
   id: string;
   type: TabType;
   title: string;
-  sessionId: string; // Creates linkage to backend session
+  conversationId: string;
   agentId?: string; // If pre-selected
   historySession?: HistorySessionMeta;
+}
+
+export interface HistoryDeleteFailure {
+  conversationId: string;
+  message: string;
+}
+
+export interface HistoryDeleteResultPayload {
+  success: boolean;
+  requestedConversationIds: string[];
+  failures: HistoryDeleteFailure[];
 }
 
 export interface HistorySessionMeta {
   sessionId: string;
   adapterName: string;
+  conversationId: string;
+  sessionCount?: number;
+  promptCount?: number;
+  allAdapterNames?: string[];
   modelId?: string;
   modeId?: string;
   projectPath: string;
@@ -150,13 +170,14 @@ export interface HistorySessionMeta {
 export interface ContentChunk {
   chatId: string;
   role: 'user' | 'assistant';
-  type: 'text' | 'thinking' | 'image' | 'audio' | 'video' | 'file' | 'tool_call' | 'tool_call_update' | 'plan';
+  type: 'text' | 'thinking' | 'image' | 'audio' | 'video' | 'file' | 'tool_call' | 'tool_call_update' | 'plan' | 'assistant_meta';
   text?: string;
   data?: string;
   path?: string;
   name?: string;
   mimeType?: string;
   isReplay: boolean;
+  replaySeq?: number;
   // tool_call specific
   toolCallId?: string;
   toolKind?: string;
@@ -164,6 +185,16 @@ export interface ContentChunk {
   toolStatus?: string;
   toolRawJson?: string;
   planEntries?: PlanEntry[];
+  agentId?: string;
+  agentName?: string;
+  modelId?: string;
+  modelName?: string;
+  modeId?: string;
+  modeName?: string;
+  promptStartedAtMillis?: number;
+  durationSeconds?: number;
+  contextTokensUsed?: number;
+  contextWindowSize?: number;
 }
 
 
@@ -205,24 +236,50 @@ export interface UndoResultPayload {
   message: string;
 }
 
+export interface SessionMetadataUpdatePayload {
+  conversationId: string;
+  sessionId: string;
+  adapterName: string;
+  promptCount: number;
+  title?: string;
+  touchUpdatedAt?: boolean;
+}
+
+export interface ContinueConversationPayload {
+  previousSessionId: string;
+  previousAdapterName: string;
+  sessionId: string;
+  adapterName: string;
+  title?: string;
+}
+
+export interface PendingHandoffContext {
+  id: string;
+  sourceSessionId: string;
+  sourceAgentId: string;
+  targetAgentId: string;
+  text: string;
+}
+
 declare global {
   interface Window {
     // Actions (Frontend -> Backend)
-    __startAgent?: (chatId: string, adapterId?: string, modelId?: string) => void;
-    __setModel?: (chatId: string, modelId: string) => void;
-    __setMode?: (chatId: string, modeId: string) => void;
-    __sendPrompt?: (chatId: string, message: string) => void;
+    __startAgent?: (conversationId: string, adapterId?: string, modelId?: string) => void;
+    __setModel?: (conversationId: string, adapterId: string, modelId: string) => void;
+    __setMode?: (conversationId: string, adapterId: string, modeId: string) => void;
+    __sendPrompt?: (conversationId: string, message: string) => void;
     __requestAdapters?: () => void;
     __notifyReady?: () => void;
     __respondPermission?: (requestId: string, decision: string) => void;
-    __cancelPrompt?: (chatId: string) => void;
-    __stopAgent?: (chatId: string) => void;
+    __cancelPrompt?: (conversationId: string) => void;
+    __stopAgent?: (conversationId: string) => void;
     __downloadAgent?: (adapterId: string) => void;
     __deleteAgent?: (adapterId: string) => void;
     __toggleAgentEnabled?: (adapterId: string, enabled: boolean) => void;
     __requestHistoryList?: (projectPath?: string) => void;
-    __deleteHistorySession?: (meta: any) => void;
-    __loadHistorySession?: (chatId: string, adapterId: string, sessionId: string, modelId?: string, modeId?: string) => void;
+    __deleteHistoryConversations?: (payload: { projectPath: string; conversationIds: string[] }) => void;
+    __renameHistoryConversation?: (payload: { projectPath: string; conversationId: string; newTitle: string }) => void;
+    __loadHistoryConversation?: (conversationId: string, projectPath: string, historyConversationId: string) => void;
     __loginAgent?: (adapterId: string) => void;
     __logoutAgent?: (adapterId: string) => void;
     __undoFile?: (payload: string) => void;
@@ -234,7 +291,9 @@ declare global {
     __showDiff?: (payload: string) => void;
     __openFile?: (payload: string) => void;
     __openUrl?: (url: string) => void;
-    __attachFile?: (chatId: string) => void;
+    __attachFile?: (conversationId: string) => void;
+    __updateSessionMetadata?: (payload: SessionMetadataUpdatePayload) => void;
+    __continueConversationWithSession?: (payload: ContinueConversationPayload) => void;
     __requestHostRepaint?: (reason?: string) => void;
 
     // Callbacks (Backend -> Frontend)
@@ -246,9 +305,15 @@ declare global {
     __onMode?: (chatId: string, modeId: string) => void;
     __onPermissionRequest?: (request: PermissionRequest) => void;
     __onHistoryList?: (list: HistorySessionMeta[]) => void;
+    __onHistoryDeleteResult?: (result: HistoryDeleteResultPayload) => void;
     __onAttachmentsAdded?: (chatId: string, files: ChatAttachment[]) => void;
 
     __onUndoResult?: (chatId: string, result: UndoResultPayload) => void;
     __onChangesState?: (chatId: string, state: ChangesState) => void;
   }
 }
+
+
+
+
+

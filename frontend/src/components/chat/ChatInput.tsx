@@ -25,7 +25,7 @@ import { CodeReferenceNode } from './input/CodeReferenceNode';
 import { AttachmentsSyncPlugin, PasteLogPlugin, KeyboardPlugin, AutoHeightPlugin, ClickToFocusPlugin, ClearEditorPlugin, InlineAttachmentBackspacePlugin, ExternalCodeReferencePlugin } from './input/ChatInputPlugins';
 
 interface ChatInputProps {
-  chatId: string;
+  conversationId: string;
   inputValue: string;
   onInputChange: (val: string) => void;
   onSend: () => void;
@@ -36,7 +36,7 @@ interface ChatInputProps {
   selectedAgentId: string;
   onAgentChange: (id: string) => void;
   selectedModelId: string;
-  onModelChange: (id: string) => void;
+  onModelChange: (id: string, targetAgentId?: string) => void;
 
   modeOptions: DropdownOption[];
   selectedModeId: string;
@@ -55,7 +55,7 @@ interface ChatInputProps {
 
 
 export default function ChatInput({
-  chatId,
+  conversationId,
   inputValue,
   onInputChange,
   onSend,
@@ -107,14 +107,14 @@ export default function ChatInput({
   }, []);
 
   const initialConfig = useMemo(() => ({
-    namespace: `ChatInput-${chatId}`,
+    namespace: `ChatInput-${conversationId}`,
     nodes: [ImageNode, CodeReferenceNode],
     theme: {
       paragraph: 'm-0',
       text: { base: 'text-foreground' },
     },
     onError: (error: Error) => console.error(error),
-  }), [chatId]);
+  }), [conversationId]);
 
   const handleImagePaste = useCallback((file: File, editor: LexicalEditor) => {
     const reader = new FileReader();
@@ -145,7 +145,7 @@ export default function ChatInput({
     };
     const raf = requestAnimationFrame(focusEditor);
     return () => cancelAnimationFrame(raf);
-  }, [autoFocus, chatId]);
+  }, [autoFocus, conversationId]);
 
   return (
     <div style={{ height: customHeight ? `${customHeight}px` : undefined }} className="flex-shrink-0 px-4 pb-4 pt-2">
@@ -210,7 +210,7 @@ export default function ChatInput({
                 title="Add context"
                 onClick={() => {
                    if (typeof window.__attachFile === 'function') {
-                       window.__attachFile(chatId);
+                       window.__attachFile(conversationId);
                    }
                 }}
               >
@@ -227,7 +227,7 @@ export default function ChatInput({
                 disabled={isSending}
                 onChange={onAgentChange}
                 onSubChange={(_agentId, modelId) => {
-                  onModelChange(modelId);
+                  onModelChange(modelId, _agentId);
                 }}
               />
 

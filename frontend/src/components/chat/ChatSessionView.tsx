@@ -1,34 +1,41 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useFileChanges } from '../../hooks/useFileChanges';
-import { AgentOption, FileChangeSummary, HistorySessionMeta } from '../../types/chat';
+import { AgentOption, FileChangeSummary, HistorySessionMeta, PendingHandoffContext } from '../../types/chat';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import PermissionBar from './PermissionBar';
 import FileChangesPanel from './FileChangesPanel';
+import { buildConversationHandoffContext } from '../../utils/conversationHandoff';
 
 interface ChatSessionProps {
   initialAgentId?: string;
-  chatId: string;
+  conversationId: string;
   availableAgents: AgentOption[];
   historySession?: HistorySessionMeta;
+  pendingHandoff?: PendingHandoffContext;
   isActive?: boolean;
-  onAssistantActivity?: (chatId: string) => void;
-  onAtBottomChange?: (chatId: string, isAtBottom: boolean) => void;
-  onPermissionRequestChange?: (chatId: string, hasPendingPermission: boolean) => void;
-  onAgentChangeRequest?: (agentId: string) => void;
+  onAssistantActivity?: () => void;
+  onAtBottomChange?: (isAtBottom: boolean) => void;
+  onPermissionRequestChange?: (hasPendingPermission: boolean) => void;
+  onAgentChangeRequest?: (payload: { agentId: string; handoffText: string }) => void;
+  onHandoffConsumed?: (handoffId: string) => void;
+  onSessionStateChange?: (state: { acpSessionId: string; adapterName: string }) => void;
 }
 
 export default function ChatSessionView({ 
   initialAgentId, 
-  chatId,
+  conversationId,
   availableAgents,
   historySession,
+  pendingHandoff,
   isActive = false,
   onAssistantActivity,
   onAtBottomChange,
   onPermissionRequestChange,
-  onAgentChangeRequest
+  onAgentChangeRequest,
+  onHandoffConsumed,
+  onSessionStateChange
 }: ChatSessionProps) {
   const {
     messages,
@@ -55,7 +62,7 @@ export default function ChatSessionView({
     adapterName,
     adapterDisplayName,
     adapterIconPath
-  } = useChatSession(chatId, availableAgents, initialAgentId, historySession);
+  } = useChatSession(conversationId, availableAgents, initialAgentId, historySession, pendingHandoff, onHandoffConsumed);
 
   const {
     hasPluginEdits,
@@ -66,7 +73,7 @@ export default function ChatSessionView({
     handleUndoAllFiles,
     handleKeepFile,
     handleKeepAll,
-  } = useFileChanges(chatId, acpSessionId, adapterName);
+  } = useFileChanges(conversationId, acpSessionId, adapterName);
 
   const handleShowDiff = useCallback((fc: FileChangeSummary) => {
     if (typeof window.__showDiff === 'function') {
@@ -163,8 +170,8 @@ export default function ChatSessionView({
   }, [stopResizing]);
 
   const handleAtBottomChange = useCallback((isAtBottom: boolean) => {
-    onAtBottomChange?.(chatId, isAtBottom);
-  }, [chatId, onAtBottomChange]);
+    onAtBottomChange?.(isAtBottom);
+  }, [onAtBottomChange]);
 
   const prevStatusRef = useRef(status);
   useEffect(() => {
@@ -179,18 +186,25 @@ export default function ChatSessionView({
     const hasFinalText = (last.content?.trim().length || 0) > 0;
     if (!hasFinalText) return;
 
-    onAssistantActivity?.(chatId);
-  }, [status, isHistoryReplaying, messages, onAssistantActivity, chatId, permissionRequest]);
+    onAssistantActivity?.();
+  }, [status, isHistoryReplaying, messages, onAssistantActivity, permissionRequest]);
 
   useEffect(() => {
-    onPermissionRequestChange?.(chatId, !!permissionRequest);
-  }, [chatId, permissionRequest, onPermissionRequestChange]);
+    onPermissionRequestChange?.(!!permissionRequest);
+  }, [permissionRequest, onPermissionRequestChange]);
+
+  useEffect(() => {
+    onSessionStateChange?.({
+      acpSessionId,
+      adapterName
+    });
+  }, [acpSessionId, adapterName, onSessionStateChange]);
 
   useEffect(() => {
     return () => {
-      onPermissionRequestChange?.(chatId, false);
+      onPermissionRequestChange?.(false);
     };
-  }, [chatId, onPermissionRequestChange]);
+  }, [onPermissionRequestChange]);
 
   return (
     <div className="flex flex-col h-full relative overflow-hidden bg-background">
@@ -206,6 +220,7 @@ export default function ChatSessionView({
             status={status}
             agentName={adapterDisplayName}
             agentIconPath={adapterIconPath}
+            availableAgents={availableAgents}
             isHistoryReplaying={isHistoryReplaying}
           />
         </div>
@@ -243,7 +258,7 @@ export default function ChatSessionView({
 
         <div style={{ height: `${inputHeight}px` }} className="flex flex-col">
           <ChatInput
-            chatId={chatId}
+            conversationId={conversationId}
             inputValue={inputValue}
             onInputChange={setInputValue}
             onSend={handleSend}
@@ -254,7 +269,10 @@ export default function ChatSessionView({
             selectedAgentId={selectedAgentId}
             onAgentChange={(id) => {
               if (onAgentChangeRequest && id !== selectedAgentId) {
-                onAgentChangeRequest(id);
+                onAgentChangeRequest({
+                  agentId: id,
+                  handoffText: buildConversationHandoffContext(messages, fileChanges),
+                });
               }
             }}
             

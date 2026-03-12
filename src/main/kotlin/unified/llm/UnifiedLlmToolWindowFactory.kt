@@ -172,7 +172,7 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                             }
                         })
 
-                        val service = AcpClientService(project)
+                        val service = AcpClientService.getInstance(project)
                         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
                         
                         debugBridge = AcpBridge(browser, service, scope)
@@ -358,4 +358,3 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
         }
     }
 }
-
