@@ -111,8 +111,13 @@ function stripTransferredContextForDisplay(text: string, role: 'user' | 'assista
   if (!isReplay || role !== 'user') return text;
 
   const markerStart = text.indexOf('[TRANSFERRED CONTEXT]');
-  const markerUserRequest = text.indexOf('[USER REQUEST]');
-  if (markerStart < 0 || markerUserRequest < 0 || markerUserRequest < markerStart) {
+  const markerEnd = text.indexOf('[/TRANSFERRED CONTEXT]');
+  if (markerStart < 0 || markerEnd < 0 || markerEnd < markerStart) {
+    return text;
+  }
+
+  const markerUserRequest = text.indexOf('[USER REQUEST]', markerEnd + '[/TRANSFERRED CONTEXT]'.length);
+  if (markerUserRequest < 0) {
     return text;
   }
 
@@ -1081,6 +1086,7 @@ function closeAllStreamingThinking(messages: Message[]): Message[] {
     { ...lastMsg, contentBlocks: blocks }
   ];
 }
+
 
 
 

@@ -2,11 +2,12 @@ import { useCallback, useState, useRef, useEffect } from 'react';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useFileChanges } from '../../hooks/useFileChanges';
 import { AgentOption, FileChangeSummary, HistorySessionMeta, PendingHandoffContext } from '../../types/chat';
+import { ACPBridge } from '../../utils/bridge';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import PermissionBar from './PermissionBar';
 import FileChangesPanel from './FileChangesPanel';
-import { buildConversationHandoffContext } from '../../utils/conversationHandoff';
+import { buildConversationHandoffFromTranscriptFile, buildConversationHandoffSaveFailureContext, prepareConversationHandoff } from '../../utils/conversationHandoff';
 
 interface ChatSessionProps {
   initialAgentId?: string;
@@ -267,13 +268,27 @@ export default function ChatSessionView({
             
             agentOptions={agentOptions}
             selectedAgentId={selectedAgentId}
-            onAgentChange={(id) => {
-              if (onAgentChangeRequest && id !== selectedAgentId) {
-                onAgentChangeRequest({
-                  agentId: id,
-                  handoffText: buildConversationHandoffContext(messages, fileChanges),
-                });
+            onAgentChange={async (id) => {
+              if (!onAgentChangeRequest || id === selectedAgentId) return;
+
+              const prepared = prepareConversationHandoff(messages, fileChanges);
+              let handoffText = prepared.handoffText;
+
+              if (prepared.exceedsInlineLimit) {
+                try {
+                  const saved = await ACPBridge.saveConversationTranscript(conversationId, prepared.normalizedTranscript);
+                  handoffText = buildConversationHandoffFromTranscriptFile(prepared, saved.filePath || '');
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error);
+                  console.warn('[ChatSessionView] Failed to persist handoff transcript:', error);
+                  handoffText = buildConversationHandoffSaveFailureContext(prepared, message);
+                }
               }
+
+              onAgentChangeRequest({
+                agentId: id,
+                handoffText,
+              });
             }}
             
             selectedModelId={selectedModelId}
@@ -354,3 +369,5 @@ export default function ChatSessionView({
     </div>
   );
 }
+
+

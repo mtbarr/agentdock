@@ -58,7 +58,7 @@ export default function ConfirmationModal({
         </div>
 
         <div className="px-5 py-4 pb-6 grow flex items-start gap-4">
-          <p className="text-[14px] leading-snug">
+          <p className="text-[14px] leading-snug whitespace-pre-line">
             {message}
           </p>
         </div>
@@ -93,3 +93,4 @@ export default function ConfirmationModal({
     </div>
   );
 }
+

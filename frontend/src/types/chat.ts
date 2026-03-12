@@ -262,6 +262,14 @@ export interface PendingHandoffContext {
   text: string;
 }
 
+export interface ConversationTranscriptSavedPayload {
+  requestId: string;
+  conversationId: string;
+  success: boolean;
+  filePath?: string;
+  error?: string;
+}
+
 declare global {
   interface Window {
     // Actions (Frontend -> Backend)
@@ -297,6 +305,7 @@ declare global {
     __attachFile?: (conversationId: string) => void;
     __updateSessionMetadata?: (payload: SessionMetadataUpdatePayload) => void;
     __continueConversationWithSession?: (payload: ContinueConversationPayload) => void;
+    __saveConversationTranscript?: (payload: string) => void;
     __requestHostRepaint?: (reason?: string) => void;
 
     // Callbacks (Backend -> Frontend)
@@ -310,11 +319,13 @@ declare global {
     __onHistoryList?: (list: HistorySessionMeta[]) => void;
     __onHistoryDeleteResult?: (result: HistoryDeleteResultPayload) => void;
     __onAttachmentsAdded?: (chatId: string, files: ChatAttachment[]) => void;
+    __onConversationTranscriptSaved?: (payload: ConversationTranscriptSavedPayload) => void;
 
     __onUndoResult?: (chatId: string, result: UndoResultPayload) => void;
     __onChangesState?: (chatId: string, state: ChangesState) => void;
   }
 }
+
 
 
 

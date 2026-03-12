@@ -1,4 +1,17 @@
-import { AgentOption, PermissionRequest, HistorySessionMeta, HistoryDeleteResultPayload, UndoResultPayload, ChangesState, ContentChunk, ToolCallEvent, ChatAttachment, SessionMetadataUpdatePayload, ContinueConversationPayload } from '../types/chat';
+import {
+  AgentOption,
+  PermissionRequest,
+  HistorySessionMeta,
+  HistoryDeleteResultPayload,
+  UndoResultPayload,
+  ChangesState,
+  ContentChunk,
+  ToolCallEvent,
+  ChatAttachment,
+  SessionMetadataUpdatePayload,
+  ContinueConversationPayload,
+  ConversationTranscriptSavedPayload,
+} from '../types/chat';
 
 export interface ContentChunkEvent { chunk: ContentChunk; }
 export interface StatusEvent { chatId: string; status: string; }
@@ -11,7 +24,7 @@ export interface HistoryDeleteResultEvent { result: HistoryDeleteResultPayload; 
 export interface UndoResultEvent { chatId: string; result: UndoResultPayload; }
 export interface ChangesStateEvent { chatId: string; state: ChangesState; }
 export interface ToolCallBridgeEvent { chatId: string; payload: ToolCallEvent; }
-
+export interface ConversationTranscriptSavedEvent { payload: ConversationTranscriptSavedPayload; }
 
 const EVENT_NAMES = {
   CONTENT_CHUNK: 'acp-content-chunk',
@@ -27,8 +40,16 @@ const EVENT_NAMES = {
   CHANGES_STATE: 'acp-changes-state',
   ATTACHMENTS_ADDED: 'acp-attachments-added',
   TOOL_CALL: 'acp-tool-call',
-  TOOL_CALL_UPDATE: 'acp-tool-call-update'
+  TOOL_CALL_UPDATE: 'acp-tool-call-update',
+  CONVERSATION_TRANSCRIPT_SAVED: 'conversation-transcript-saved',
 };
+
+let transcriptRequestCounter = 0;
+
+function nextTranscriptRequestId(): string {
+  transcriptRequestCounter += 1;
+  return `transcript-${transcriptRequestCounter}-${Date.now()}`;
+}
 
 export const ACPBridge = {
   initialize: () => {
@@ -37,11 +58,9 @@ export const ACPBridge = {
     window.__onContentChunk = (chunk) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.CONTENT_CHUNK, { detail: { chunk } }));
 
-      // Also dispatch tool_call / tool_call_update events for useFileChanges
       if (chunk.type === 'tool_call' || chunk.type === 'tool_call_update') {
         try {
           const raw = chunk.toolRawJson ? JSON.parse(chunk.toolRawJson) : {};
-          // diffs come from ToolCallContent.Diff entries serialized as { type: 'diff', path, oldText, newText }
           const diffs = Array.isArray(raw.content)
             ? raw.content
                 .filter((c: any) => c.type === 'diff' || (c.path !== undefined && c.newText !== undefined))
@@ -60,7 +79,6 @@ export const ACPBridge = {
             const eventName = chunk.type === 'tool_call' ? EVENT_NAMES.TOOL_CALL : EVENT_NAMES.TOOL_CALL_UPDATE;
             window.dispatchEvent(new CustomEvent(eventName, { detail: { chatId: chunk.chatId, payload } }));
           } else if (chunk.type === 'tool_call_update' && (chunk.toolCallId || raw.toolCallId) && (chunk.toolStatus || raw.status)) {
-            // Status-only update (no diffs) -- e.g. denied permission or error
             const payload: ToolCallEvent = {
               toolCallId: chunk.toolCallId || raw.toolCallId || '',
               title: chunk.toolTitle || raw.title || '',
@@ -71,7 +89,8 @@ export const ACPBridge = {
             };
             window.dispatchEvent(new CustomEvent(EVENT_NAMES.TOOL_CALL_UPDATE, { detail: { chatId: chunk.chatId, payload } }));
           }
-        } catch (_) { /* ignore parse errors */ }
+        } catch (_) {
+        }
       }
     };
 
@@ -94,7 +113,7 @@ export const ACPBridge = {
     window.__onPermissionRequest = (request) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.PERMISSION, { detail: { request } }));
     };
-    
+
     window.__onAcpLog = (payload) => {
       console.log('[ACP]', payload.direction, JSON.parse(payload.json));
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.LOG, { detail: payload }));
@@ -108,7 +127,6 @@ export const ACPBridge = {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.HISTORY_DELETE_RESULT, { detail: { result } }));
     };
 
-
     window.__onUndoResult = (chatId, result) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.UNDO_RESULT, { detail: { chatId, result } }));
     };
@@ -121,9 +139,10 @@ export const ACPBridge = {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.ATTACHMENTS_ADDED, { detail: { chatId, files } }));
     };
 
+    window.__onConversationTranscriptSaved = (payload) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, { detail: { payload } }));
+    };
 
-
-    // Notify ready
     if (window.__notifyReady) window.__notifyReady();
   },
 
@@ -156,10 +175,10 @@ export const ACPBridge = {
     window.addEventListener(EVENT_NAMES.PERMISSION, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.PERMISSION, callback as EventListener);
   },
-  
+
   onLog: (callback: (e: CustomEvent) => void) => {
-      window.addEventListener(EVENT_NAMES.LOG, callback as EventListener);
-      return () => window.removeEventListener(EVENT_NAMES.LOG, callback as EventListener);
+    window.addEventListener(EVENT_NAMES.LOG, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.LOG, callback as EventListener);
   },
 
   requestHistoryList: (projectPath?: string) => {
@@ -170,16 +189,16 @@ export const ACPBridge = {
     window.addEventListener(EVENT_NAMES.HISTORY_LIST, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.HISTORY_LIST, callback as EventListener);
   },
-  
+
   onHistoryDeleteResult: (callback: (e: CustomEvent<HistoryDeleteResultEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.HISTORY_DELETE_RESULT, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.HISTORY_DELETE_RESULT, callback as EventListener);
   },
-  
+
   loadHistoryConversation: (conversationId: string, projectPath: string, historyConversationId: string) => {
     window.__loadHistoryConversation?.(conversationId, projectPath, historyConversationId);
   },
-  
+
   deleteHistoryConversations: (projectPath: string, conversationIds: string[]) => {
     window.__deleteHistoryConversations?.({ projectPath, conversationIds });
   },
@@ -196,6 +215,34 @@ export const ACPBridge = {
     window.__continueConversationWithSession?.(payload);
   },
 
+  saveConversationTranscript: (conversationId: string, text: string): Promise<ConversationTranscriptSavedPayload> => {
+    return new Promise((resolve, reject) => {
+      if (typeof window.__saveConversationTranscript !== 'function') {
+        reject(new Error('Transcript persistence bridge is not available.'));
+        return;
+      }
+
+      const requestId = nextTranscriptRequestId();
+      const cleanup = ACPBridge.onConversationTranscriptSaved((e) => {
+        const payload = e.detail.payload;
+        if (payload.requestId !== requestId) return;
+        cleanup();
+        if (payload.success && payload.filePath) {
+          resolve(payload);
+          return;
+        }
+        reject(new Error(payload.error || 'Failed to persist transcript.'));
+      });
+
+      try {
+        window.__saveConversationTranscript(JSON.stringify({ requestId, conversationId, text }));
+      } catch (error) {
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  },
+
   openAgentCli: (adapterId: string) => {
     window.__openAgentCli?.(adapterId);
   },
@@ -203,7 +250,6 @@ export const ACPBridge = {
   openHistoryConversationCli: (projectPath: string, conversationId: string) => {
     window.__openHistoryConversationCli?.({ projectPath, conversationId });
   },
-
 
   onUndoResult: (callback: (e: CustomEvent<UndoResultEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.UNDO_RESULT, callback as EventListener);
@@ -228,5 +274,10 @@ export const ACPBridge = {
   onAttachmentsAdded: (callback: (e: CustomEvent<{ chatId: string; files: ChatAttachment[] }>) => void) => {
     window.addEventListener(EVENT_NAMES.ATTACHMENTS_ADDED, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.ATTACHMENTS_ADDED, callback as EventListener);
-  }
+  },
+
+  onConversationTranscriptSaved: (callback: (e: CustomEvent<ConversationTranscriptSavedEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, callback as EventListener);
+  },
 };

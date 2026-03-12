@@ -114,6 +114,7 @@ private data class HistoryConversationIndexEntry(
     val id: String,
     val title: String = "",
     val promptCount: Int? = null,
+    val transcriptPath: String? = null,
     val sessions: List<HistorySessionIndexEntry> = emptyList()
 )
 
@@ -265,6 +266,10 @@ object UnifiedHistoryService {
 
     private fun conversationDataFile(projectPath: String, conversationId: String): File {
         return File(ensureProjectConversationsDir(projectPath), "$conversationId.json")
+    }
+
+    private fun conversationTranscriptFile(projectPath: String, conversationId: String): File {
+        return File(ensureProjectConversationsDir(projectPath), "$conversationId.transcript.txt")
     }
 
     private fun ensureProjectIndexFile(projectPath: String): File {
@@ -427,6 +432,7 @@ object UnifiedHistoryService {
                 else -> "Untitled Session"
             },
             promptCount = mergePromptCounts(mergedConversation?.promptCount, promptCount),
+            transcriptPath = mergedConversation?.transcriptPath,
             sessions = updatedSessions
         )
 
@@ -459,6 +465,38 @@ object UnifiedHistoryService {
         val file = conversationDataFile(cleanProjectPath, cleanConversationId)
         writeConversationData(file, data)
         return true
+    }
+
+    fun saveConversationTranscript(projectPath: String?, conversationId: String, transcriptText: String): String? {
+        val cleanProjectPath = canonicalProjectPath(projectPath)
+        val cleanConversationId = conversationId.trim()
+        val normalizedTranscript = transcriptText.trim()
+        if (cleanProjectPath.isBlank() || cleanConversationId.isBlank() || normalizedTranscript.isBlank()) return null
+
+        val transcriptFile = conversationTranscriptFile(cleanProjectPath, cleanConversationId)
+        transcriptFile.writeText(normalizedTranscript)
+
+        val indexFile = ensureProjectIndexFile(cleanProjectPath)
+        val conversations = readProjectIndex(indexFile).toMutableList()
+        val sameConversationIndices = conversations.mapIndexedNotNull { index, conversation ->
+            index.takeIf { conversation.id == cleanConversationId }
+        }
+        val insertIndex = sameConversationIndices.firstOrNull() ?: conversations.size
+
+        var mergedConversation: HistoryConversationIndexEntry? = null
+        sameConversationIndices.forEach { index ->
+            val current = conversations[index]
+            mergedConversation = if (mergedConversation == null) current else mergeIndexConversations(mergedConversation!!, current)
+        }
+
+        val updatedConversation = (mergedConversation ?: HistoryConversationIndexEntry(id = cleanConversationId)).copy(
+            transcriptPath = transcriptFile.absolutePath
+        )
+
+        sameConversationIndices.asReversed().forEach { index -> conversations.removeAt(index) }
+        conversations.add(insertIndex.coerceAtMost(conversations.size), updatedConversation)
+        writeProjectIndex(indexFile, conversations)
+        return transcriptFile.absolutePath
     }
 
     fun appendConversationPrompt(
@@ -514,6 +552,12 @@ object UnifiedHistoryService {
         val cleanConversationId = conversationId?.trim().orEmpty()
         if (cleanProjectPath.isBlank() || cleanConversationId.isBlank()) return false
         return deleteFileIfExists(conversationDataFile(cleanProjectPath, cleanConversationId))
+    }
+
+    private fun deleteConversationTranscript(projectPath: String, conversation: HistoryConversationIndexEntry): Boolean {
+        val transcriptPath = conversation.transcriptPath?.takeIf { it.isNotBlank() }
+        val transcriptFile = if (transcriptPath != null) File(transcriptPath) else conversationTranscriptFile(projectPath, conversation.id)
+        return deleteFileIfExists(transcriptFile)
     }
 
     private fun mergeConversationReplayFiles(
@@ -668,6 +712,11 @@ object UnifiedHistoryService {
                 else -> ""
             },
             promptCount = mergePromptCounts(left.promptCount, right.promptCount),
+            transcriptPath = when {
+                !left.transcriptPath.isNullOrBlank() -> left.transcriptPath
+                !right.transcriptPath.isNullOrBlank() -> right.transcriptPath
+                else -> null
+            },
             sessions = mergedSessionsByKey.values.toList()
         )
     }
@@ -1027,6 +1076,7 @@ object UnifiedHistoryService {
                 )
             } else {
                 deleteConversationReplay(cleanProjectPath, conversation.id)
+                deleteConversationTranscript(cleanProjectPath, conversation)
             }
         }
 
@@ -1063,6 +1113,11 @@ object UnifiedHistoryService {
         updated
     }
 }
+
+
+
+
+
 
 
 

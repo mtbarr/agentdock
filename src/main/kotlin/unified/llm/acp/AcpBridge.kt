@@ -63,6 +63,22 @@ private data class AdapterPayload(
     val cliAvailable: Boolean
 )
 
+@Serializable
+private data class SaveConversationTranscriptPayload(
+    val requestId: String,
+    val conversationId: String,
+    val text: String
+)
+
+@Serializable
+private data class SaveConversationTranscriptResultPayload(
+    val requestId: String,
+    val conversationId: String,
+    val success: Boolean,
+    val filePath: String? = null,
+    val error: String? = null
+)
+
 private val adapterJson = Json { encodeDefaults = true }
 
 /**
@@ -146,6 +162,7 @@ class AcpBridge(
     private var attachFileQuery: JBCefJSQuery? = null
     private var updateSessionMetadataQuery: JBCefJSQuery? = null
     private var continueConversationQuery: JBCefJSQuery? = null
+    private var saveConversationTranscriptQuery: JBCefJSQuery? = null
     private var openAgentCliQuery: JBCefJSQuery? = null
     private var openHistoryConversationCliQuery: JBCefJSQuery? = null
 
@@ -943,6 +960,46 @@ class AcpBridge(
             }
         }
 
+        saveConversationTranscriptQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                scope.launch(Dispatchers.IO) {
+                    val result = runCatching {
+                        val request = Json.decodeFromString<SaveConversationTranscriptPayload>(payload ?: "{}")
+                        val filePath = UnifiedHistoryService.saveConversationTranscript(
+                            projectPath = service.project.basePath,
+                            conversationId = request.conversationId,
+                            transcriptText = request.text
+                        )
+                        if (filePath.isNullOrBlank()) {
+                            SaveConversationTranscriptResultPayload(
+                                requestId = request.requestId,
+                                conversationId = request.conversationId,
+                                success = false,
+                                error = "Failed to persist transcript file."
+                            )
+                        } else {
+                            SaveConversationTranscriptResultPayload(
+                                requestId = request.requestId,
+                                conversationId = request.conversationId,
+                                success = true,
+                                filePath = filePath
+                            )
+                        }
+                    }.getOrElse { error ->
+                        val request = runCatching { Json.decodeFromString<SaveConversationTranscriptPayload>(payload ?: "{}") }.getOrNull()
+                        SaveConversationTranscriptResultPayload(
+                            requestId = request?.requestId.orEmpty(),
+                            conversationId = request?.conversationId.orEmpty(),
+                            success = false,
+                            error = error.message ?: error.toString()
+                        )
+                    }
+                    pushConversationTranscriptSaved(result)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
     }
 
     /**
@@ -979,6 +1036,7 @@ class AcpBridge(
         val attachFileInject = attachFileQuery?.inject("chatId") ?: ""
         val updateSessionMetadataInject = updateSessionMetadataQuery?.inject("JSON.stringify(payload)") ?: ""
         val continueConversationInject = continueConversationQuery?.inject("JSON.stringify(payload)") ?: ""
+        val saveConversationTranscriptInject = saveConversationTranscriptQuery?.inject("payload") ?: ""
 
         val script = """
             (function() {
@@ -1072,6 +1130,9 @@ class AcpBridge(
                 window.__continueConversationWithSession = function(payload) {
                     try { $continueConversationInject } catch (e) { }
                 };
+                window.__saveConversationTranscript = function(payload) {
+                    try { $saveConversationTranscriptInject } catch (e) { }
+                };
 
                 // Try prime
                 try { window.__requestAdapters(); } catch (e) {}
@@ -1103,6 +1164,7 @@ class AcpBridge(
             window.__onPlan = window.__onPlan || function(chatId, payload) {};
             window.__onUndoResult = window.__onUndoResult || function(chatId, result) {};
             window.__onChangesState = window.__onChangesState || function(chatId, state) {};
+            window.__onConversationTranscriptSaved = window.__onConversationTranscriptSaved || function(payload) {};
 
             window.__notifyReady = function() {
                 try { $readyInject } catch (e) { }
@@ -1117,6 +1179,7 @@ class AcpBridge(
             window.__attachFile = window.__attachFile || function(chatId) {};
             window.__updateSessionMetadata = window.__updateSessionMetadata || function(payload) {};
             window.__continueConversationWithSession = window.__continueConversationWithSession || function(payload) {};
+            window.__saveConversationTranscript = window.__saveConversationTranscript || function(payload) {};
             window.__loadHistoryConversation = window.__loadHistoryConversation || function(chatId, projectPath, conversationId) {};
         """.trimIndent()
         cefBrowser.executeJavaScript(script, cefBrowser.url, 0)
@@ -1602,6 +1665,17 @@ class AcpBridge(
         runOnEdt {
             browser.cefBrowser.executeJavaScript(
                 "if(window.__onUndoResult) window.__onUndoResult($chatIdLiteral, {success:$successStr,message:$messageLiteral});",
+                browser.cefBrowser.url, 0
+            )
+        }
+    }
+
+    private fun pushConversationTranscriptSaved(result: SaveConversationTranscriptResultPayload) {
+        val payloadJson = adapterJson.encodeToString(result)
+        val escaped = payloadJson.escapeForJsString()
+        runOnEdt {
+            browser.cefBrowser.executeJavaScript(
+                "if(window.__onConversationTranscriptSaved) window.__onConversationTranscriptSaved(JSON.parse('$escaped'));",
                 browser.cefBrowser.url, 0
             )
         }
@@ -2281,3 +2355,8 @@ class AcpBridge(
         }
     }
 }
+
+
+
+
+

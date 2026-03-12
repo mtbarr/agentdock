@@ -111,6 +111,9 @@ function App() {
   }, []);
 
   const runnableAgents = useMemo(() => availableAgents.filter(isAgentRunnable), [availableAgents]);
+  const pendingAgentName = pendingAgentSwitch
+    ? (availableAgents.find((agent) => agent.id === pendingAgentSwitch.targetAgentId)?.name || pendingAgentSwitch.targetAgentId)
+    : 'the selected agent';
 
   const handleNewTab = useCallback((agentId?: string) => {
     const resolvedAgentId = runnableAgents.some(agent => agent.id === agentId)
@@ -474,11 +477,11 @@ function App() {
 
       <ConfirmationModal
         isOpen={pendingAgentSwitch !== null}
-        title="Switch Agent"
-        message="Choose whether to continue this conversation in the current tab or start a new conversation with the new agent."
-        confirmLabel="Continue Here"
+        title={`Switch to ${pendingAgentName}`}
+        message={`Click "Continue" to pass the current conversation context to ${pendingAgentName}.` + "\n" + `Click "Start New" to begin a new separate conversation.`}
+        confirmLabel="Continue"
         confirmVariant="primary"
-        secondaryActionLabel="New Conversation"
+        secondaryActionLabel="Start New"
         onSecondaryAction={handleContinueInNewTab}
         showCancelButton={false}
         onConfirm={handleContinueInCurrentConversation}
@@ -489,5 +492,15 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
+
+
 
 
