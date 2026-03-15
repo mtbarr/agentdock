@@ -6,6 +6,7 @@ import ChatSessionView from './components/chat/ChatSessionView';
 import HistoryPanel from './components/HistoryPanel';
 import { AgentManagementView } from './components/AgentManagement';
 import { DesignSystemView } from './components/DesignSystem';
+import { McpServersView } from './components/McpServersView';
 import ConfirmationModal from './components/ConfirmationModal';
 
 let tabCounter = 0;
@@ -395,6 +396,7 @@ function App() {
         onOpenHistory={() => openSingletonTab('history', 'History')}
         onOpenManagement={() => openSingletonTab('management', 'Service Providers')}
         onOpenDesignSystem={() => openSingletonTab('design', 'Design System')}
+        onOpenMcp={() => openSingletonTab('mcp', 'MCP Servers')}
       />
 
       <div className="flex-1 relative min-h-0">
@@ -428,6 +430,7 @@ function App() {
               {tab.type === 'history' && (
                 <HistoryPanel availableAgents={availableAgents} onOpenSession={handleOpenHistory} />
               )}
+              {tab.type === 'mcp' && <McpServersView />}
             </div>
           );
         })}

@@ -12,6 +12,7 @@ import {
   ContinueConversationPayload,
   ConversationTranscriptSavedPayload,
 } from '../types/chat';
+import { McpServerConfig } from '../types/mcp';
 
 export interface ContentChunkEvent { chunk: ContentChunk; }
 export interface StatusEvent { chatId: string; status: string; }
@@ -26,8 +27,11 @@ export interface ChangesStateEvent { chatId: string; state: ChangesState; }
 export interface ToolCallBridgeEvent { chatId: string; payload: ToolCallEvent; }
 export interface ConversationTranscriptSavedEvent { payload: ConversationTranscriptSavedPayload; }
 
+export interface McpServersEvent { servers: McpServerConfig[]; }
+
 const EVENT_NAMES = {
   CONTENT_CHUNK: 'acp-content-chunk',
+  MCP_SERVERS: 'mcp-servers',
   STATUS: 'acp-status',
   SESSION_ID: 'acp-session-id',
   MODE: 'acp-mode',
@@ -155,6 +159,10 @@ export const ACPBridge = {
 
     window.__onConversationTranscriptSaved = (payload) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, { detail: { payload } }));
+    };
+
+    window.__onMcpServers = (servers) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.MCP_SERVERS, { detail: { servers } }));
     };
 
     if (window.__notifyReady) window.__notifyReady();
@@ -306,5 +314,18 @@ export const ACPBridge = {
   onConversationTranscriptSaved: (callback: (e: CustomEvent<ConversationTranscriptSavedEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, callback as EventListener);
+  },
+
+  loadMcpServers: () => {
+    window.__loadMcpServers?.();
+  },
+
+  saveMcpServers: (servers: McpServerConfig[]) => {
+    window.__saveMcpServers?.(JSON.stringify(servers));
+  },
+
+  onMcpServers: (callback: (e: CustomEvent<McpServersEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.MCP_SERVERS, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.MCP_SERVERS, callback as EventListener);
   },
 };

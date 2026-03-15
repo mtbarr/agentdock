@@ -15,6 +15,40 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import unified.llm.history.SessionMeta
+import unified.llm.mcp.McpConfigStore
+import unified.llm.mcp.McpServerConfig
+
+private fun buildMcpServers(): List<McpServer> =
+    McpConfigStore.loadEnabled().mapNotNull { it.toSdkMcpServer() }
+
+private fun McpServerConfig.toSdkMcpServer(): McpServer? = when (transport) {
+    "stdio" -> {
+        val cmd = command?.takeIf { it.isNotBlank() } ?: return null
+        McpServer.Stdio(
+            name = name,
+            command = cmd,
+            args = args ?: emptyList(),
+            env = env?.map { EnvVariable(it.name, it.value) } ?: emptyList()
+        )
+    }
+    "http" -> {
+        val u = url?.takeIf { it.isNotBlank() } ?: return null
+        McpServer.Http(
+            name = name,
+            url = u,
+            headers = headers?.map { HttpHeader(it.name, it.value) } ?: emptyList()
+        )
+    }
+    "sse" -> {
+        val u = url?.takeIf { it.isNotBlank() } ?: return null
+        McpServer.Sse(
+            name = name,
+            url = u,
+            headers = headers?.map { HttpHeader(it.name, it.value) } ?: emptyList()
+        )
+    }
+    else -> null
+}
 
 @Suppress("OPT_IN_USAGE")
 internal suspend fun AcpClientService.startAgent(
@@ -69,7 +103,7 @@ internal suspend fun AcpClientService.startAgent(
                     }
                 }
 
-                val params = SessionCreationParameters(cwd = cwd, mcpServers = emptyList())
+                val params = SessionCreationParameters(cwd = cwd, mcpServers = buildMcpServers())
                 val sess = if (resumeSessionId != null) {
                     try {
                         client.resumeSession(SessionId(resumeSessionId), params, factory)
@@ -244,7 +278,7 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
         }
     }
 
-    val params = SessionCreationParameters(cwd = cwd, mcpServers = emptyList())
+    val params = SessionCreationParameters(cwd = cwd, mcpServers = buildMcpServers())
     val sess = client.loadSession(SessionId(sessionId), params, factory)
 
     context.sessionIdRef.set(sess.sessionId.value)

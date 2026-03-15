@@ -12,6 +12,7 @@ import java.io.File
 
 internal fun AcpBridge.installServiceCallbacks() {
     service.setOnLogEntry { pushLogEntry(it) }
+    service.setOnPermissionRequest { pushPermissionRequest(it) }
     service.setOnAdapterInitializationStateChanged { _, _, _ ->
         scope.launch(Dispatchers.IO) { pushAdapters() }
     }

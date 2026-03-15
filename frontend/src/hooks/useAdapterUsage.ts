@@ -25,12 +25,13 @@ export function useAdapterUsage(adapterId: string, ttlMs: number = 15000) {
       const lastFetch = lastFetchTime[adapterId] || 0;
       if (!cachedData[adapterId] || now - lastFetch > ttlMs) {
         lastFetchTime[adapterId] = now;
+        console.log('Fetch usage: ' + adapterId);
         ACPBridge.fetchAdapterUsage(adapterId);
       }
     };
 
     tryFetch();
-    const interval = setInterval(tryFetch, 80000); // 80 seconds background refresh
+    const interval = setInterval(tryFetch, 240000); // 240 seconds background refresh
 
     return () => {
       dispose();

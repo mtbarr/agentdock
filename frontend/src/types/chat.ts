@@ -140,7 +140,7 @@ export interface TabUiFlags {
   warning: boolean;
 }
 
-export type TabType = 'chat' | 'management' | 'design' | 'history';
+export type TabType = 'chat' | 'management' | 'design' | 'history' | 'mcp';
 
 export interface ChatTab {
   id: string;
@@ -334,6 +334,10 @@ declare global {
 
     __onUndoResult?: (chatId: string, result: UndoResultPayload) => void;
     __onChangesState?: (chatId: string, state: ChangesState) => void;
+
+    __onMcpServers?: (servers: unknown) => void;
+    __loadMcpServers?: () => void;
+    __saveMcpServers?: (json: string) => void;
   }
 }
 
