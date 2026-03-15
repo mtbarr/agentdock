@@ -24,9 +24,12 @@ import { ChatInputActionsContext } from './input/ChatInputActionsContext';
 import { ImageNode, $createImageNode } from './input/ImageNode';
 import { CodeReferenceNode } from './input/CodeReferenceNode';
 import { AttachmentsSyncPlugin, PasteLogPlugin, KeyboardPlugin, AutoHeightPlugin, ClickToFocusPlugin, ClearEditorPlugin, InlineAttachmentBackspacePlugin, ExternalCodeReferencePlugin } from './input/ChatInputPlugins';
+import { ContextUsageIndicator } from './shared/ContextUsageIndicator';
 
 interface ChatInputProps {
   conversationId: string;
+  contextTokensUsed?: number;
+  contextWindowSize?: number;
   inputValue: string;
   onInputChange: (val: string) => void;
   onSend: () => void;
@@ -57,6 +60,8 @@ interface ChatInputProps {
 
 export default function ChatInput({
   conversationId,
+  contextTokensUsed,
+  contextWindowSize,
   inputValue,
   onInputChange,
   onSend,
@@ -246,6 +251,8 @@ export default function ChatInput({
               {selectedAgentId && (
                 <ChatUsageIndicator agentId={selectedAgentId} modelId={selectedModelId} />
               )}
+              
+              <ContextUsageIndicator used={contextTokensUsed} size={contextWindowSize} />
             </div>
 
             <div className="flex items-center gap-2">

@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef, useEffect } from 'react';
+import { useCallback, useState, useRef, useEffect, useMemo } from 'react';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useFileChanges } from '../../hooks/useFileChanges';
 import { AgentOption, FileChangeSummary, HistorySessionMeta, PendingHandoffContext } from '../../types/chat';
@@ -75,6 +75,19 @@ export default function ChatSessionView({
     handleKeepFile,
     handleKeepAll,
   } = useFileChanges(conversationId, acpSessionId, adapterName);
+
+  const lastAssistantMsgWithContext = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === 'assistant' && (msg.contextTokensUsed !== undefined || msg.contextWindowSize !== undefined)) {
+        if (!selectedAgentId || msg.agentId === selectedAgentId) {
+          return msg;
+        }
+        return null; // The latest context is from a different agent, so wait for the current agent context.
+      }
+    }
+    return null;
+  }, [messages, selectedAgentId]);
 
   const handleShowDiff = useCallback((fc: FileChangeSummary) => {
     if (typeof window.__showDiff === 'function') {
@@ -260,6 +273,8 @@ export default function ChatSessionView({
         <div style={{ height: `${inputHeight}px` }} className="flex flex-col">
           <ChatInput
             conversationId={conversationId}
+            contextTokensUsed={lastAssistantMsgWithContext?.contextTokensUsed}
+            contextWindowSize={lastAssistantMsgWithContext?.contextWindowSize}
             inputValue={inputValue}
             onInputChange={setInputValue}
             onSend={handleSend}
