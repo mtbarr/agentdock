@@ -32,6 +32,7 @@ const EVENT_NAMES = {
   SESSION_ID: 'acp-session-id',
   MODE: 'acp-mode',
   ADAPTERS: 'acp-adapters',
+  USAGE_DATA: 'acp-usage-data',
   PERMISSION: 'acp-permission',
   LOG: 'acp-log',
   HISTORY_LIST: 'history-list',
@@ -110,12 +111,25 @@ export const ACPBridge = {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.ADAPTERS, { detail: { adapters } }));
     };
 
+    window.__onUsageData = (adapterId, json) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.USAGE_DATA, { detail: { adapterId, json } }));
+    };
+
     window.__onPermissionRequest = (request) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.PERMISSION, { detail: { request } }));
     };
 
     window.__onAcpLog = (payload) => {
-      console.log('[ACP]', payload.direction, JSON.parse(payload.json));
+      let parsed: unknown = payload.json;
+      if (payload.category === 'PROTOCOL') {
+        try {
+          parsed = JSON.parse(payload.json);
+        } catch (_) {}
+        console.log('[ACP JSON]', payload.direction, parsed);
+      } else if (payload.category === 'INTERNAL') {
+        console.log('[ACP INTERNAL]', payload.json);
+      }
+      
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.LOG, { detail: payload }));
     };
 
@@ -174,6 +188,19 @@ export const ACPBridge = {
   onPermissionRequest: (callback: (e: CustomEvent<PermissionRequestEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.PERMISSION, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.PERMISSION, callback as EventListener);
+  },
+
+  requestAdapters: () => {
+    window.__requestAdapters?.();
+  },
+
+  fetchAdapterUsage: (adapterId: string) => {
+    window.__fetchAdapterUsage?.(adapterId);
+  },
+
+  onUsageData: (callback: (e: CustomEvent<{ adapterId: string; json: string }>) => void) => {
+    window.addEventListener(EVENT_NAMES.USAGE_DATA, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.USAGE_DATA, callback as EventListener);
   },
 
   onLog: (callback: (e: CustomEvent) => void) => {

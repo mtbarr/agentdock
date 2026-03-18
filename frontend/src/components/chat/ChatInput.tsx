@@ -17,6 +17,7 @@ import { ChatAttachment, DropdownOption } from '../../types/chat';
 import AttachmentBar from './input/AttachmentBar';
 import { Tooltip } from './shared/Tooltip';
 import { openFile } from '../../utils/openFile';
+import { ChatUsageIndicator } from '../usage/chat/ChatUsageIndicator';
 
 // Sub-components & Plugins
 import { ChatInputActionsContext } from './input/ChatInputActionsContext';
@@ -240,6 +241,10 @@ export default function ChatInput({
                   disabled={isSending || !hasSelectedAgent}
                   onChange={onModeChange}
                 />
+              )}
+              
+              {selectedAgentId && (
+                <ChatUsageIndicator agentId={selectedAgentId} modelId={selectedModelId} />
               )}
             </div>
 

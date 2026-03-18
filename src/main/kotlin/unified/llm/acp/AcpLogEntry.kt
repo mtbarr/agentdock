@@ -6,7 +6,9 @@ package unified.llm.acp
 data class AcpLogEntry(
     val direction: Direction,
     val json: String,
+    val category: Category = Category.PROTOCOL,
     val timestampMillis: Long = System.currentTimeMillis()
 ) {
     enum class Direction { SENT, RECEIVED }
+    enum class Category { PROTOCOL, INTERNAL, STDERR }
 }

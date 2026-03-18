@@ -3,21 +3,26 @@ package unified.llm.acp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 object AcpAuthService {
+    private const val LOGOUT_COMMAND_TIMEOUT_SECONDS = 15L
+    private const val STATUS_COMMAND_TIMEOUT_SECONDS = 15L
+    private const val LOGIN_COMMAND_TIMEOUT_MS = 60_000L
+    const val INTERACTIVE_LOGIN_TIMEOUT_MS = 300_000L
 
     private val activeLoginCounts = ConcurrentHashMap<String, Int>()
+    private val statusJson = Json { ignoreUnknownKeys = true }
 
-    private data class CachedAuthStatus(val status: AuthStatus, val timestamp: Long)
-    private val authStatusCache = ConcurrentHashMap<String, CachedAuthStatus>()
-    private const val AUTH_CACHE_TTL_MS = 5_000L
-
-    fun invalidateAuthCache(adapterName: String) {
-        authStatusCache.remove(adapterName)
-    }
+    data class AuthStatus(
+        val authenticated: Boolean
+    )
 
     fun incrementActive(adapterId: String) {
         activeLoginCounts.compute(adapterId) { _, count -> (count ?: 0) + 1 }
@@ -30,75 +35,53 @@ object AcpAuthService {
         }
     }
 
-    data class AuthStatus(
-        val authenticated: Boolean,
-        val authPath: String? = null,
-        val method: String = "none"
-    )
+    fun resetTransientState() {
+        activeLoginCounts.clear()
+    }
 
-    fun isAuthenticating(adapterId: String): Boolean = activeLoginCounts.containsKey(adapterId)
+    fun getLoginMode(adapterName: String): String {
+        return runCatching { AcpAdapterConfig.getAdapterInfo(adapterName).authConfig?.loginMode }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: "background"
+    }
+
+    fun buildLoginCommand(adapterName: String): List<String>? {
+        val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterName) }.getOrNull() ?: return null
+        val authConfig = adapterInfo.authConfig ?: return null
+        if (authConfig.loginArgs.isEmpty()) return null
+        return buildCommand(adapterInfo, authConfig, authConfig.loginArgs)
+    }
 
     fun getAuthStatus(adapterName: String): AuthStatus {
-        val cached = authStatusCache[adapterName]
-        if (cached != null && System.currentTimeMillis() - cached.timestamp < AUTH_CACHE_TTL_MS) {
-            return cached.status
-        }
+        val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterName) }.getOrNull()
+            ?: return AuthStatus(authenticated = false)
+        val authConfig = adapterInfo.authConfig ?: return AuthStatus(authenticated = false)
+        if (authConfig.statusArgs.isEmpty()) return AuthStatus(authenticated = false)
 
-        val result = getAuthStatusUncached(adapterName)
-        authStatusCache[adapterName] = CachedAuthStatus(result, System.currentTimeMillis())
-        return result
-    }
+        return runCatching {
+            val cmd = buildCommand(adapterInfo, authConfig, authConfig.statusArgs).orEmpty()
+            if (cmd.isEmpty()) return@runCatching AuthStatus(authenticated = false)
 
-    private fun getAuthStatusUncached(adapterName: String): AuthStatus {
-        val adapterInfo = try {
-            AcpAdapterConfig.getAdapterInfo(adapterName)
-        } catch (_: Exception) {
-            return AuthStatus(false, method = "error")
-        }
-
-        val authConfig = adapterInfo.authConfig ?: return AuthStatus(false, method = "none")
-
-        if (authConfig.statusArgs.isNotEmpty()) {
-            try {
-                val cmd = buildCommand(adapterInfo, authConfig, authConfig.statusArgs) ?: emptyList()
-                if (cmd.isNotEmpty()) {
-                    val proc = ProcessBuilder(cmd)
-                        .directory(resolveWorkingDir(adapterInfo))
-                        .redirectErrorStream(true)
-                        .start()
-                    val output = proc.inputStream.bufferedReader().use { it.readText() }
-                    val finished = proc.waitFor(15, TimeUnit.SECONDS)
-                    if (!finished) {
-                        proc.destroyForcibly()
-                        return AuthStatus(false, method = "command-timeout")
-                    }
-
-                    val isAuthenticated =
-                        output.contains("\"loggedIn\": true", ignoreCase = true) ||
-                        (output.contains("Logged in", ignoreCase = true) && !output.contains("Not logged in", ignoreCase = true)) ||
-                            output.contains("Authenticated", ignoreCase = true) ||
-                            (output.contains("account", ignoreCase = true) && !output.contains("no account", ignoreCase = true))
-
-                    return AuthStatus(
-                        authenticated = isAuthenticated,
-                        authPath = resolveExistingAuthPath(authConfig),
-                        method = "command"
-                    )
-                }
-            } catch (_: Exception) {
+            val proc = ProcessBuilder(cmd)
+                .directory(resolveWorkingDir(adapterInfo))
+                .redirectErrorStream(true)
+                .start()
+            val output = proc.inputStream.bufferedReader().use { it.readText() }.trim()
+            val finished = proc.waitFor(STATUS_COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            if (!finished) {
+                proc.destroyForcibly()
+                return@runCatching AuthStatus(authenticated = false)
             }
-        }
+            if (proc.exitValue() != 0) return@runCatching AuthStatus(authenticated = false)
 
-        val authPath = authConfig.authPath ?: return AuthStatus(false, method = "none")
-        val resolvedPath = resolvePath(authPath)
-        val file = File(resolvedPath)
-
-        return if (file.exists() && file.isFile) {
-            AuthStatus(true, resolvedPath, "file")
-        } else {
-            AuthStatus(false, resolvedPath, "none")
+            AuthStatus(authenticated = parseAuthenticatedFromStatusOutput(output))
+        }.getOrElse {
+            AuthStatus(authenticated = false)
         }
     }
+
+    fun isAuthenticating(adapterId: String): Boolean = activeLoginCounts.containsKey(adapterId)
 
     suspend fun login(
         adapterName: String,
@@ -119,72 +102,82 @@ object AcpAuthService {
                 .redirectErrorStream(true)
                 .start()
 
-            // Drain stdout/stderr so the process cannot block on a full buffer.
+            val outputBuilder = java.lang.StringBuilder()
             Thread {
                 try {
-                    process.inputStream.bufferedReader().use { it.readText() }
+                    process.inputStream.bufferedReader().useLines { lines ->
+                        lines.forEach { outputBuilder.appendLine(it) }
+                    }
                 } catch (_: Exception) {
                 }
             }.apply { isDaemon = true; name = "acp-login-drain-$adapterName" }.start()
 
             val startTime = System.currentTimeMillis()
             var lastPushTime = 0L
-            while (System.currentTimeMillis() - startTime < 300_000L) {
+            while (System.currentTimeMillis() - startTime < LOGIN_COMMAND_TIMEOUT_MS) {
                 if (System.currentTimeMillis() - lastPushTime > 3000L) {
                     onProgress?.invoke()
                     lastPushTime = System.currentTimeMillis()
                 }
 
                 if (!process.isAlive) {
-                    invalidateAuthCache(adapterName)
-                    return@withContext getAuthStatus(adapterName).authenticated
+                    val exitCode = process.exitValue()
+                    if (exitCode != 0) {
+                        val raw = outputBuilder.toString().trim()
+                        val tail = if (raw.length > 240) raw.takeLast(240) else raw
+                        val details = if (tail.isNotBlank()) ": $tail" else ""
+                        throw Exception("Login command failed (exit $exitCode)$details")
+                    }
+                    return@withContext true
                 }
 
                 delay(1000L)
             }
 
             process.destroyForcibly()
-            invalidateAuthCache(adapterName)
-            getAuthStatus(adapterName).authenticated
-        } catch (_: Exception) {
+            throw Exception("Login timed out")
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.isNotBlank() && msg != "null") throw Exception("Login failed: $msg")
             false
-        } finally {
-            invalidateAuthCache(adapterName)
         }
     }
 
     suspend fun logout(adapterName: String): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val adapterInfo = AcpAdapterConfig.getAdapterInfo(adapterName)
-            val authConfig = adapterInfo.authConfig ?: return@withContext false
+        val adapterInfo = AcpAdapterConfig.getAdapterInfo(adapterName)
+        val authConfig = adapterInfo.authConfig ?: return@withContext false
 
-            if (authConfig.logoutArgs.isNotEmpty()) {
-                val cmd = buildCommand(adapterInfo, authConfig, authConfig.logoutArgs)
-                if (!cmd.isNullOrEmpty()) {
-                    try {
-                        val proc = ProcessBuilder(cmd)
-                            .directory(resolveWorkingDir(adapterInfo))
-                            .redirectErrorStream(true)
-                            .start()
-                        proc.inputStream.bufferedReader().use { it.readText() }
-                        proc.waitFor(15, TimeUnit.SECONDS)
-                    } catch (_: Exception) {
+        if (authConfig.logoutArgs.isNotEmpty()) {
+            val cmd = buildCommand(adapterInfo, authConfig, authConfig.logoutArgs)
+            if (!cmd.isNullOrEmpty()) {
+                try {
+                    val proc = ProcessBuilder(cmd)
+                        .directory(resolveWorkingDir(adapterInfo))
+                        .redirectErrorStream(true)
+                        .start()
+                    val drainer = Thread {
+                        try {
+                            proc.inputStream.bufferedReader().useLines { lines ->
+                                lines.forEach { }
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }.apply {
+                        isDaemon = true
+                        name = "acp-auth-logout-drain-$adapterName"
                     }
+                    drainer.start()
+                    val finished = proc.waitFor(LOGOUT_COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    if (!finished) {
+                        proc.destroyForcibly()
+                    }
+                    drainer.join(1000L)
+                } catch (_: Exception) {
                 }
             }
-
-            val authPath = authConfig.authPath
-            if (authPath != null) {
-                val resolved = resolvePath(authPath)
-                val file = File(resolved)
-                if (file.exists()) {
-                    file.delete()
-                }
-            }
-            true
-        } finally {
-            invalidateAuthCache(adapterName)
         }
+
+        true
     }
 
     private fun buildCommand(
@@ -280,30 +273,22 @@ object AcpAuthService {
         return if (System.getProperty("os.name").lowercase().contains("win")) "node.exe" else "node"
     }
 
-    private fun resolvePath(path: String): String {
-        var result = path
-        if (result.startsWith("~")) {
-            val home = System.getProperty("user.home")
-            result = result.replaceFirst("~", home)
+    private fun parseAuthenticatedFromStatusOutput(output: String): Boolean {
+        if (output.isBlank()) return false
+
+        val parsedJson = runCatching { statusJson.parseToJsonElement(output).jsonObject }.getOrNull()
+        if (parsedJson != null) {
+            val loggedIn = parsedJson["loggedIn"]?.jsonPrimitive?.booleanOrNull
+            if (loggedIn != null) return loggedIn
+            val authenticated = parsedJson["authenticated"]?.jsonPrimitive?.booleanOrNull
+            if (authenticated != null) return authenticated
         }
-        val envMap = System.getenv()
-        if (System.getProperty("os.name").lowercase().contains("win")) {
-            val regex = "%([^%]+)%".toRegex()
-            result = regex.replace(result) { match ->
-                envMap[match.groupValues[1]] ?: match.value
-            }
-        } else {
-            val regex = "\\\$([a-zA-Z_][a-zA-Z0-9_]*)".toRegex()
-            result = regex.replace(result) { match ->
-                envMap[match.groupValues[1]] ?: match.value
-            }
-        }
-        return File(result).absolutePath
+
+        val lower = output.lowercase()
+        if (lower.contains("not logged in")) return false
+        if (lower.contains("logged in")) return true
+        if (lower.contains("authenticated")) return true
+        return false
     }
 
-    private fun resolveExistingAuthPath(authConfig: AcpAdapterConfig.AuthConfig): String? {
-        val configured = authConfig.authPath ?: return null
-        val resolved = resolvePath(configured)
-        return resolved.takeIf { File(it).isFile }
-    }
 }

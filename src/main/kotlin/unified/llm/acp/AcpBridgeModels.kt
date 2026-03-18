@@ -1,0 +1,101 @@
+package unified.llm.acp
+
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import unified.llm.history.ConversationAssistantMetadata
+
+@Serializable
+internal data class AdapterModelPayload(
+    val modelId: String,
+    val name: String,
+    val description: String
+)
+
+@Serializable
+internal data class AdapterModePayload(
+    val id: String,
+    val name: String,
+    val description: String
+)
+
+@Serializable
+internal data class AdapterPayload(
+    val id: String,
+    val name: String,
+    val iconPath: String,
+    val currentModelId: String,
+    val availableModels: List<AdapterModelPayload>,
+    val currentModeId: String,
+    val availableModes: List<AdapterModePayload>,
+    val downloaded: Boolean,
+    val downloadPath: String,
+    val hasAuthentication: Boolean,
+    val authAuthenticated: Boolean,
+    val authLoading: Boolean,
+    val authError: String,
+    val authenticating: Boolean,
+    val authUiMode: String,
+    val initializing: Boolean,
+    val initializationError: String,
+    val ready: Boolean,
+    val downloading: Boolean,
+    val downloadStatus: String,
+    val disabledModels: List<String>,
+    val cliAvailable: Boolean,
+    val usageStrategy: String? = null
+)
+
+@Serializable
+internal data class SaveConversationTranscriptPayload(
+    val requestId: String,
+    val conversationId: String,
+    val text: String
+)
+
+@Serializable
+internal data class SaveConversationTranscriptResultPayload(
+    val requestId: String,
+    val conversationId: String,
+    val success: Boolean,
+    val filePath: String? = null,
+    val error: String? = null
+)
+
+internal val adapterJson = Json { encodeDefaults = true }
+
+internal data class LivePromptCapture(
+    val captureId: String,
+    val projectPath: String,
+    val conversationId: String,
+    val sessionId: String,
+    val adapterName: String,
+    val blocks: List<JsonObject>,
+    val startedAtMillis: Long,
+    val assistantMeta: ConversationAssistantMetadata?,
+    var contextTokensUsed: Long? = null,
+    var contextWindowSize: Long? = null,
+    val events: MutableList<JsonObject> = mutableListOf()
+)
+
+internal data class ReplaySessionCapture(
+    val sessionId: String,
+    val adapterName: String,
+    val prompts: MutableList<ReplayPromptCapture> = mutableListOf()
+)
+
+internal data class ReplayPromptCapture(
+    val blocks: MutableList<JsonObject> = mutableListOf(),
+    val events: MutableList<JsonObject> = mutableListOf(),
+    var assistantMeta: ConversationAssistantMetadata? = null
+)
+
+internal data class HistoryReplayCapture(
+    val projectPath: String,
+    val conversationId: String,
+    var currentSessionId: String? = null,
+    var currentAdapterName: String? = null,
+    var currentModelId: String? = null,
+    var currentModeId: String? = null,
+    val sessions: MutableList<ReplaySessionCapture> = mutableListOf()
+)

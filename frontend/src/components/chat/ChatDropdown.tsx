@@ -33,6 +33,21 @@ export default function ChatDropdown({
     if (!path) return null;
     return <img src={path} className={className} alt="" />;
   };
+
+  const renderOptionText = (option: DropdownOption) => {
+    if (!option.description) {
+      return <span className="flex-1 truncate">{option.label}</span>;
+    }
+
+    return (
+      <span className="flex-1 min-w-0">
+        <span className="block truncate">{option.label}</span>
+        <span className="mt-0.5 block truncate text-[11px] leading-[1.2] opacity-70">
+          {option.description}
+        </span>
+      </span>
+    );
+  };
   
   // Clean label showing Agent Icon and Model
   const selectedLabel = selectedSub ? (
@@ -119,7 +134,7 @@ export default function ChatDropdown({
                     )}
                   </span>
                   {renderIcon(option.iconPath, "w-4 h-4 mr-2 flex-shrink-0")}
-                  <span className="flex-1 truncate">{option.label}</span>
+                  {renderOptionText(option)}
                   {option.subOptions && (
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-40">
                       <polyline points="9 18 15 12 9 6"></polyline>
@@ -155,8 +170,8 @@ export default function ChatDropdown({
                             </svg>
                           )}
                         </span>
-                        <span className="truncate">{sub.label}</span>
-                      </button>
+                         {renderOptionText(sub)}
+                       </button>
                     ))}
                   </div>
                 )}

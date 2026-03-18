@@ -1,5 +1,6 @@
 export interface AcpLogEntryPayload {
   direction: 'SENT' | 'RECEIVED';
+  category: 'PROTOCOL' | 'INTERNAL' | 'STDERR';
   json: string;
   timestamp: number;
 }
@@ -79,35 +80,43 @@ export interface Message {
 export interface ModelOption {
   modelId: string;
   name: string;
+  description?: string;
 }
 
 export interface ModeOption {
   id: string;
   name: string;
+  description?: string;
 }
 
 export interface AgentOption {
   id: string;
   name: string;
   iconPath?: string;
-  defaultModelId?: string;
-  models?: ModelOption[];
-  defaultModeId?: string;
-  modes?: ModeOption[];
+  currentModelId?: string;
+  availableModels?: ModelOption[];
+  currentModeId?: string;
+  availableModes?: ModeOption[];
   downloaded: boolean;
-  enabled: boolean;
   downloadPath?: string;
   downloading?: boolean;
   downloadStatus?: string;
+  disabledModels?: string[];
   hasAuthentication?: boolean;
   authAuthenticated?: boolean;
-  authPath?: string;
+  authLoading?: boolean;
+  authError?: string;
   authenticating?: boolean;
+  authUiMode?: 'login_logout' | 'manage_terminal';
+  initializing?: boolean;
+  initializationError?: string;
+  ready?: boolean;
   cliAvailable?: boolean;
+  usageStrategy?: string;
 }
 
 export function isAgentRunnable(agent: AgentOption): boolean {
-  return agent.downloaded && agent.enabled && (!agent.hasAuthentication || !!agent.authAuthenticated);
+  return agent.downloaded;
 }
 
 export interface PermissionRequest {
@@ -120,6 +129,7 @@ export interface PermissionRequest {
 export interface DropdownOption {
   id: string;
   label: string;
+  description?: string;
   iconPath?: string;
   subOptions?: DropdownOption[];
 }
@@ -284,13 +294,13 @@ declare global {
     __stopAgent?: (conversationId: string) => void;
     __downloadAgent?: (adapterId: string) => void;
     __deleteAgent?: (adapterId: string) => void;
-    __toggleAgentEnabled?: (adapterId: string, enabled: boolean) => void;
     __requestHistoryList?: (projectPath?: string) => void;
     __deleteHistoryConversations?: (payload: { projectPath: string; conversationIds: string[] }) => void;
     __renameHistoryConversation?: (payload: { projectPath: string; conversationId: string; newTitle: string }) => void;
     __loadHistoryConversation?: (conversationId: string, projectPath: string, historyConversationId: string) => void;
     __loginAgent?: (adapterId: string) => void;
     __logoutAgent?: (adapterId: string) => void;
+    __fetchAdapterUsage?: (adapterId: string) => void;
     __openAgentCli?: (adapterId: string) => void;
     __openHistoryConversationCli?: (payload: { projectPath: string; conversationId: string }) => void;
     __undoFile?: (payload: string) => void;
@@ -320,6 +330,7 @@ declare global {
     __onHistoryDeleteResult?: (result: HistoryDeleteResultPayload) => void;
     __onAttachmentsAdded?: (chatId: string, files: ChatAttachment[]) => void;
     __onConversationTranscriptSaved?: (payload: ConversationTranscriptSavedPayload) => void;
+    __onUsageData?: (adapterId: string, json: string) => void;
 
     __onUndoResult?: (chatId: string, result: UndoResultPayload) => void;
     __onChangesState?: (chatId: string, state: ChangesState) => void;

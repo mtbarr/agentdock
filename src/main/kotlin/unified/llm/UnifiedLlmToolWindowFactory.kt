@@ -21,6 +21,9 @@ import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
 import unified.llm.acp.AcpClientService
 import unified.llm.acp.AcpBridge
+import unified.llm.acp.injectDebugApi
+import unified.llm.acp.injectReadySignal
+import unified.llm.acp.shutdown
 import unified.llm.history.HistoryBridge
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager

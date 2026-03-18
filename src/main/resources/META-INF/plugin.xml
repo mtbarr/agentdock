@@ -7,11 +7,12 @@
     Unified LLM Plugin - A high-performance AI coding assistant for JetBrains IDEs.
     ]]></description>
 
-    <depends>com.intellij.modules.platform</depends>
-    <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="UnifiedLLM" icon="/icons/unified_toolwindow.svg" anchor="right"
-                    factoryClass="unified.llm.UnifiedLlmToolWindowFactory"/>
-    </extensions>
+     <depends>com.intellij.modules.platform</depends>
+     <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="unified.llm.acp.AcpStartupActivity"/>
+         <toolWindow id="UnifiedLLM" icon="/icons/unified_toolwindow.svg" anchor="right"
+                     factoryClass="unified.llm.UnifiedLlmToolWindowFactory"/>
+     </extensions>
 
     <actions>
         <action id="UnifiedLLM.AddCodeReferenceToChatAction"

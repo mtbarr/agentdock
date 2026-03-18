@@ -3,6 +3,7 @@ package unified.llm.history
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -96,8 +97,8 @@ private class JsonArrayParser : HistoryParser {
         return listOf(SessionMeta(
             sessionId = sessionId,
             adapterName = adapterInfo.id,
-            modelId = adapterInfo.defaultModelId,
-            modeId = adapterInfo.defaultModeId,
+            modelId = null,
+            modeId = null,
             projectPath = projectPath,
             title = title,
             filePath = file.absolutePath,
@@ -134,8 +135,8 @@ private class JsonlStreamParser : HistoryParser {
         return listOf(SessionMeta(
             sessionId = file.nameWithoutExtension,
             adapterName = adapterInfo.id,
-            modelId = adapterInfo.defaultModelId,
-            modeId = adapterInfo.defaultModeId,
+            modelId = null,
+            modeId = null,
             projectPath = projectPath,
             title = fallbackTitle(title),
             filePath = file.absolutePath,
@@ -160,8 +161,8 @@ private class JsonObjectParser : HistoryParser {
         return listOf(SessionMeta(
             sessionId = sessionId,
             adapterName = adapterInfo.id,
-            modelId = adapterInfo.defaultModelId,
-            modeId = adapterInfo.defaultModeId,
+            modelId = null,
+            modeId = null,
             projectPath = projectPath,
             title = title,
             filePath = file.absolutePath,
@@ -217,8 +218,8 @@ private class JsonlEventStreamParser : HistoryParser {
         return listOf(SessionMeta(
             sessionId = sessionId ?: file.nameWithoutExtension,
             adapterName = adapterInfo.id,
-            modelId = adapterInfo.defaultModelId,
-            modeId = adapterInfo.defaultModeId,
+            modelId = null,
+            modeId = null,
             projectPath = projectPath,
             title = fallbackTitle(title),
             filePath = file.absolutePath,
@@ -239,48 +240,48 @@ private class RootUserJsonlParser : HistoryParser {
         var sessionId: String? = null
         var createdAt: Long? = null
         var title: String? = null
-        var isConversation = false
+        var projectMatched = false
 
         runCatching {
             file.useLines { lines ->
-                for (line in lines.take(100)) {
+                for (line in lines) {
                     if (!line.trimStart().startsWith("{")) continue
                     val root = historyJson.parseToJsonElement(line).jsonObject
                     val type = root.stringOrNull("type")?.lowercase()
                     if (type != "user") continue
-                    val parentUuid = (root["parentUuid"] as? JsonPrimitive)?.contentOrNull
-                    if (!parentUuid.isNullOrBlank()) continue
                     if ((root["isSidechain"] as? JsonPrimitive)?.content == "true") continue
 
-                    val cwd = canonicalizePath(root.stringOrNull("cwd"))
-                    if (expectedProjectPath.isNotBlank() && cwd != expectedProjectPath) continue
+                    if (!projectMatched) {
+                        val cwd = canonicalizePath(root.stringOrNull("cwd"))
+                        if (expectedProjectPath.isNotBlank() && cwd != expectedProjectPath) continue
+                        sessionId = root.stringOrNull("sessionId") ?: file.nameWithoutExtension
+                        createdAt = parseTimestamp(root.stringOrNull("timestamp"))
+                        projectMatched = true
+                    }
 
+                    if ((root["isMeta"] as? JsonPrimitive)?.content == "true") continue
                     val message = root["message"]?.jsonObject ?: continue
                     if (message.stringOrNull("role")?.lowercase() != "user") continue
-                    val text = message["content"]?.jsonArray
-                        ?.firstOrNull()
-                        ?.jsonObject
-                        ?.stringOrNull("text")
-                        ?.trim()
+                    val contentArray = message["content"] as? JsonArray ?: continue
+                    val text = contentArray
+                        .firstOrNull { it is JsonObject && it.stringOrNull("type") == "text" }
+                        ?.jsonObject?.stringOrNull("text")?.trim()
                     if (text.isNullOrBlank()) continue
 
-                    sessionId = root.stringOrNull("sessionId") ?: file.nameWithoutExtension
-                    createdAt = parseTimestamp(root.stringOrNull("timestamp"))
                     title = text
-                    isConversation = true
                     break
                 }
             }
         }
 
-        if (!isConversation) return emptyList()
+        if (!projectMatched) return emptyList()
 
         return listOf(
             SessionMeta(
                 sessionId = sessionId ?: file.nameWithoutExtension,
                 adapterName = adapterInfo.id,
-                modelId = adapterInfo.defaultModelId,
-                modeId = adapterInfo.defaultModeId,
+                modelId = null,
+                modeId = null,
                 projectPath = projectPath,
                 title = fallbackTitle(title),
                 filePath = file.absolutePath,
@@ -321,8 +322,8 @@ private class SessionIndexParser : HistoryParser {
             SessionMeta(
                 sessionId = sessionId,
                 adapterName = adapterInfo.id,
-                modelId = adapterInfo.defaultModelId,
-                modeId = adapterInfo.defaultModeId,
+                modelId = null,
+                modeId = null,
                 projectPath = projectPath,
                 title = title,
                 filePath = fullPath,
@@ -354,8 +355,8 @@ private class SessionDirMtimeParser : HistoryParser {
         return listOf(SessionMeta(
             sessionId = sessionId,
             adapterName = adapterInfo.id,
-            modelId = adapterInfo.defaultModelId,
-            modeId = adapterInfo.defaultModeId,
+            modelId = null,
+            modeId = null,
             projectPath = projectPath,
             title = "Untitled Session",
             filePath = file.absolutePath,

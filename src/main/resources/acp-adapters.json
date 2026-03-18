@@ -1,0 +1,244 @@
+{
+  "adapters": {
+    "claude-code": {
+      "name": "Claude Code",
+      "iconPath": "/icons/claude.svg",
+      "distribution": {
+        "type": "npm",
+        "version": "0.21.0",
+        "packageName": "@zed-industries/claude-agent-acp"
+      },
+      "defaultModel": {
+        "modelId":"opus",
+        "name": "Opus 4.6",
+        "description": ""
+      },
+      "disabledModels": [],
+      "defaultMode": {
+        "modeId": "default",
+        "name": "Default",
+        "description": "Standard behavior, prompts for dangerous operations"
+      },
+      "disabledModes": [],
+      "patches": [],
+      "historyConfig": {
+        "parserStrategy": "root_user_jsonl",
+        "pathTemplate": "~/.claude/projects/{projectPathSlug}/*.jsonl",
+        "indexPathTemplate": "~/.claude/projects/{projectPathSlug}/sessions-index.json",
+        "cleanup": {
+          "strategy": "delete_source_file_and_session_index_entry"
+        }
+      },
+      "cli": {
+        "executable": {
+          "win": "node.exe",
+          "unix": "node"
+        },
+        "entryPath": "node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
+        "resumeArgs": [
+          "-r",
+          "{sessionId}"
+        ]
+      },
+      "modelChangeStrategy": "restart-resume",
+      "authConfig": {
+        "uiMode": "login_logout",
+        "loginMode": "background",
+        "statusArgs": [
+          "--cli",
+          "auth",
+          "status"
+        ],
+        "loginArgs": [
+          "--cli",
+          "auth",
+          "login"
+        ],
+        "logoutArgs": [
+          "--cli",
+          "auth",
+          "logout"
+        ]
+      },
+      "usageStrategy": "claude-oauth"
+    },
+    "gemini-cli": {
+      "name": "Gemini",
+      "iconPath": "/icons/gemini.svg",
+      "distribution": {
+        "type": "npm",
+        "packageName": "@google/gemini-cli",
+        "version": "0.34.0"
+      },
+      "args": [
+        "--experimental-acp"
+      ],
+      "defaultModel": {
+        "modelId": "gemini-3-flash-preview",
+        "name": "Gemini 3 Flash",
+        "description": ""
+      },
+      "disabledModels": [
+        "-2.",
+        "3.1-flash-lite",
+        "auto"
+      ],
+      "defaultMode": {
+        "modeId": "default",
+        "name": "Default",
+        "description": "Prompts for approval"
+      },
+      "disabledModes": [],
+      "patches": [
+        "@patches/gemini/usage-config.patch",
+        "@patches/gemini/usage-gemini.patch"
+      ],
+      "historyConfig": {
+        "parserStrategy": "json_array",
+        "pathTemplate": "~/.gemini/tmp/*/chats/*.json",
+        "cleanup": {
+          "strategy": "delete_source_file"
+        }
+      },
+      "cli": {
+        "executable": {
+          "win": "node_modules/.bin/gemini.cmd",
+          "unix": "node_modules/.bin/gemini"
+        },
+        "resumeArgs": [
+          "--resume",
+          "{sessionId}"
+        ]
+      },
+      "authConfig": {
+        "uiMode": "manage_terminal",
+        "loginMode": "manage_terminal"
+      },
+      "usageStrategy": "gemini-cli"
+    },
+    "cursor-cli": {
+      "name": "Cursor",
+      "iconPath": "/icons/cursor.svg",
+      "distribution": {
+        "type": "archive",
+        "version": "2026.03.05-2bf2031",
+        "downloadUrl": "https://anysphere-binaries.s3.amazonaws.com/lab/2026.03.05-2bf2031/{platform}/{arch}/agent-cli-package.{ext}",
+        "extractSubdir": "dist-package",
+        "binaryName": {
+          "win": "cursor-agent.cmd",
+          "unix": "cursor-agent"
+        }
+      },
+      "args": [
+        "acp"
+      ],
+      "historyConfig": {
+        "parserStrategy": "session_dir_mtime",
+        "pathTemplate": "~/.cursor/chats/{projectHashMd5}/*/store.db",
+        "cleanup": {
+          "strategy": "delete_source_parent_dir"
+        }
+      },
+      "cli": {
+        "executable": {
+          "win": "cursor-agent.cmd",
+          "unix": "cursor-agent"
+        },
+        "resumeArgs": [
+          "--resume",
+          "{sessionId}"
+        ]
+      },
+      "authConfig": {
+        "uiMode": "manage_terminal",
+        "loginMode": "manage_terminal"
+      },
+      "defaultModel": {
+        "modelId":"default[]",
+        "name": "Auto",
+        "description": ""
+      },
+      "disabledModels": [
+        "composer-1[]",
+        "gemini-2",
+        "gpt-5.1",
+        "gpt-5.2"
+      ],
+      "defaultMode": {
+        "modeId": "agent",
+        "name": "Agent",
+        "description": ""
+      },
+      "disabledModes": []
+    },
+    "codex": {
+      "name": "Codex",
+      "iconPath": "/icons/codex.svg",
+      "distribution": {
+        "type": "archive",
+        "version": "0.10.0",
+        "downloadUrl": "https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{target}.{ext}",
+        "binaryName": {
+          "win": "codex-acp.exe",
+          "unix": "codex-acp"
+        }
+      },
+      "defaultModel": {
+        "modelId": "gpt-5.4/medium",
+        "name": "gpt-5.4 (medium)",
+        "description": ""
+      },
+      "disabledModels": [
+        "-5.1",
+        "-5.2"
+      ],
+      "defaultMode": {
+        "modeId": "read-only",
+        "name": "Read Only",
+        "description": ""
+      },
+      "disabledModes": [],
+      "authConfig": {
+        "uiMode": "login_logout",
+        "loginMode": "background",
+        "command": [
+          "npx",
+          "-y",
+          "@openai/codex@0.111.0"
+        ],
+        "statusArgs": [
+          "login",
+          "status"
+        ],
+        "loginArgs": [
+          "login"
+        ],
+        "logoutArgs": [
+          "logout"
+        ]
+      },
+      "cli": {
+        "executable": {
+          "win": "npx.cmd",
+          "unix": "npx"
+        },
+        "args": [
+          "-y",
+          "@openai/codex@0.111.0"
+        ],
+        "resumeArgs": [
+          "resume",
+          "{sessionId}"
+        ]
+      },
+      "historyConfig": {
+        "parserStrategy": "jsonl_event_stream",
+        "pathTemplate": "~/.codex/sessions/*/*/*/*.jsonl",
+        "cleanup": {
+          "strategy": "delete_source_file"
+        }
+      },
+      "usageStrategy": "codex-chatgpt"
+    }
+  }
+}

@@ -284,7 +284,7 @@ export default function HistoryPanel({ availableAgents, onOpenSession }: History
             <p className="text-sm italic">No history available yet.</p>
           </div>
         ) : (
-          filteredHistoryList.map((item) => {
+          filteredHistoryList.map((item, index) => {
             const conversationId = item.conversationId;
             const isSelected = selectedConversationIds.includes(conversationId);
             const conversationLength = formatConversationLength(item.promptCount);
@@ -297,11 +297,12 @@ export default function HistoryPanel({ availableAgents, onOpenSession }: History
             const mainAgent = adapterDisplay.get(item.adapterName);
             const mainLabel = mainAgent?.name || item.adapterName;
             const canOpenCli = !!mainAgent?.cliAvailable;
+            const isLast = index === filteredHistoryList.length - 1;
 
             return (
               <div
                 key={conversationId}
-                className={`group relative transition-colors rounded hover:bg-accent hover:text-accent-foreground ${isSelected ? 'bg-background-secondary' : ''}`}
+                className={`group relative transition-colors ${!isLast ? 'border-b border-border' : ''} ${isSelected ? 'bg-background-secondary' : ''}`}
                 onClick={() => { if (editingId !== conversationId) onOpenSession(item); }}
               >
                 <div className="flex items-start gap-3 p-3 pr-4 cursor-pointer">

@@ -99,7 +99,7 @@ function App() {
   useEffect(() => {
     return ACPBridge.onAdapters((e) => {
       const safeAdapters = Array.isArray(e.detail.adapters) ? e.detail.adapters : [];
-      setAvailableAgents(safeAdapters.filter(a => a.enabled));
+      setAvailableAgents(safeAdapters);
       if (safeAdapters.length > 0) {
         try {
           localStorage.setItem('unified-llm.adapters', JSON.stringify(safeAdapters));
@@ -252,6 +252,9 @@ function App() {
     const existing = tabsRef.current.find(t => t.type === type);
     if (existing) {
       setActiveTabId(existing.id);
+      if (type === 'management') {
+        ACPBridge.requestAdapters();
+      }
       return;
     }
     const newId = nextId('tab');
@@ -420,7 +423,7 @@ function App() {
                   onSessionStateChange={(state) => handleChatSessionStateChange(tab.id, state)}
                 />
               )}
-              {tab.type === 'management' && <AgentManagementView />}
+              {tab.type === 'management' && <AgentManagementView initialAgents={availableAgents} />}
               {tab.type === 'design' && <DesignSystemView />}
               {tab.type === 'history' && (
                 <HistoryPanel availableAgents={availableAgents} onOpenSession={handleOpenHistory} />

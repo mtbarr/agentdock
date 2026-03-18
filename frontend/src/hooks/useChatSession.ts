@@ -533,15 +533,15 @@ export function useChatSession(
   }, [onHandoffConsumed]);
 
   const selectedAgent = availableAgents.find((agent) => agent.id === selectedAgentId);
-  const availableModels = selectedAgent?.models ?? [];
-  const availableModes = selectedAgent?.modes ?? [];
+  const availableModels = selectedAgent?.availableModels ?? [];
+  const availableModes = selectedAgent?.availableModes ?? [];
 
   const selectedModelId = selectedAgent
-      ? (selectedModelByAgent[selectedAgent.id] || selectedAgent.defaultModelId || availableModels[0]?.modelId || '')
+      ? (selectedModelByAgent[selectedAgent.id] || selectedAgent.currentModelId || availableModels[0]?.modelId || '')
       : '';
 
   const selectedModeId = selectedAgent
-      ? (selectedModeByAgent[selectedAgent.id] || selectedAgent.defaultModeId || availableModes[0]?.id || '')
+      ? (selectedModeByAgent[selectedAgent.id] || selectedAgent.currentModeId || availableModes[0]?.id || '')
       : '';
 
   const adapterDisplayName = selectedAgent?.name || '';
@@ -549,9 +549,17 @@ export function useChatSession(
     id: agent.id, 
     label: agent.name,
     iconPath: agent.iconPath,
-    subOptions: agent.models?.map(m => ({ id: m.modelId, label: m.name }))
+    subOptions: agent.availableModels?.map(m => ({
+      id: m.modelId,
+      label: m.name,
+      description: m.description,
+    }))
   }));
-  const modeOptions: DropdownOption[] = availableModes.map((mode) => ({ id: mode.id, label: mode.name }));
+  const modeOptions: DropdownOption[] = availableModes.map((mode) => ({
+    id: mode.id,
+    label: mode.name,
+    description: mode.description,
+  }));
 
   // Sync selection when agents list changes (passed from parent)
   useEffect(() => {
@@ -566,8 +574,8 @@ export function useChatSession(
       const next: Record<string, string> = { ...prev };
       availableAgents.forEach((agent) => {
         if (next[agent.id]) return;
-        const defaultModel = agent.defaultModelId || agent.models?.[0]?.modelId || '';
-        if (defaultModel) next[agent.id] = defaultModel;
+        const currentModel = agent.currentModelId || agent.availableModels?.[0]?.modelId || '';
+        if (currentModel) next[agent.id] = currentModel;
       });
       return next;
     });
@@ -576,8 +584,8 @@ export function useChatSession(
       const next: Record<string, string> = { ...prev };
       availableAgents.forEach((agent) => {
         if (next[agent.id]) return;
-        const defaultMode = agent.defaultModeId || agent.modes?.[0]?.id || '';
-        if (defaultMode) next[agent.id] = defaultMode;
+        const currentMode = agent.currentModeId || agent.availableModes?.[0]?.id || '';
+        if (currentMode) next[agent.id] = currentMode;
       });
       return next;
     });
@@ -623,19 +631,19 @@ export function useChatSession(
   const startSelectedAgent = useCallback(() => {
     if (!selectedAgentId || typeof window.__startAgent !== 'function') return false;
     if (historySession) return false;
-    if (!selectedAgent?.downloaded || (selectedAgent.hasAuthentication && !selectedAgent.authAuthenticated)) {
+    if (!selectedAgent?.downloaded) {
       return false;
     }
 
-    const modelId = selectedModelByAgent[selectedAgentId] || selectedAgent?.defaultModelId;
+    const modelId = selectedModelByAgent[selectedAgentId] || selectedAgent?.currentModelId;
 
     try {
       startedAgentIdRef.current = selectedAgentId;
       startedModelIdRef.current = modelId || '';
-      // startAgent() already applies the adapter's default mode on the backend.
+      // startAgent() already applies the adapter's current startup mode on the backend.
       // Keep that as the baseline so we only call __setMode() when the user
-      // selected a different mode than the adapter default.
-      startedModeIdRef.current = selectedAgent?.defaultModeId || '';
+      // selected a different mode than the startup-selected mode.
+      startedModeIdRef.current = selectedAgent?.currentModeId || '';
 
       chunkBufferRef.current = [];
       window.__startAgent(conversationId, selectedAgentId, modelId || undefined);

@@ -1,0 +1,11 @@
+--- dist/src/config/config.js
++++ dist/src/config/config.js
+@@ -173,4 +173,8 @@
+         description: 'The format of the CLI output.',
+         choices: ['text', 'json', 'stream-json'],
+     })
++        .option('usage-json', {
++        type: 'boolean',
++        hidden: true,
++    })
+         .option('fake-responses', {

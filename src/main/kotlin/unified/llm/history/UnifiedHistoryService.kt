@@ -939,7 +939,20 @@ object UnifiedHistoryService {
                 if (keptSessions.size != conversation.sessions.size) {
                     changed = true
                 }
-                conversation.copy(sessions = keptSessions)
+                val syncedTitle = keptSessions.firstNotNullOfOrNull { session ->
+                    val key = "${session.adapterName}:${session.sessionId}"
+                    availableByKey[key]?.title?.takeIf { it.isNotBlank() }
+                }
+                val needsTitleUpdate = syncedTitle != null
+                    && (conversation.title.isBlank() || conversation.title == "Untitled Session")
+                    && syncedTitle != conversation.title
+                val updatedConversation = if (needsTitleUpdate) {
+                    changed = true
+                    conversation.copy(title = syncedTitle, sessions = keptSessions)
+                } else {
+                    conversation.copy(sessions = keptSessions)
+                }
+                updatedConversation
             }
         }.toMutableList()
 
@@ -1024,17 +1037,14 @@ object UnifiedHistoryService {
 
         conversation.sessions.map { session ->
             val sessionMeta = availableMetaByKey["${session.adapterName}:${session.sessionId}"]
-            val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(session.adapterName) }.getOrNull()
-            val fallbackModelId = adapterInfo?.defaultModelId ?: adapterInfo?.models?.firstOrNull()?.modelId
-            val fallbackModeId = adapterInfo?.defaultModeId ?: adapterInfo?.modes?.firstOrNull()?.id
             SessionMeta(
                 sessionId = session.sessionId,
                 adapterName = session.adapterName,
                 conversationId = conversation.id,
                 sessionCount = conversation.sessions.size,
                 promptCount = conversation.promptCount,
-                modelId = sessionMeta?.modelId ?: fallbackModelId,
-                modeId = sessionMeta?.modeId ?: fallbackModeId,
+                modelId = sessionMeta?.modelId,
+                modeId = sessionMeta?.modeId,
                 projectPath = cleanProjectPath,
                 title = title,
                 filePath = sessionMeta?.filePath?.takeIf { it.isNotBlank() } ?: session.sourceFilePath.orEmpty(),

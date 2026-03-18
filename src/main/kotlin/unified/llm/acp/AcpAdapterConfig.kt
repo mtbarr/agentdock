@@ -13,10 +13,32 @@ import kotlinx.serialization.json.Json
 object AcpAdapterConfig {
 
     @Serializable
-    data class ModeInfo(val id: String, val name: String)
+    data class ModeInfo(
+        val id: String,
+        val name: String,
+        val description: String? = null
+    )
 
     @Serializable
-    data class ModelInfo(val modelId: String, val name: String)
+    data class ModelInfo(
+        val modelId: String,
+        val name: String,
+        val description: String? = null
+    )
+
+    @Serializable
+    data class DefaultModelInfo(
+        val modelId: String,
+        val name: String,
+        val description: String? = null
+    )
+
+    @Serializable
+    data class DefaultModeInfo(
+        val modeId: String,
+        val name: String,
+        val description: String? = null
+    )
 
     @Serializable
     data class HistoryCleanupConfig(
@@ -33,12 +55,13 @@ object AcpAdapterConfig {
 
     @Serializable
     data class AuthConfig(
-        val authPath: String? = null,
         val authScript: String? = null,
+        val uiMode: String = "login_logout",
+        val loginMode: String = "background",
         val command: List<String> = emptyList(),
+        val statusArgs: List<String> = emptyList(),
         val loginArgs: List<String> = emptyList(),
-        val logoutArgs: List<String> = emptyList(),
-        val statusArgs: List<String> = emptyList()
+        val logoutArgs: List<String> = emptyList()
     )
 
     @Serializable
@@ -78,10 +101,10 @@ object AcpAdapterConfig {
         val iconPath: String? = null,
         val distribution: Distribution,
         val launchPath: String = "",
-        val defaultModelId: String? = null,
-        val models: List<ModelInfo> = emptyList(),
-        val defaultModeId: String? = null,
-        val modes: List<ModeInfo> = emptyList(),
+        val defaultModel: DefaultModelInfo? = null,
+        val disabledModels: List<String> = emptyList(),
+        val defaultMode: DefaultModeInfo? = null,
+        val disabledModes: List<String> = emptyList(),
         val args: List<String> = emptyList(),
         val patches: List<String> = emptyList(),
         val historyConfig: HistoryConfig? = null,
@@ -93,7 +116,8 @@ object AcpAdapterConfig {
          * - "in-session": call sess.setModel() without restarting (works if adapter supports it)
          * Default: "in-session"
          */
-        val modelChangeStrategy: String = "in-session"
+        val modelChangeStrategy: String = "in-session",
+        val usageStrategy: String? = null
     ) {
         fun getConfiguredVersion(): String = distribution.version
     }

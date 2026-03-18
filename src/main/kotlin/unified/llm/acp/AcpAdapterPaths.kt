@@ -1,6 +1,7 @@
 package unified.llm.acp
 
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * Adapter runtimes are downloaded at runtime to ~/.unified-llm/dependencies/<adapter-name>/.
@@ -14,6 +15,7 @@ import java.io.File
 object AcpAdapterPaths {
     private const val ADAPTER_NAME_OVERRIDE_PROPERTY = "unified.llm.acp.adapter.name"
     private const val DEFAULT_NPM_LAUNCH_PATH = "dist/index.js"
+    private const val ARCHIVE_COMMAND_TIMEOUT_MINUTES = 10L
 
     private data class RuntimePlatform(
         val platform: String,
@@ -123,6 +125,17 @@ object AcpAdapterPaths {
         }
     }
 
+    /**
+     * Ensures all configured patches are applied to the already installed adapter.
+     */
+    fun ensurePatched(adapterName: String? = null) {
+        val adapterInfo = getAdapterInfo(adapterName)
+        val runtimeDir = File(DEPENDENCIES_DIR, adapterInfo.id)
+        if (runtimeDir.isDirectory) {
+            applyPatches(runtimeDir, adapterInfo)
+        }
+    }
+
     fun installAdapterRuntime(
         targetDir: File,
         adapterInfo: AcpAdapterConfig.AdapterInfo,
@@ -198,31 +211,44 @@ object AcpAdapterPaths {
 
             if (runtime.platform == "windows") {
                 statusCallback?.invoke("Downloading package...")
-                val dlExitCode = ProcessBuilder(
-                    "powershell",
-                    "-Command",
-                    "Invoke-WebRequest -Uri '$downloadUrl' -OutFile '${tempFile.absolutePath}'"
-                ).start().waitFor()
+                val dlExitCode = runCommand(
+                    ProcessBuilder(
+                        "powershell",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '$downloadUrl' -OutFile '${tempFile.absolutePath}'"
+                    ),
+                    statusCallback
+                )
                 if (dlExitCode != 0) {
                     return false
                 }
 
                 statusCallback?.invoke("Extracting package...")
-                val extractExitCode = ProcessBuilder(
-                    "powershell",
-                    "-Command",
-                    "Expand-Archive -Path '${tempFile.absolutePath}' -DestinationPath '${targetDir.absolutePath}' -Force"
-                ).start().waitFor()
+                val extractExitCode = runCommand(
+                    ProcessBuilder(
+                        "powershell",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        "\$ProgressPreference = 'SilentlyContinue'; Expand-Archive -Path '${tempFile.absolutePath}' -DestinationPath '${targetDir.absolutePath}' -Force"
+                    ),
+                    statusCallback
+                )
                 if (extractExitCode != 0) {
                     return false
                 }
             } else {
                 statusCallback?.invoke("Downloading and extracting package...")
-                val exitCode = ProcessBuilder(
-                    "sh",
-                    "-c",
-                    "curl -fSL '$downloadUrl' | tar --strip-components=1 -xzf - -C '${targetDir.absolutePath}' || curl -fSL '$downloadUrl' | tar -xzf - -C '${targetDir.absolutePath}'"
-                ).start().waitFor()
+                val exitCode = runCommand(
+                    ProcessBuilder(
+                        "sh",
+                        "-c",
+                        "curl -fSL '$downloadUrl' | tar --strip-components=1 -xzf - -C '${targetDir.absolutePath}' || curl -fSL '$downloadUrl' | tar -xzf - -C '${targetDir.absolutePath}'"
+                    ),
+                    statusCallback
+                )
                 if (exitCode != 0) {
                     return false
                 }
@@ -374,5 +400,34 @@ object AcpAdapterPaths {
             child.copyRecursively(File(targetDir, child.name), overwrite = true)
         }
         nestedDir.deleteRecursively()
+    }
+
+    private fun runCommand(
+        builder: ProcessBuilder,
+        statusCallback: ((String) -> Unit)? = null
+    ): Int {
+        val process = builder.redirectErrorStream(true).start()
+        val outputDrainer = Thread {
+            process.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    if (line.isNotBlank()) {
+                        statusCallback?.invoke(line.trim())
+                    }
+                }
+            }
+        }
+        outputDrainer.isDaemon = true
+        outputDrainer.start()
+
+        val finished = process.waitFor(ARCHIVE_COMMAND_TIMEOUT_MINUTES, TimeUnit.MINUTES)
+        if (!finished) {
+            process.destroyForcibly()
+            outputDrainer.join(1000)
+            statusCallback?.invoke("Error: Command timed out")
+            return -1
+        }
+
+        outputDrainer.join(1000)
+        return process.exitValue()
     }
 }
