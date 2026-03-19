@@ -86,6 +86,13 @@ class AcpClientService private constructor(val project: Project) {
     }
 
     @Volatile
+    internal var availableCommandsHandler: ((String, List<AvailableCommandPayload>) -> Unit)? = null
+
+    internal fun setOnAvailableCommands(handler: (String, List<AvailableCommandPayload>) -> Unit) {
+        availableCommandsHandler = handler
+    }
+
+    @Volatile
     internal var adapterInitializationStateHandler: ((String, AdapterInitializationStatus, String?) -> Unit)? = null
 
     fun setOnAdapterInitializationStateChanged(handler: (String, AdapterInitializationStatus, String?) -> Unit) {
@@ -145,6 +152,7 @@ class AcpClientService private constructor(val project: Project) {
     internal val adapterInitializationState = ConcurrentHashMap<String, AdapterInitializationStatus>()
     internal val adapterInitializationErrors = ConcurrentHashMap<String, String>()
     internal val adapterRuntimeMetadataMap = ConcurrentHashMap<String, AdapterRuntimeMetadata>()
+    internal val availableCommandsByAdapter = ConcurrentHashMap<String, List<AvailableCommandPayload>>()
 
     fun status(chatId: String): Status = sessions[chatId]?.statusRef?.get() ?: Status.NotStarted
     fun sessionId(chatId: String): String? = sessions[chatId]?.sessionIdRef?.get()
@@ -155,10 +163,17 @@ class AcpClientService private constructor(val project: Project) {
     }
     fun adapterInitializationError(adapterName: String): String? = adapterInitializationErrors[adapterName]
     fun adapterRuntimeMetadata(adapterName: String): AdapterRuntimeMetadata? = adapterRuntimeMetadataMap[adapterName]
+    internal fun availableCommands(adapterName: String): List<AvailableCommandPayload> = availableCommandsByAdapter[adapterName] ?: emptyList()
+    internal fun allAvailableCommands(): Map<String, List<AvailableCommandPayload>> = availableCommandsByAdapter.toMap()
     fun isAdapterReady(adapterName: String): Boolean {
         val sharedProc = activeProcesses[adapterName] ?: return false
         val process = sharedProc.process ?: return false
         return process.isAlive && sharedProc.client != null && sharedProc.isInitialized
+    }
+
+    internal fun updateAvailableCommands(adapterName: String, commands: List<AvailableCommandPayload>) {
+        availableCommandsByAdapter[adapterName] = commands
+        runCatching { availableCommandsHandler?.invoke(adapterName, commands) }
     }
 
     internal fun updateAdapterInitializationState(

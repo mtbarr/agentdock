@@ -203,6 +203,24 @@ internal fun AcpBridge.pushMode(chatId: String, modeId: String?) {
     }
 }
 
+internal fun AcpBridge.pushAvailableCommands(adapterId: String, commands: List<AvailableCommandPayload>) {
+    val payloadJson = adapterJson.encodeToString(commands)
+    val escapedAdapterId = jsStringLiteral(adapterId)
+    val escapedPayload = payloadJson.escapeForJsString()
+    runOnEdt {
+        browser.cefBrowser.executeJavaScript(
+            "if(window.__onAvailableCommands) window.__onAvailableCommands($escapedAdapterId, JSON.parse('$escapedPayload'));",
+            browser.cefBrowser.url, 0
+        )
+    }
+}
+
+internal fun AcpBridge.pushAllAvailableCommands() {
+    service.allAvailableCommands().forEach { (adapterId, commands) ->
+        pushAvailableCommands(adapterId, commands)
+    }
+}
+
 internal fun AcpBridge.pushSessionId(chatId: String, sid: String?) {
     if (sid == null) return
     val escapedSessionId = jsStringLiteral(sid)

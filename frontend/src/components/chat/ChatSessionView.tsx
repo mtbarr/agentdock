@@ -59,6 +59,7 @@ export default function ChatSessionView({
     hasSelectedAgent,
     attachments,
     setAttachments,
+    availableCommands,
     acpSessionId,
     adapterName,
     adapterDisplayName,
@@ -314,6 +315,7 @@ export default function ChatSessionView({
             onModeChange={handleModeChange}
             
             hasSelectedAgent={hasSelectedAgent}
+            availableCommands={availableCommands}
             attachments={attachments}
             onAttachmentsChange={setAttachments}
             onImageClick={setSelectedImage}

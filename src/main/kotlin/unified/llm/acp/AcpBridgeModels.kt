@@ -54,6 +54,13 @@ internal data class SaveConversationTranscriptPayload(
 )
 
 @Serializable
+internal data class AvailableCommandPayload(
+    val name: String,
+    val description: String,
+    val inputHint: String? = null
+)
+
+@Serializable
 internal data class SaveConversationTranscriptResultPayload(
     val requestId: String,
     val conversationId: String,

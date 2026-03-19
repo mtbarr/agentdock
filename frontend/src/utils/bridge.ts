@@ -11,6 +11,7 @@ import {
   SessionMetadataUpdatePayload,
   ContinueConversationPayload,
   ConversationTranscriptSavedPayload,
+  AvailableCommand,
 } from '../types/chat';
 import { McpServerConfig } from '../types/mcp';
 
@@ -20,6 +21,7 @@ export interface SessionIdEvent { chatId: string; sessionId: string; }
 export interface ModeEvent { chatId: string; modeId: string; }
 export interface AdaptersEvent { adapters: AgentOption[]; }
 export interface PermissionRequestEvent { request: PermissionRequest; }
+export interface AvailableCommandsEvent { adapterId: string; commands: AvailableCommand[]; }
 export interface HistoryListEvent { list: HistorySessionMeta[]; }
 export interface HistoryDeleteResultEvent { result: HistoryDeleteResultPayload; }
 export interface UndoResultEvent { chatId: string; result: UndoResultPayload; }
@@ -36,6 +38,7 @@ const EVENT_NAMES = {
   SESSION_ID: 'acp-session-id',
   MODE: 'acp-mode',
   ADAPTERS: 'acp-adapters',
+  AVAILABLE_COMMANDS: 'acp-available-commands',
   USAGE_DATA: 'acp-usage-data',
   PERMISSION: 'acp-permission',
   LOG: 'acp-log',
@@ -50,6 +53,7 @@ const EVENT_NAMES = {
 };
 
 let transcriptRequestCounter = 0;
+const availableCommandsByAdapter = new Map<string, AvailableCommand[]>();
 
 function nextTranscriptRequestId(): string {
   transcriptRequestCounter += 1;
@@ -113,6 +117,11 @@ export const ACPBridge = {
 
     window.__onAdapters = (adapters) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.ADAPTERS, { detail: { adapters } }));
+    };
+
+    window.__onAvailableCommands = (adapterId, commands) => {
+      availableCommandsByAdapter.set(adapterId, commands);
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.AVAILABLE_COMMANDS, { detail: { adapterId, commands } }));
     };
 
     window.__onUsageData = (adapterId, json) => {
@@ -191,6 +200,15 @@ export const ACPBridge = {
   onAdapters: (callback: (e: CustomEvent<AdaptersEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.ADAPTERS, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.ADAPTERS, callback as EventListener);
+  },
+
+  onAvailableCommands: (callback: (e: CustomEvent<AvailableCommandsEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.AVAILABLE_COMMANDS, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.AVAILABLE_COMMANDS, callback as EventListener);
+  },
+
+  getAvailableCommands: (adapterId: string) => {
+    return availableCommandsByAdapter.get(adapterId) ?? [];
   },
 
   onPermissionRequest: (callback: (e: CustomEvent<PermissionRequestEvent>) => void) => {

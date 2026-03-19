@@ -13,6 +13,9 @@ import java.io.File
 internal fun AcpBridge.installServiceCallbacks() {
     service.setOnLogEntry { pushLogEntry(it) }
     service.setOnPermissionRequest { pushPermissionRequest(it) }
+    service.setOnAvailableCommands { adapterId, commands ->
+        pushAvailableCommands(adapterId, commands)
+    }
     service.setOnAdapterInitializationStateChanged { _, _, _ ->
         scope.launch(Dispatchers.IO) { pushAdapters() }
     }
@@ -108,6 +111,7 @@ internal fun AcpBridge.installAdapterQueries() {
             }
             scope.launch(Dispatchers.IO) {
                 pushAdapters()
+                pushAllAvailableCommands()
             }
             JBCefJSQuery.Response("ok")
         }

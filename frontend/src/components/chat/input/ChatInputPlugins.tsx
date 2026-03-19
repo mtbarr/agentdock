@@ -93,13 +93,22 @@ export function PasteLogPlugin({ onImagePaste }: { onImagePaste: (file: File, ed
   return null;
 }
 
-export function KeyboardPlugin({ onSend, sendMode }: { onSend: () => void, sendMode: 'enter' | 'ctrl-enter' }) {
+export function KeyboardPlugin({
+  onSend,
+  sendMode,
+  disabled = false,
+}: {
+  onSend: () => void,
+  sendMode: 'enter' | 'ctrl-enter',
+  disabled?: boolean,
+}) {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
     return editor.registerCommand(
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent) => {
+        if (disabled) return false;
         if (sendMode === 'enter') {
           if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
             event.preventDefault();
@@ -117,7 +126,17 @@ export function KeyboardPlugin({ onSend, sendMode }: { onSend: () => void, sendM
       },
       COMMAND_PRIORITY_CRITICAL
     );
-  }, [editor, onSend, sendMode]);
+  }, [disabled, editor, onSend, sendMode]);
+
+  return null;
+}
+
+export function RegisterEditorPlugin({ onReady }: { onReady: (editor: LexicalEditor) => void }) {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    onReady(editor);
+  }, [editor, onReady]);
 
   return null;
 }

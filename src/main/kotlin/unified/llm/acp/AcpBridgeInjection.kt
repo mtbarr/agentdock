@@ -157,6 +157,7 @@ internal fun AcpBridge.injectReadySignal(cefBrowser: CefBrowser) {
         window.__onStatus = window.__onStatus || function(chatId, status) {};
         window.__onSessionId = window.__onSessionId || function(chatId, id) {};
         window.__onAdapters = window.__onAdapters || function(adapters) {};
+        window.__onAvailableCommands = window.__onAvailableCommands || function(adapterId, commands) {};
         window.__onMode = window.__onMode || function(chatId, modeId) {};
         window.__onPermissionRequest = window.__onPermissionRequest || function(request) {};
         window.__respondPermission = window.__respondPermission || function(requestId, decision) {};

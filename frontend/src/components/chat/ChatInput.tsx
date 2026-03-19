@@ -13,17 +13,19 @@ import {
 } from 'lexical';
 
 import ChatDropdown from './ChatDropdown';
-import { ChatAttachment, DropdownOption } from '../../types/chat';
+import { AvailableCommand, ChatAttachment, DropdownOption } from '../../types/chat';
 import AttachmentBar from './input/AttachmentBar';
 import { Tooltip } from './shared/Tooltip';
 import { openFile } from '../../utils/openFile';
 import { ChatUsageIndicator } from '../usage/chat/ChatUsageIndicator';
+import SlashCommandMenu from './input/SlashCommandMenu';
+import { useSlashCommands } from '../../hooks/useSlashCommands';
 
 // Sub-components & Plugins
 import { ChatInputActionsContext } from './input/ChatInputActionsContext';
 import { ImageNode, $createImageNode } from './input/ImageNode';
 import { CodeReferenceNode } from './input/CodeReferenceNode';
-import { AttachmentsSyncPlugin, PasteLogPlugin, KeyboardPlugin, AutoHeightPlugin, ClickToFocusPlugin, ClearEditorPlugin, InlineAttachmentBackspacePlugin, ExternalCodeReferencePlugin } from './input/ChatInputPlugins';
+import { AttachmentsSyncPlugin, PasteLogPlugin, KeyboardPlugin, AutoHeightPlugin, ClickToFocusPlugin, ClearEditorPlugin, InlineAttachmentBackspacePlugin, ExternalCodeReferencePlugin, RegisterEditorPlugin } from './input/ChatInputPlugins';
 import { ContextUsageIndicator } from './shared/ContextUsageIndicator';
 
 interface ChatInputProps {
@@ -47,6 +49,7 @@ interface ChatInputProps {
   onModeChange: (id: string) => void;
 
   hasSelectedAgent: boolean;
+  availableCommands: AvailableCommand[];
   
   attachments: ChatAttachment[];
   onAttachmentsChange: (items: ChatAttachment[]) => void;
@@ -76,6 +79,7 @@ export default function ChatInput({
   selectedModeId,
   onModeChange,
   hasSelectedAgent,
+  availableCommands,
   attachments,
   onAttachmentsChange,
   onImageClick,
@@ -85,6 +89,9 @@ export default function ChatInput({
   isActive = false
 }: ChatInputProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null);
+  const inputRootRef = useRef<HTMLDivElement>(null);
+  const slashMenuRef = useRef<HTMLDivElement>(null);
+  const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
   useEffect(() => {
@@ -153,10 +160,28 @@ export default function ChatInput({
     return () => cancelAnimationFrame(raf);
   }, [autoFocus, conversationId]);
 
+  const {
+    commands: slashCommands,
+    isOpen: isSlashMenuOpen,
+    layout: slashMenuLayout,
+    highlightedIndex,
+    setHighlightedIndex,
+    applyCommand,
+    handleKeyDownCapture,
+  } = useSlashCommands({
+    inputValue,
+    selectedAgentId,
+    availableCommands,
+    inputRootRef,
+    menuRef: slashMenuRef,
+    lexicalEditorRef,
+    onInputChange,
+  });
+
   return (
-    <div style={{ height: customHeight ? `${customHeight}px` : undefined }} className="flex-shrink-0 px-4 pb-4 pt-2">
-      <div className="max-w-4xl mx-auto h-full flex flex-col">
-        <div className="bg-background-secondary rounded-ide border border-border shadow-2xl focus-within:ring-1 focus-within:ring-accent/50 transition-all flex flex-col h-full relative">
+    <div ref={inputRootRef} style={{ height: customHeight ? `${customHeight}px` : undefined }} className="relative flex-shrink-0 px-4 pb-4 pt-2">
+      <div className="mx-auto h-full max-w-4xl flex flex-col">
+        <div className="relative flex h-full flex-col rounded-ide border border-border bg-background-secondary shadow-2xl transition-all focus-within:ring-1 focus-within:ring-accent/50">
           
           <AttachmentBar
             attachments={attachments}
@@ -167,7 +192,8 @@ export default function ChatInput({
           {/* Lexical Editor */}
           <div 
             ref={editorContainerRef}
-            className={`relative flex-1 overflow-y-auto rounded-t-ide min-h-0 bg-background-secondary flex flex-col cursor-text transition-colors ${isDragOver ? 'ring-2 ring-inset ring-accent/50 bg-accent/5' : ''}`}
+            onKeyDownCapture={handleKeyDownCapture}
+            className={`relative flex min-h-0 flex-1 cursor-text flex-col overflow-y-auto rounded-t-ide bg-background-secondary transition-colors ${isDragOver ? 'bg-accent/5 ring-2 ring-inset ring-accent/50' : ''}`}
           >
             <ChatInputActionsContext.Provider value={{ onImageClick, onOpenFile: handleOpenFile, attachments }}>
               <LexicalComposer initialConfig={initialConfig}>
@@ -186,6 +212,9 @@ export default function ChatInput({
                   ErrorBoundary={LexicalErrorBoundary}
                 />
                 <HistoryPlugin />
+                <RegisterEditorPlugin onReady={(editor) => {
+                  lexicalEditorRef.current = editor;
+                }} />
                 <OnChangePlugin onChange={(editorState) => {
                   editorState.read(() => {
                     const text = $getRoot().getTextContent();
@@ -195,7 +224,7 @@ export default function ChatInput({
                 <ClearEditorPlugin inputValue={inputValue} />
                 <AttachmentsSyncPlugin attachments={attachments} onAttachmentsChange={onAttachmentsChange} />
                 <PasteLogPlugin onImagePaste={handleImagePaste} />
-                <KeyboardPlugin onSend={onSend} sendMode={sendMode} />
+                <KeyboardPlugin onSend={onSend} sendMode={sendMode} disabled={isSlashMenuOpen} />
                 <InlineAttachmentBackspacePlugin />
                 <ExternalCodeReferencePlugin
                   isActive={isActive}
@@ -298,6 +327,16 @@ export default function ChatInput({
           </div>
         </div>
       </div>
+      {isSlashMenuOpen && slashMenuLayout && (
+        <SlashCommandMenu
+          commands={slashCommands}
+          highlightedIndex={highlightedIndex}
+          layout={slashMenuLayout}
+          menuRef={slashMenuRef}
+          onHover={setHighlightedIndex}
+          onSelect={applyCommand}
+        />
+      )}
     </div>
   );
 }

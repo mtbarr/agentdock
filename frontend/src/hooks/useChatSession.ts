@@ -13,6 +13,7 @@ import {
   ToolCallBlock,
   ToolCallEntry,
   ContentChunk,
+  AvailableCommand,
   isAgentRunnable
 } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
@@ -481,6 +482,7 @@ export function useChatSession(
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [acpSessionId, setAcpSessionId] = useState<string>('');
+  const [availableCommandsByAgent, setAvailableCommandsByAgent] = useState<Record<string, AvailableCommand[]>>({});
 
   const pendingPromptRef = useRef<any[] | null>(null);
   const pendingHandoffRef = useRef<PendingHandoffContext | null>(null);
@@ -533,6 +535,9 @@ export function useChatSession(
   }, [onHandoffConsumed]);
 
   const selectedAgent = availableAgents.find((agent) => agent.id === selectedAgentId);
+  const availableCommands = selectedAgentId
+    ? (availableCommandsByAgent[selectedAgentId] ?? ACPBridge.getAvailableCommands(selectedAgentId))
+    : [];
   const availableModels = selectedAgent?.availableModels ?? [];
   const availableModes = selectedAgent?.availableModes ?? [];
 
@@ -607,6 +612,17 @@ export function useChatSession(
   }, [availableAgents, initialAgentId, selectedAgentId]);
 
   useEffect(() => {
+    const nextByAgent: Record<string, AvailableCommand[]> = {};
+    availableAgents.forEach((agent) => {
+      const commands = ACPBridge.getAvailableCommands(agent.id);
+      if (commands.length > 0) {
+        nextByAgent[agent.id] = commands;
+      }
+    });
+    setAvailableCommandsByAgent(nextByAgent);
+  }, [availableAgents]);
+
+  useEffect(() => {
     if (!historySession) return;
     if (historySession.modelId) {
       setSelectedModelByAgent((prev) => ({
@@ -664,6 +680,14 @@ export function useChatSession(
   // Chat Event Listeners (filtered by conversationId)
   // =========================================================================
   useEffect(() => {
+    const unsubAvailableCommands = ACPBridge.onAvailableCommands((e) => {
+      const { adapterId, commands } = e.detail;
+      setAvailableCommandsByAgent((prev) => ({
+        ...prev,
+        [adapterId]: commands,
+      }));
+    });
+
     // --- UNIFIED content handler: one handler for both streaming and replay ---
     const unsubContent = ACPBridge.onContentChunk((e) => {
       const chunk = e.detail.chunk;
@@ -755,6 +779,7 @@ export function useChatSession(
     });
 
     return () => {
+      unsubAvailableCommands();
       unsubContent();
       unsubStatus();
       unsubSessionId();
@@ -1066,6 +1091,7 @@ export function useChatSession(
     hasSelectedAgent: !!selectedAgent,
     attachments,
     setAttachments,
+    availableCommands,
     acpSessionId,
     adapterName: selectedAgentId,
     adapterDisplayName,

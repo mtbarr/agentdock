@@ -450,6 +450,7 @@ internal fun AcpClientService.stopSharedProcess(adapterName: String) {
     updateAdapterInitializationState(adapterName, AcpClientService.AdapterInitializationStatus.NotStarted)
     adapterInitialization.remove(adapterName)
     adapterRuntimeMetadataMap.remove(adapterName)
+    availableCommandsByAdapter.remove(adapterName)
     // Also stop any contexts using this process
     sessions.values.filter { it.sharedProcess == shared }.forEach { it.stop() }
 }
@@ -480,6 +481,7 @@ internal fun AcpClientService.shutdown() {
     adapterInitializationState.clear()
     adapterInitializationErrors.clear()
     adapterRuntimeMetadataMap.clear()
+    availableCommandsByAdapter.clear()
 }
 
 /**

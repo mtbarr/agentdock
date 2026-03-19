@@ -89,6 +89,12 @@ export interface ModeOption {
   description?: string;
 }
 
+export interface AvailableCommand {
+  name: string;
+  description: string;
+  inputHint?: string | null;
+}
+
 export interface AgentOption {
   id: string;
   name: string;
@@ -324,6 +330,7 @@ declare global {
     __onStatus?: (chatId: string, status: string) => void;
     __onSessionId?: (chatId: string, id: string) => void;
     __onAdapters?: (adapters: AgentOption[]) => void;
+    __onAvailableCommands?: (adapterId: string, commands: AvailableCommand[]) => void;
     __onMode?: (chatId: string, modeId: string) => void;
     __onPermissionRequest?: (request: PermissionRequest) => void;
     __onHistoryList?: (list: HistorySessionMeta[]) => void;

@@ -26,6 +26,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.io.asSource
 import kotlinx.io.buffered
 import kotlinx.io.asSink
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 internal fun AcpClientService.initializeDownloadedAdaptersInBackground() {
@@ -217,9 +224,9 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
         sharedProc.client = c
         prot.start()
         c.initialize(ClientInfo(LATEST_PROTOCOL_VERSION, ClientCapabilities()))
+        runCatching { ensureAsyncSessionUpdates(sharedProc) }
         adapterRuntimeMetadataMap[requestedAdapterName] = fetchAdapterRuntimeMetadata(c, adapterInfo)
         sharedProc.isInitialized = true
-        runCatching { ensureAsyncSessionUpdates(sharedProc) }
     }
 }
 
@@ -334,6 +341,9 @@ internal fun AcpClientService.ensureAsyncSessionUpdates(sharedProc: AcpClientSer
             }
         }
         val wrapped: suspend (JsonRpcNotification) -> Unit = { notification ->
+            extractAvailableCommands(notification.params)?.let { commands ->
+                updateAvailableCommands(sharedProc.adapterName, commands)
+            }
             val result = queue.trySend(notification)
             if (!result.isSuccess) {
                 updateScope.launch {
@@ -345,4 +355,29 @@ internal fun AcpClientService.ensureAsyncSessionUpdates(sharedProc: AcpClientSer
         handlers.value = handlers.value.put(methodName, wrapped)
         sharedProc.sessionUpdateWrapped = true
     } catch (_: Exception) {}
+}
+
+internal fun AcpClientService.extractAvailableCommands(params: kotlinx.serialization.json.JsonElement?): List<AvailableCommandPayload>? {
+    val paramsObject = params as? JsonObject ?: return null
+    val updateObject = paramsObject["update"] as? JsonObject ?: return null
+    val updateType = (updateObject["sessionUpdate"] as? JsonPrimitive)?.contentOrNull ?: return null
+    if (updateType != "available_commands_update") return null
+
+    val commands = (updateObject["availableCommands"] as? JsonArray)
+        ?.mapNotNull { element ->
+            val commandObject = element as? JsonObject ?: return@mapNotNull null
+            val name = (commandObject["name"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            if (name.isEmpty()) return@mapNotNull null
+            val description = (commandObject["description"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            val inputHint = ((commandObject["input"] as? JsonObject)?.get("hint") as? JsonPrimitive)?.contentOrNull?.trim()
+                ?.takeIf { it.isNotEmpty() }
+            AvailableCommandPayload(
+                name = name,
+                description = description,
+                inputHint = inputHint
+            )
+        }
+        ?: return emptyList()
+
+    return commands
 }
