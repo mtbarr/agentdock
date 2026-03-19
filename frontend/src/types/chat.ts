@@ -343,6 +343,8 @@ declare global {
     __onChangesState?: (chatId: string, state: ChangesState) => void;
 
     __onMcpServers?: (servers: unknown) => void;
+    __onFilesResult?: (filesJson: unknown) => void;
+    __searchFiles?: (query: string) => void;
     __loadMcpServers?: () => void;
     __saveMcpServers?: (json: string) => void;
   }

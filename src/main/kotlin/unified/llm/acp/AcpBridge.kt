@@ -53,6 +53,7 @@ class AcpBridge(
     internal var saveConversationTranscriptQuery: JBCefJSQuery? = null
     internal var openAgentCliQuery: JBCefJSQuery? = null
     internal var openHistoryConversationCliQuery: JBCefJSQuery? = null
+    internal var searchFilesQuery: JBCefJSQuery? = null
 
     internal val promptJobs = ConcurrentHashMap<String, Job>()
     internal val lastStatusByChatId = ConcurrentHashMap<String, String>()

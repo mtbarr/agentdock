@@ -174,6 +174,14 @@ export const ACPBridge = {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.MCP_SERVERS, { detail: { servers } }));
     };
 
+    window.__onFilesResult = (filesJson) => {
+      let files = [];
+      try {
+        files = typeof filesJson === "string" ? JSON.parse(filesJson) : filesJson;
+      } catch (e) {}
+      window.dispatchEvent(new CustomEvent("acp-files-result", { detail: { files } }));
+    };
+
     if (window.__notifyReady) window.__notifyReady();
   },
 
@@ -332,6 +340,16 @@ export const ACPBridge = {
   onConversationTranscriptSaved: (callback: (e: CustomEvent<ConversationTranscriptSavedEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, callback as EventListener);
+  },
+
+  searchFiles: (query: string) => {
+    window.__searchFiles?.(query);
+  },
+
+  onFilesResult: (callback: (e: CustomEvent<{ files: { path: string, name: string }[] }>) => void) => {
+    const fn = (e: Event) => callback(e as CustomEvent);
+    window.addEventListener('acp-files-result', fn);
+    return () => window.removeEventListener('acp-files-result', fn);
   },
 
   loadMcpServers: () => {

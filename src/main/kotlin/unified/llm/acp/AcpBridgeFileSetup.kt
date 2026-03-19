@@ -6,6 +6,7 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
+import kotlinx.serialization.encodeToString
 import unified.llm.changes.AgentDiffViewer
 import unified.llm.changes.ChangesState
 import unified.llm.changes.ChangesStateService
@@ -167,6 +168,73 @@ internal fun AcpBridge.installFileChangeQueries() {
 }
 
 internal fun AcpBridge.installMiscQueries() {
+    searchFilesQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+        addHandler { payload ->
+            val rawQuery = payload?.trim() ?: ""
+            val query = rawQuery.lowercase()
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val results = mutableListOf<FileSearchItem>()
+                val seenPaths = mutableSetOf<String>()
+                val project = service.project
+                val basePath = project.basePath ?: ""
+                
+                // 1. Get matcher for fuzzy matching
+                val matcher = if (rawQuery.isNotEmpty()) {
+                    com.intellij.psi.codeStyle.NameUtil.buildMatcher("*" + rawQuery, com.intellij.psi.codeStyle.NameUtil.MatchingCaseSensitivity.NONE)
+                } else null
+
+                fun addIfMatch(virtualFile: com.intellij.openapi.vfs.VirtualFile): Boolean {
+                    if (virtualFile.isDirectory) return false
+                    val path = virtualFile.path
+                    if (seenPaths.contains(path)) return false
+                    
+                    val name = virtualFile.name
+                    val relPath = path.removePrefix(basePath).trimStart('/', '\\')
+                    
+                    val matches = if (matcher != null) {
+                        matcher.matches(name) || matcher.matches(relPath) || relPath.lowercase().contains(query)
+                    } else true
+                    
+                    if (matches) {
+                        results.add(FileSearchItem(relPath, name))
+                        seenPaths.add(path)
+                        return true
+                    }
+                    return false
+                }
+
+                com.intellij.openapi.application.runReadAction {
+                    // Priority 1: Open files
+                    com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).openFiles?.forEach {
+                        if (results.size < 50) addIfMatch(it)
+                    }
+                    
+                    // Priority 2: Recent files
+                    com.intellij.openapi.fileEditor.impl.EditorHistoryManager.getInstance(project).fileList?.reversed()?.forEach {
+                        if (results.size < 50) addIfMatch(it)
+                    }
+                    
+                    // Priority 3: Index iteration (the rest)
+                    if (results.size < 50 && basePath.isNotEmpty()) {
+                        com.intellij.openapi.roots.ProjectFileIndex.getInstance(project).iterateContent { virtualFile ->
+                            if (results.size >= 50) return@iterateContent false
+                            addIfMatch(virtualFile)
+                            true
+                        }
+                    }
+                }
+                val list = results.toList()
+                val json = try { kotlinx.serialization.json.Json.encodeToString<List<FileSearchItem>>(list) } catch (e: Exception) { "[]" }
+                runOnEdt {
+                    browser.cefBrowser.executeJavaScript(
+                        "if(window.__onFilesResult) window.__onFilesResult(" + json + ");",
+                        browser.cefBrowser.url, 0
+                    )
+                }
+            }
+            JBCefJSQuery.Response("ok")
+        }
+    }
     openFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
             try {

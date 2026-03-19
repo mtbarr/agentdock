@@ -1,27 +1,27 @@
-import { AvailableCommand } from '../../../types/chat';
+import { FileMentionItem } from '../../../hooks/useFileMentions';
 import { SlashMenuLayout } from './slashCommands';
 import PopupMenu from './PopupMenu';
 
-interface SlashCommandMenuProps {
-  commands: AvailableCommand[];
+interface FileMentionMenuProps {
+  files: FileMentionItem[];
   highlightedIndex: number;
   layout: SlashMenuLayout;
   menuRef: React.RefObject<HTMLDivElement>;
   onHover: (index: number) => void;
-  onSelect: (command: AvailableCommand) => void;
+  onSelect: (file: FileMentionItem) => void;
 }
 
-export default function SlashCommandMenu({
-  commands,
+export default function FileMentionMenu({
+  files,
   highlightedIndex,
   layout,
   menuRef,
   onHover,
   onSelect,
-}: SlashCommandMenuProps) {
-  const items = commands.map(cmd => ({
-    primary: `/${cmd.name}`,
-    secondary: cmd.description,
+}: FileMentionMenuProps) {
+  const items = files.map(file => ({
+    primary: file.name,
+    secondary: file.path,
   }));
 
   return (
@@ -31,7 +31,7 @@ export default function SlashCommandMenu({
       layout={layout}
       menuRef={menuRef}
       onHover={onHover}
-      onSelect={(index) => onSelect(commands[index])}
+      onSelect={(index) => onSelect(files[index])}
     />
   );
 }

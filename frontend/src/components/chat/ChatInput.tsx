@@ -20,6 +20,8 @@ import { openFile } from '../../utils/openFile';
 import { ChatUsageIndicator } from '../usage/chat/ChatUsageIndicator';
 import SlashCommandMenu from './input/SlashCommandMenu';
 import { useSlashCommands } from '../../hooks/useSlashCommands';
+import FileMentionMenu from './input/FileMentionMenu';
+import { useFileMentions } from '../../hooks/useFileMentions';
 
 // Sub-components & Plugins
 import { ChatInputActionsContext } from './input/ChatInputActionsContext';
@@ -91,6 +93,7 @@ export default function ChatInput({
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const inputRootRef = useRef<HTMLDivElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -178,11 +181,36 @@ export default function ChatInput({
     onInputChange,
   });
 
+  const {
+    files: mentionedFiles,
+    isOpen: isFileMenuOpen,
+    layout: fileMenuLayout,
+    highlightedIndex: fileHighlightedIndex,
+    setHighlightedIndex: setFileHighlightedIndex,
+    applyFile,
+    handleKeyDownCapture: handleFileMentionsKeyDownCapture,
+  } = useFileMentions({
+    inputRootRef,
+    menuRef: fileMenuRef,
+    lexicalEditorRef,
+  });
+
+  const combinedHandleKeyDownCapture = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+     if (isFileMenuOpen) {
+       handleFileMentionsKeyDownCapture(e);
+       if (e.defaultPrevented) return;
+     }
+     if (isSlashMenuOpen) {
+       handleKeyDownCapture(e);
+       if (e.defaultPrevented) return;
+     }
+  }, [handleFileMentionsKeyDownCapture, handleKeyDownCapture, isFileMenuOpen, isSlashMenuOpen]);
+
   return (
     <div ref={inputRootRef} style={{ height: customHeight ? `${customHeight}px` : undefined }} className="relative flex-shrink-0 px-4 pb-4 pt-2">
       <div className="mx-auto h-full max-w-4xl flex flex-col">
         <div className="relative flex h-full flex-col rounded-ide border border-border bg-background-secondary shadow-2xl transition-all focus-within:ring-1 focus-within:ring-accent/50">
-          
+
           <AttachmentBar
             attachments={attachments}
             onRemove={(id) => onAttachmentsChange(attachments.filter(a => a.id !== id))}
@@ -192,7 +220,7 @@ export default function ChatInput({
           {/* Lexical Editor */}
           <div 
             ref={editorContainerRef}
-            onKeyDownCapture={handleKeyDownCapture}
+            onKeyDownCapture={combinedHandleKeyDownCapture}
             className={`relative flex min-h-0 flex-1 cursor-text flex-col overflow-y-auto rounded-t-ide bg-background-secondary transition-colors ${isDragOver ? 'bg-accent/5 ring-2 ring-inset ring-accent/50' : ''}`}
           >
             <ChatInputActionsContext.Provider value={{ onImageClick, onOpenFile: handleOpenFile, attachments }}>
@@ -335,6 +363,16 @@ export default function ChatInput({
           menuRef={slashMenuRef}
           onHover={setHighlightedIndex}
           onSelect={applyCommand}
+        />
+      )}
+      {isFileMenuOpen && fileMenuLayout && (
+        <FileMentionMenu
+          files={mentionedFiles}
+          highlightedIndex={fileHighlightedIndex}
+          layout={fileMenuLayout}
+          menuRef={fileMenuRef}
+          onHover={setFileHighlightedIndex}
+          onSelect={applyFile}
         />
       )}
     </div>

@@ -26,6 +26,7 @@ internal fun AcpBridge.injectDebugApi(cefBrowser: CefBrowser) {
     val fetchUsageInject = fetchUsageQuery?.inject("adapterId") ?: ""
     val openAgentCliInject = openAgentCliQuery?.inject("adapterId") ?: ""
     val openHistoryConversationCliInject = openHistoryConversationCliQuery?.inject("JSON.stringify(payload)") ?: ""
+    val searchFilesInject = searchFilesQuery?.inject("query") ?: ""
     val undoFileInject = undoFileQuery?.inject("payload") ?: ""
     val undoAllFilesInject = undoAllFilesQuery?.inject("payload") ?: ""
     val processFileInject = processFileQuery?.inject("payload") ?: ""
@@ -95,6 +96,9 @@ internal fun AcpBridge.injectDebugApi(cefBrowser: CefBrowser) {
             };
             window.__openHistoryConversationCli = function(payload) {
                 try { $openHistoryConversationCliInject } catch (e) { }
+            };
+            window.__searchFiles = function(query) {
+                try { $searchFilesInject } catch (e) { }
             };
             window.__undoFile = function(payload) {
                 try { $undoFileInject } catch (e) { }
@@ -179,6 +183,8 @@ internal fun AcpBridge.injectReadySignal(cefBrowser: CefBrowser) {
         window.__fetchAdapterUsage = window.__fetchAdapterUsage || function(id) {};
         window.__openAgentCli = window.__openAgentCli || function(id) {};
         window.__openHistoryConversationCli = window.__openHistoryConversationCli || function(payload) {};
+        window.__searchFiles = window.__searchFiles || function(query) {};
+        window.__onFilesResult = window.__onFilesResult || function(files) {};
         window.__attachFile = window.__attachFile || function(chatId) {};
         window.__updateSessionMetadata = window.__updateSessionMetadata || function(payload) {};
         window.__continueConversationWithSession = window.__continueConversationWithSession || function(payload) {};

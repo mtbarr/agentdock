@@ -106,3 +106,6 @@ internal data class HistoryReplayCapture(
     var currentModeId: String? = null,
     val sessions: MutableList<ReplaySessionCapture> = mutableListOf()
 )
+
+@Serializable
+internal data class FileSearchItem(val path: String, val name: String)
