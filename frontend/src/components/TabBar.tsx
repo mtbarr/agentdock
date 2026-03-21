@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { FileText, History, Network, Palette, Settings } from 'lucide-react';
+import { Bookmark, FileText, History, Network, Palette, Settings } from 'lucide-react';
 import { AgentOption, ChatTab, TabUiFlags, isAgentRunnable } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
 
@@ -17,6 +17,7 @@ interface TabBarProps {
   onOpenManagement: () => void;
   onOpenDesignSystem: () => void;
   onOpenMcp: () => void;
+  onOpenPromptLibrary: () => void;
   onOpenSystemInstructions: () => void;
 }
 
@@ -56,6 +57,7 @@ const McpTabIcon = () => <Network size={14} className="text-foreground/70 flex-s
 
 /** Icon for the history tab in the tab bar */
 const HistoryTabIcon = () => <History size={14} className="text-foreground/70 flex-shrink-0" />;
+const PromptLibraryTabIcon = () => <Bookmark size={14} className="text-foreground/70 flex-shrink-0" />;
 const SystemInstructionsTabIcon = () => <FileText size={14} className="text-foreground/70 flex-shrink-0" />;
 
 /** Get the icon for a tab based on its type */
@@ -64,6 +66,7 @@ const getTabIcon = (tab: ChatTab, agents: AgentOption[]) => {
   if (tab.type === 'design') return <DesignTabIcon />;
   if (tab.type === 'history') return <HistoryTabIcon />;
   if (tab.type === 'mcp') return <McpTabIcon />;
+  if (tab.type === 'prompt-library') return <PromptLibraryTabIcon />;
   if (tab.type === 'system-instructions') return <SystemInstructionsTabIcon />;
   return getAgentIcon(tab.agentId, agents);
 };
@@ -82,6 +85,7 @@ export default function TabBar({
   onOpenManagement,
   onOpenDesignSystem,
   onOpenMcp,
+  onOpenPromptLibrary,
   onOpenSystemInstructions
 }: TabBarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -323,6 +327,18 @@ export default function TabBar({
                   <ManagementTabIcon />
                 </span>
                 <span>Service Providers</span>
+              </button>
+              <button
+                onClick={() => {
+                  onOpenPromptLibrary();
+                  setHamburgerMenuOpen(false);
+                }}
+                className="flex items-center w-full px-3 py-2 text-left text-foreground/80 hover:bg-accent hover:text-accent-foreground transition-colors group"
+              >
+                <span className="mr-2 flex items-center justify-center opacity-70 group-hover:opacity-100">
+                  <PromptLibraryTabIcon />
+                </span>
+                <span>Prompt Library</span>
               </button>
               <button
                 onClick={() => {

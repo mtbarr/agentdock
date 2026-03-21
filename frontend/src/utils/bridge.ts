@@ -14,6 +14,7 @@ import {
   AvailableCommand,
 } from '../types/chat';
 import { McpServerConfig } from '../types/mcp';
+import { PromptLibraryItem } from '../types/promptLibrary';
 import { SystemInstruction } from '../types/systemInstructions';
 
 export interface ContentChunkEvent { chunk: ContentChunk; }
@@ -31,11 +32,13 @@ export interface ToolCallBridgeEvent { chatId: string; payload: ToolCallEvent; }
 export interface ConversationTranscriptSavedEvent { payload: ConversationTranscriptSavedPayload; }
 
 export interface McpServersEvent { servers: McpServerConfig[]; }
+export interface PromptLibraryEvent { items: PromptLibraryItem[]; }
 export interface SystemInstructionsEvent { instructions: SystemInstruction[]; }
 
 const EVENT_NAMES = {
   CONTENT_CHUNK: 'acp-content-chunk',
   MCP_SERVERS: 'mcp-servers',
+  PROMPT_LIBRARY: 'prompt-library',
   SYSTEM_INSTRUCTIONS: 'system-instructions',
   STATUS: 'acp-status',
   SESSION_ID: 'acp-session-id',
@@ -175,6 +178,10 @@ export const ACPBridge = {
 
     window.__onMcpServers = (servers) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.MCP_SERVERS, { detail: { servers } }));
+    };
+
+    window.__onPromptLibrary = (items) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.PROMPT_LIBRARY, { detail: { items } }));
     };
 
     window.__onSystemInstructions = (instructions) => {
@@ -370,6 +377,19 @@ export const ACPBridge = {
   onMcpServers: (callback: (e: CustomEvent<McpServersEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.MCP_SERVERS, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.MCP_SERVERS, callback as EventListener);
+  },
+
+  loadPromptLibrary: () => {
+    window.__loadPromptLibrary?.();
+  },
+
+  savePromptLibrary: (items: PromptLibraryItem[]) => {
+    window.__savePromptLibrary?.(JSON.stringify(items));
+  },
+
+  onPromptLibrary: (callback: (e: CustomEvent<PromptLibraryEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.PROMPT_LIBRARY, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.PROMPT_LIBRARY, callback as EventListener);
   },
 
   loadSystemInstructions: () => {

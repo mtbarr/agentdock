@@ -7,6 +7,7 @@ import HistoryPanel from './components/HistoryPanel';
 import { AgentManagementView } from './components/AgentManagement';
 import { DesignSystemView } from './components/DesignSystem';
 import { McpServersView } from './components/McpServersView';
+import { PromptLibraryView } from './components/PromptLibraryView';
 import { SystemInstructionsView } from './components/SystemInstructionsView';
 import ConfirmationModal from './components/ConfirmationModal';
 
@@ -398,6 +399,7 @@ function App() {
         onOpenManagement={() => openSingletonTab('management', 'Service Providers')}
         onOpenDesignSystem={() => openSingletonTab('design', 'Design System')}
         onOpenMcp={() => openSingletonTab('mcp', 'MCP Servers')}
+        onOpenPromptLibrary={() => openSingletonTab('prompt-library', 'Prompt Library')}
         onOpenSystemInstructions={() => openSingletonTab('system-instructions', 'System Instructions')}
       />
 
@@ -433,6 +435,7 @@ function App() {
                 <HistoryPanel availableAgents={availableAgents} onOpenSession={handleOpenHistory} />
               )}
               {tab.type === 'mcp' && <McpServersView />}
+              {tab.type === 'prompt-library' && <PromptLibraryView />}
               {tab.type === 'system-instructions' && <SystemInstructionsView />}
             </div>
           );

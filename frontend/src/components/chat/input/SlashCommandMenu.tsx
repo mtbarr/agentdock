@@ -1,14 +1,13 @@
-import { AvailableCommand } from '../../../types/chat';
-import { SlashMenuLayout } from './slashCommands';
+import { SlashCommandItem, SlashMenuLayout } from './slashCommands';
 import PopupMenu from './PopupMenu';
 
 interface SlashCommandMenuProps {
-  commands: AvailableCommand[];
+  commands: SlashCommandItem[];
   highlightedIndex: number;
   layout: SlashMenuLayout;
   menuRef: React.RefObject<HTMLDivElement>;
   onHover: (index: number) => void;
-  onSelect: (command: AvailableCommand) => void;
+  onSelect: (command: SlashCommandItem) => void;
 }
 
 export default function SlashCommandMenu({
@@ -20,7 +19,7 @@ export default function SlashCommandMenu({
   onSelect,
 }: SlashCommandMenuProps) {
   const items = commands.map(cmd => ({
-    primary: `/${cmd.name}`,
+    primary: `${cmd.displayPrefix}${cmd.name}`,
     secondary: cmd.description,
   }));
 

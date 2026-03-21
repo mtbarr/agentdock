@@ -26,6 +26,7 @@ import unified.llm.acp.injectReadySignal
 import unified.llm.acp.shutdown
 import unified.llm.history.HistoryBridge
 import unified.llm.mcp.McpBridge
+import unified.llm.promptlibrary.PromptLibraryBridge
 import unified.llm.systeminstructions.SystemInstructionsBridge
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -46,6 +47,7 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
     private var historyBridge: HistoryBridge? = null
     private var mcpBridge: McpBridge? = null
     private var systemInstructionsBridge: SystemInstructionsBridge? = null
+    private var promptLibraryBridge: PromptLibraryBridge? = null
 
     companion object {
         // --- DEVELOPMENT TOGGLE ---
@@ -186,11 +188,13 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                         historyBridge = HistoryBridge(browser, project, scope)
                         mcpBridge = McpBridge(browser, scope)
                         systemInstructionsBridge = SystemInstructionsBridge(browser, scope)
+                        promptLibraryBridge = PromptLibraryBridge(browser, scope)
 
                         debugBridge?.install()
                         historyBridge?.install()
                         mcpBridge?.install()
                         systemInstructionsBridge?.install()
+                        promptLibraryBridge?.install()
 
 
                         // Solve JCEF cursor: pointer not working issue on Windows
@@ -273,6 +277,7 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                                     historyBridge?.injectApi(cefBrowser)
                                     mcpBridge?.injectApi(cefBrowser)
                                     systemInstructionsBridge?.injectApi(cefBrowser)
+                                    promptLibraryBridge?.injectApi(cefBrowser)
                                 }
                             }
                         }, browser.cefBrowser)

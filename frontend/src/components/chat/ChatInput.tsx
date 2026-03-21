@@ -14,12 +14,15 @@ import {
 
 import ChatDropdown from './ChatDropdown';
 import { AvailableCommand, ChatAttachment, DropdownOption } from '../../types/chat';
+import { PromptLibraryItem } from '../../types/promptLibrary';
 import AttachmentBar from './input/AttachmentBar';
 import { Tooltip } from './shared/Tooltip';
+import { ACPBridge } from '../../utils/bridge';
 import { openFile } from '../../utils/openFile';
 import { ChatUsageIndicator } from '../usage/chat/ChatUsageIndicator';
 import SlashCommandMenu from './input/SlashCommandMenu';
 import { useSlashCommands } from '../../hooks/useSlashCommands';
+import { buildAgentSlashItems, buildPromptLibrarySlashItems } from './input/slashCommands';
 import FileMentionMenu from './input/FileMentionMenu';
 import { useFileMentions } from '../../hooks/useFileMentions';
 
@@ -96,6 +99,13 @@ export default function ChatInput({
   const fileMenuRef = useRef<HTMLDivElement>(null);
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [promptLibraryItems, setPromptLibraryItems] = useState<PromptLibraryItem[]>([]);
+
+  useEffect(() => {
+    const cleanup = ACPBridge.onPromptLibrary((e) => setPromptLibraryItems(e.detail.items));
+    ACPBridge.loadPromptLibrary();
+    return cleanup;
+  }, []);
 
   useEffect(() => {
     const handleDragHighlight = (e: Event) => {
@@ -131,6 +141,11 @@ export default function ChatInput({
     },
     onError: (error: Error) => console.error(error),
   }), [conversationId]);
+
+  const slashItems = useMemo(() => ([
+    ...buildAgentSlashItems(availableCommands),
+    ...buildPromptLibrarySlashItems(promptLibraryItems),
+  ]), [availableCommands, promptLibraryItems]);
 
   const handleImagePaste = useCallback((file: File, editor: LexicalEditor) => {
     const reader = new FileReader();
@@ -174,7 +189,7 @@ export default function ChatInput({
   } = useSlashCommands({
     inputValue,
     selectedAgentId,
-    availableCommands,
+    availableCommands: slashItems,
     inputRootRef,
     menuRef: slashMenuRef,
     lexicalEditorRef,

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { LexicalEditor } from 'lexical';
-import { AvailableCommand } from '../types/chat';
 import {
   applySlashCommandToEditor,
+  SlashCommandItem,
   calculateSlashMenuLayout,
   computeViewportTopInset,
   extractSlashQuery,
@@ -14,7 +14,7 @@ import {
 interface UseSlashCommandsOptions {
   inputValue: string;
   selectedAgentId: string;
-  availableCommands: AvailableCommand[];
+  availableCommands: SlashCommandItem[];
   inputRootRef: React.RefObject<HTMLDivElement>;
   menuRef: React.RefObject<HTMLDivElement>;
   lexicalEditorRef: React.RefObject<LexicalEditor | null>;
@@ -47,7 +47,7 @@ export function useSlashCommands({
     setLayout(null);
   }, [inputValue]);
 
-  const applyCommand = useCallback((command: AvailableCommand) => {
+  const applyCommand = useCallback((command: SlashCommandItem) => {
     const nextValue = applySlashCommandToEditor(
       lexicalEditorRef.current,
       command,

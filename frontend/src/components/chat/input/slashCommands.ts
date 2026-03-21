@@ -5,6 +5,37 @@ import {
   LexicalEditor,
 } from 'lexical';
 import { AvailableCommand } from '../../../types/chat';
+import { PromptLibraryItem } from '../../../types/promptLibrary';
+
+export interface SlashCommandItem {
+  id: string;
+  name: string;
+  description: string;
+  insertText: string;
+  displayPrefix: string;
+}
+
+export function buildAgentSlashItems(commands: AvailableCommand[]): SlashCommandItem[] {
+  return commands.map((command) => ({
+    id: `agent-${command.name}`,
+    name: command.name,
+    description: command.description,
+    insertText: `/${command.name} `,
+    displayPrefix: '/',
+  }));
+}
+
+export function buildPromptLibrarySlashItems(prompts: PromptLibraryItem[]): SlashCommandItem[] {
+  return prompts
+    .filter((prompt) => prompt.name.trim() && prompt.prompt.trim())
+    .map((prompt) => ({
+      id: prompt.id,
+      name: prompt.name.trim(),
+      description: prompt.prompt.trim(),
+      insertText: prompt.prompt,
+      displayPrefix: '',
+    }));
+}
 
 export interface SlashMenuLayout {
   width: number;
@@ -16,13 +47,13 @@ export function extractSlashQuery(inputValue: string): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
-export function hasMatchingSlashCommand(commands: AvailableCommand[], slashQuery: string | null): boolean {
+export function hasMatchingSlashCommand(commands: SlashCommandItem[], slashQuery: string | null): boolean {
   if (slashQuery === null) return false;
   if (slashQuery.length === 0) return commands.length > 0;
   return commands.some((command) => command.name.toLowerCase().startsWith(slashQuery));
 }
 
-export function findHighlightedSlashCommandIndex(commands: AvailableCommand[], slashQuery: string | null): number {
+export function findHighlightedSlashCommandIndex(commands: SlashCommandItem[], slashQuery: string | null): number {
   if (commands.length === 0) return 0;
   if (slashQuery === null || slashQuery.length === 0) return 0;
   const normalizedQuery = slashQuery.toLowerCase();
@@ -66,10 +97,10 @@ export function computeViewportTopInset(rootElement: HTMLDivElement): number {
 
 export function applySlashCommandToEditor(
   editor: LexicalEditor | null,
-  command: AvailableCommand,
+  command: SlashCommandItem,
   onInputChange: (value: string) => void
 ): string {
-  const nextValue = `/${command.name} `;
+  const nextValue = command.insertText;
   onInputChange(nextValue);
 
   if (editor) {
