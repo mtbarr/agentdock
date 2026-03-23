@@ -103,13 +103,15 @@ export interface AgentOption {
   availableModels?: ModelOption[];
   currentModeId?: string;
   availableModes?: ModeOption[];
-  downloaded: boolean;
+  downloaded?: boolean;
+  downloadedKnown?: boolean;
   downloadPath?: string;
   downloading?: boolean;
   downloadStatus?: string;
   disabledModels?: string[];
   hasAuthentication?: boolean;
   authAuthenticated?: boolean;
+  authKnown?: boolean;
   authLoading?: boolean;
   authError?: string;
   authenticating?: boolean;
@@ -117,12 +119,20 @@ export interface AgentOption {
   initializing?: boolean;
   initializationError?: string;
   ready?: boolean;
+  readyKnown?: boolean;
+  installedVersion?: string;
+  latestVersion?: string;
+  updateSupported?: boolean;
+  updateChecking?: boolean;
+  updateKnown?: boolean;
+  updateAvailable?: boolean;
   cliAvailable?: boolean;
   usageStrategy?: string;
+  executionTarget?: 'windows' | 'wsl';
 }
 
 export function isAgentRunnable(agent: AgentOption): boolean {
-  return agent.downloaded;
+  return agent.downloaded === true;
 }
 
 export interface PermissionRequest {
@@ -313,6 +323,27 @@ export interface AudioTranscriptionSettings {
   language: string;
 }
 
+export interface HostSettingsInfo {
+  hostOs: 'windows' | 'other';
+  wslSupported: boolean;
+  wslDistributions: { name: string }[];
+}
+
+export interface GlobalSettings {
+  useWslForAcpAdapters: boolean;
+  wslDistributionName: string;
+  audioTranscription: AudioTranscriptionSettings;
+}
+
+export interface GlobalSettingsPayload {
+  settings: GlobalSettings;
+  host: HostSettingsInfo;
+}
+
+export interface ExecutionTargetSwitchPayload {
+  executionTarget: 'windows' | 'wsl';
+}
+
 declare global {
   interface Window {
     // Actions (Frontend -> Backend)
@@ -327,6 +358,7 @@ declare global {
     __stopAgent?: (conversationId: string) => void;
     __downloadAgent?: (adapterId: string) => void;
     __deleteAgent?: (adapterId: string) => void;
+    __updateAgent?: (adapterId: string) => void;
     __requestHistoryList?: (projectPath?: string) => void;
     __deleteHistoryConversations?: (payload: { projectPath: string; conversationIds: string[] }) => void;
     __renameHistoryConversation?: (payload: { projectPath: string; conversationId: string; newTitle: string }) => void;
@@ -392,6 +424,11 @@ declare global {
     __loadAudioTranscriptionSettings?: () => void;
     __saveAudioTranscriptionSettings?: (payload: string) => void;
     __onAudioTranscriptionSettings?: (settings: AudioTranscriptionSettings) => void;
+    __loadGlobalSettings?: () => void;
+    __saveGlobalSettings?: (payload: string) => void;
+    __onGlobalSettings?: (payload: GlobalSettingsPayload) => void;
+    __onExecutionTargetSwitched?: (payload: ExecutionTargetSwitchPayload) => void;
+    __settingsBridgeReady?: boolean;
   }
 }
 

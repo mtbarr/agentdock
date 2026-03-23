@@ -9,6 +9,7 @@ object GlobalSettingsStore {
     private val json = Json {
         ignoreUnknownKeys = true
         prettyPrint = true
+        encodeDefaults = true
     }
 
     private fun settingsFile(): File = File(AcpAdapterPaths.getBaseRuntimeDir(), "settings.json")
@@ -16,7 +17,7 @@ object GlobalSettingsStore {
     fun load(): GlobalSettings {
         val file = settingsFile()
         if (!file.isFile) {
-            return GlobalSettings()
+            return save(GlobalSettings())
         }
 
         return runCatching {
@@ -26,6 +27,7 @@ object GlobalSettingsStore {
 
     fun save(settings: GlobalSettings): GlobalSettings {
         val normalized = settings.copy(
+            wslDistributionName = settings.wslDistributionName.trim(),
             audioTranscription = settings.audioTranscription.copy(
                 language = normalizeLanguage(settings.audioTranscription.language)
             )

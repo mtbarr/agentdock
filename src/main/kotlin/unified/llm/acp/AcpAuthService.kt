@@ -58,13 +58,23 @@ object AcpAuthService {
             ?: return AuthStatus(authenticated = false)
         val authConfig = adapterInfo.authConfig ?: return AuthStatus(authenticated = false)
         if (authConfig.statusArgs.isEmpty()) return AuthStatus(authenticated = false)
+        val target = AcpAdapterPaths.getExecutionTarget()
 
         return runCatching {
             val cmd = buildCommand(adapterInfo, authConfig, authConfig.statusArgs).orEmpty()
             if (cmd.isEmpty()) return@runCatching AuthStatus(authenticated = false)
+            if (target == AcpExecutionTarget.WSL) {
+                val result = AcpExecutionMode.runWslExec(
+                    command = cmd,
+                    cwd = resolveWorkingDir(adapterInfo, target = target),
+                    timeoutSeconds = STATUS_COMMAND_TIMEOUT_SECONDS
+                ) ?: return@runCatching AuthStatus(authenticated = false)
+                if (result.exitCode != 0) return@runCatching AuthStatus(authenticated = false)
+                return@runCatching AuthStatus(authenticated = parseAuthenticatedFromStatusOutput(result.stdout.trim()))
+            }
 
             val proc = ProcessBuilder(cmd)
-                .directory(resolveWorkingDir(adapterInfo))
+                .directory(resolveWorkingDirFile(adapterInfo))
                 .redirectErrorStream(true)
                 .start()
             val output = proc.inputStream.bufferedReader().use { it.readText() }.trim()
@@ -73,9 +83,9 @@ object AcpAuthService {
                 proc.destroyForcibly()
                 return@runCatching AuthStatus(authenticated = false)
             }
+            val parsedResult = parseAuthenticatedFromStatusOutput(output)
             if (proc.exitValue() != 0) return@runCatching AuthStatus(authenticated = false)
-
-            AuthStatus(authenticated = parseAuthenticatedFromStatusOutput(output))
+            AuthStatus(authenticated = parsedResult)
         }.getOrElse {
             AuthStatus(authenticated = false)
         }
@@ -97,8 +107,24 @@ object AcpAuthService {
             }
 
             val cmd = buildCommand(adapterInfo, authConfig, loginArgs) ?: return@withContext false
+            val target = AcpAdapterPaths.getExecutionTarget()
+            if (target == AcpExecutionTarget.WSL) {
+                val result = AcpExecutionMode.runWslExec(
+                    command = cmd,
+                    cwd = resolveWorkingDir(adapterInfo, projectPath, target),
+                    timeoutSeconds = LOGIN_COMMAND_TIMEOUT_MS / 1000
+                ) ?: return@withContext false
+                if (result.exitCode != 0) {
+                    val raw = result.stderr.trim().ifBlank { result.stdout.trim() }
+                    val tail = if (raw.length > 240) raw.takeLast(240) else raw
+                    val details = if (tail.isNotBlank()) ": $tail" else ""
+                    throw Exception("Login command failed (exit ${result.exitCode})$details")
+                }
+                return@withContext true
+            }
+
             val process = ProcessBuilder(cmd)
-                .directory(resolveWorkingDir(adapterInfo, projectPath))
+                .directory(resolveWorkingDirFile(adapterInfo, projectPath))
                 .redirectErrorStream(true)
                 .start()
 
@@ -146,13 +172,23 @@ object AcpAuthService {
     suspend fun logout(adapterName: String): Boolean = withContext(Dispatchers.IO) {
         val adapterInfo = AcpAdapterConfig.getAdapterInfo(adapterName)
         val authConfig = adapterInfo.authConfig ?: return@withContext false
+        val target = AcpAdapterPaths.getExecutionTarget()
 
         if (authConfig.logoutArgs.isNotEmpty()) {
             val cmd = buildCommand(adapterInfo, authConfig, authConfig.logoutArgs)
             if (!cmd.isNullOrEmpty()) {
                 try {
+                    if (target == AcpExecutionTarget.WSL) {
+                        AcpExecutionMode.runWslExec(
+                            command = cmd,
+                            cwd = resolveWorkingDir(adapterInfo, target = target),
+                            timeoutSeconds = LOGOUT_COMMAND_TIMEOUT_SECONDS
+                        )
+                        return@withContext true
+                    }
+
                     val proc = ProcessBuilder(cmd)
-                        .directory(resolveWorkingDir(adapterInfo))
+                        .directory(resolveWorkingDirFile(adapterInfo))
                         .redirectErrorStream(true)
                         .start()
                     val drainer = Thread {
@@ -193,15 +229,18 @@ object AcpAuthService {
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         authConfig: AcpAdapterConfig.AuthConfig
     ): List<String>? {
+        val target = AcpAdapterPaths.getExecutionTarget()
         if (authConfig.command.isNotEmpty()) {
             return authConfig.command.toMutableList().also { cmd ->
-                val os = System.getProperty("os.name").lowercase()
-                if (os.contains("win")) {
+                if (target == AcpExecutionTarget.LOCAL) {
                     val first = cmd.firstOrNull().orEmpty()
                     if (first.equals("npx", ignoreCase = true)) {
                         cmd[0] = "npx.cmd"
                     } else if (first.equals("npm", ignoreCase = true)) {
                         cmd[0] = "npm.cmd"
+                    }
+                    if (cmd[0].endsWith(".cmd", true) || cmd[0].endsWith(".bat", true)) {
+                        cmd.addAll(0, listOf("cmd.exe", "/c"))
                     }
                 }
             }
@@ -224,26 +263,41 @@ object AcpAuthService {
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         authScript: String?
     ): Pair<String, Boolean>? {
-        val downloadPath = AcpAdapterPaths.getDownloadPath(adapterInfo.id)
-        val adapterRoot = if (downloadPath.isNotEmpty()) File(downloadPath) else null
-        if (adapterRoot == null) return null
+        val target = AcpAdapterPaths.getExecutionTarget()
+        val downloadPath = AcpAdapterPaths.getDownloadPath(adapterInfo.id, target)
+        if (downloadPath.isEmpty()) return null
 
         if (authScript.isNullOrBlank()) {
-            val file = AcpAdapterPaths.resolveLaunchFile(adapterRoot, adapterInfo) ?: return null
-            if (!file.isFile) return null
-            val path = file.absolutePath
+            val path = when (target) {
+                AcpExecutionTarget.LOCAL -> {
+                    val adapterRoot = File(downloadPath)
+                    val file = AcpAdapterPaths.resolveLaunchFile(adapterRoot, adapterInfo, target) ?: return null
+                    if (!file.isFile) return null
+                    file.absolutePath
+                }
+                AcpExecutionTarget.WSL -> {
+                    AcpAdapterPaths.resolveLaunchPath(downloadPath, adapterInfo, target) ?: return null
+                }
+            }
             val useNode = path.endsWith(".js") || path.endsWith(".mjs")
             return path to useNode
         }
 
         var relPath = authScript
         if (relPath.contains("node_modules/.bin/") || relPath.contains("node_modules\\.bin\\")) {
-            val os = System.getProperty("os.name").lowercase()
-            if (os.contains("win") && !relPath.endsWith(".cmd") && !relPath.endsWith(".bat")) {
+            if (target == AcpExecutionTarget.LOCAL && !relPath.endsWith(".cmd") && !relPath.endsWith(".bat")) {
                 relPath += ".cmd"
             }
         }
 
+        if (target == AcpExecutionTarget.WSL) {
+            val normalized = relPath.replace("\\", "/")
+            val path = if (normalized.startsWith("/")) normalized else "${downloadPath.trimEnd('/')}/$normalized"
+            val useNode = normalized.endsWith(".js") || normalized.endsWith(".mjs")
+            return path to useNode
+        }
+
+        val adapterRoot = File(downloadPath)
         val explicitFile = File(relPath)
         if (explicitFile.isAbsolute && explicitFile.isFile) {
             val path = explicitFile.absolutePath
@@ -260,23 +314,42 @@ object AcpAuthService {
 
     private fun resolveWorkingDir(
         adapterInfo: AcpAdapterConfig.AdapterInfo,
+        projectPath: String? = null,
+        target: AcpExecutionTarget = AcpAdapterPaths.getExecutionTarget()
+    ): String? {
+        if (!projectPath.isNullOrBlank()) {
+            return if (target == AcpExecutionTarget.WSL) {
+                AcpExecutionMode.toWslPath(projectPath) ?: projectPath
+            } else {
+                projectPath
+            }
+        }
+        val downloadPath = AcpAdapterPaths.getDownloadPath(adapterInfo.id, target)
+        return downloadPath.takeIf { it.isNotBlank() }
+    }
+
+    private fun resolveWorkingDirFile(
+        adapterInfo: AcpAdapterConfig.AdapterInfo,
         projectPath: String? = null
     ): File? {
-        if (!projectPath.isNullOrBlank()) {
-            return File(projectPath)
-        }
-        val downloadPath = AcpAdapterPaths.getDownloadPath(adapterInfo.id)
-        return downloadPath.takeIf { it.isNotBlank() }?.let(::File)
+        return resolveWorkingDir(adapterInfo, projectPath, AcpExecutionTarget.LOCAL)?.let(::File)
     }
 
     private fun findNodeExecutable(): String {
-        return if (System.getProperty("os.name").lowercase().contains("win")) "node.exe" else "node"
+        return if (AcpAdapterPaths.getExecutionTarget() == AcpExecutionTarget.LOCAL) "node.exe" else "node"
     }
 
     private fun parseAuthenticatedFromStatusOutput(output: String): Boolean {
         if (output.isBlank()) return false
 
-        val parsedJson = runCatching { statusJson.parseToJsonElement(output).jsonObject }.getOrNull()
+        val parsedJson = runCatching {
+            // Attempt to locate JSON boundary if stream is dirtied with node warnings
+            val jsonStart = output.indexOf('{')
+            val jsonEnd = output.lastIndexOf('}')
+            val cleanOutput = if (jsonStart >= 0 && jsonEnd > jsonStart) output.substring(jsonStart, jsonEnd + 1) else output
+            statusJson.parseToJsonElement(cleanOutput).jsonObject
+        }.getOrNull()
+        
         if (parsedJson != null) {
             val loggedIn = parsedJson["loggedIn"]?.jsonPrimitive?.booleanOrNull
             if (loggedIn != null) return loggedIn
@@ -285,6 +358,7 @@ object AcpAuthService {
         }
 
         val lower = output.lowercase()
+        if (lower.contains("\"loggedin\": true") || lower.contains("\"loggedin\":true")) return true
         if (lower.contains("not logged in")) return false
         if (lower.contains("logged in")) return true
         if (lower.contains("authenticated")) return true

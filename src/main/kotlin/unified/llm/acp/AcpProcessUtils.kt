@@ -7,9 +7,9 @@ import java.io.File
  */
 internal object AcpProcessUtils {
 
-    fun stopProcessesUsingAdapterRoot(adapterName: String) {
+    fun stopProcessesUsingAdapterRoot(adapterName: String, target: AcpExecutionTarget = AcpAdapterPaths.getExecutionTarget()) {
         val adapterRoot = runCatching {
-            File(AcpAdapterPaths.getDownloadPath(adapterName))
+            File(AcpAdapterPaths.getDownloadPath(adapterName, target))
         }.getOrNull() ?: return
 
         val normalizedRoot = adapterRoot.absoluteFile.normalize().path.replace('\\', '/').lowercase().trimEnd('/')

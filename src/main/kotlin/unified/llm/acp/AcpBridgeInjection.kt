@@ -21,6 +21,7 @@ internal fun AcpBridge.injectDebugApi(cefBrowser: CefBrowser) {
     val loadConversationInject = loadConversationQuery?.inject("JSON.stringify({ chatId: chatId, projectPath: (projectPath || ''), conversationId: (conversationId || '') })") ?: ""
     val downloadAgentInject = downloadAgentQuery?.inject("adapterId") ?: ""
     val deleteAgentInject = deleteAgentQuery?.inject("adapterId") ?: ""
+    val updateAgentInject = updateAgentQuery?.inject("adapterId") ?: ""
     val loginAgentInject = loginAgentQuery?.inject("adapterId") ?: ""
     val logoutAgentInject = logoutAgentQuery?.inject("adapterId") ?: ""
     val fetchUsageInject = fetchUsageQuery?.inject("adapterId") ?: ""
@@ -81,6 +82,9 @@ internal fun AcpBridge.injectDebugApi(cefBrowser: CefBrowser) {
             };
             window.__deleteAgent = function(adapterId) {
                 try { $deleteAgentInject } catch (e) { }
+            };
+            window.__updateAgent = function(adapterId) {
+                try { $updateAgentInject } catch (e) { }
             };
             window.__loginAgent = function(adapterId) {
                 try { $loginAgentInject } catch (e) { }
@@ -178,6 +182,7 @@ internal fun AcpBridge.injectReadySignal(cefBrowser: CefBrowser) {
         };
         window.__downloadAgent = window.__downloadAgent || function(id) {};
         window.__deleteAgent = window.__deleteAgent || function(id) {};
+        window.__updateAgent = window.__updateAgent || function(id) {};
         window.__loginAgent = window.__loginAgent || function(id) {};
         window.__logoutAgent = window.__logoutAgent || function(id) {};
         window.__fetchAdapterUsage = window.__fetchAdapterUsage || function(id) {};

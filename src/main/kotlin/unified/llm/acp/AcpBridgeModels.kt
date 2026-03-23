@@ -28,22 +28,32 @@ internal data class AdapterPayload(
     val availableModels: List<AdapterModelPayload>,
     val currentModeId: String,
     val availableModes: List<AdapterModePayload>,
-    val downloaded: Boolean,
-    val downloadPath: String,
+    val downloaded: Boolean? = null,
+    val downloadedKnown: Boolean = false,
+    val downloadPath: String = "",
     val hasAuthentication: Boolean,
-    val authAuthenticated: Boolean,
+    val authAuthenticated: Boolean? = null,
+    val authKnown: Boolean = false,
     val authLoading: Boolean,
     val authError: String,
     val authenticating: Boolean,
     val authUiMode: String,
     val initializing: Boolean,
     val initializationError: String,
-    val ready: Boolean,
+    val ready: Boolean? = null,
+    val readyKnown: Boolean = false,
+    val installedVersion: String? = null,
+    val latestVersion: String? = null,
+    val updateSupported: Boolean = false,
+    val updateChecking: Boolean = false,
+    val updateKnown: Boolean = false,
+    val updateAvailable: Boolean = false,
     val downloading: Boolean,
     val downloadStatus: String,
     val disabledModels: List<String>,
     val cliAvailable: Boolean,
-    val usageStrategy: String? = null
+    val usageStrategy: String? = null,
+    val executionTarget: String = "windows"
 )
 
 @Serializable
@@ -70,6 +80,19 @@ internal data class SaveConversationTranscriptResultPayload(
 )
 
 internal val adapterJson = Json { encodeDefaults = true }
+
+internal data class AdapterDownloadProbeState(
+    val downloaded: Boolean? = null,
+    val downloadedKnown: Boolean = false,
+    val installedVersion: String? = null
+)
+
+internal data class WslRuntimeProbeState(
+    val attempted: Boolean = false,
+    val ready: Boolean = false,
+    val homeDir: String? = null,
+    val distroName: String? = null
+)
 
 internal data class LivePromptCapture(
     val captureId: String,

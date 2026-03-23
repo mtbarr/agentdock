@@ -3,7 +3,6 @@ package unified.llm.acp
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.extensions.PluginId
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -17,15 +16,11 @@ internal class AcpBridgeCli(
     private val project: Project,
     private val runOnEdt: (() -> Unit) -> Unit
 ) {
-    private val logger = Logger.getInstance(AcpBridgeCli::class.java)
-
     fun openAgentCliInTerminal(adapterId: String) {
         val (adapterInfo, command) = buildCliCommand(adapterId, emptyList()) ?: return
         if (command.isBlank()) return
-
-        val adapterRoot = File(AcpAdapterPaths.getDownloadPath(adapterId))
-        val workingDir = project.basePath ?: adapterRoot.absolutePath
-        openInIdeTerminal(workingDir, "${adapterInfo.name} CLI", command)
+        val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterId, AcpAdapterPaths.getExecutionTarget())
+        openInIdeTerminal(resolveTerminalWorkingDir(adapterRoot), "${adapterInfo.name} CLI", command)
     }
 
     fun openLoginInTerminal(adapterId: String): Boolean {
@@ -33,10 +28,8 @@ internal class AcpBridgeCli(
         val commandParts = AcpAuthService.buildLoginCommand(adapterId) ?: return false
         val command = toShellCommand(commandParts)
         if (command.isBlank()) return false
-
-        val adapterRoot = File(AcpAdapterPaths.getDownloadPath(adapterId))
-        val workingDir = project.basePath ?: adapterRoot.absolutePath
-        return openInIdeTerminal(workingDir, "${adapterInfo.name} Login", command)
+        val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterId, AcpAdapterPaths.getExecutionTarget())
+        return openInIdeTerminal(resolveTerminalWorkingDir(adapterRoot), "${adapterInfo.name} Login", command)
     }
 
     suspend fun awaitInteractiveLoginCompletion(adapterId: String) {
@@ -66,9 +59,11 @@ internal class AcpBridgeCli(
         val (_, command) = buildCliCommand(latestSession.adapterName, applyCliPlaceholders(resumeArgs, placeholders)) ?: return
         if (command.isBlank()) return
 
-        val workingDir = project.basePath ?: projectPath
-        openInIdeTerminal(workingDir, "${adapterInfo.name} CLI", command)
+        openInIdeTerminal(resolveTerminalWorkingDir(projectPath), "${adapterInfo.name} CLI", command)
     }
+
+    private fun resolveTerminalWorkingDir(fallback: String): String =
+        project.basePath?.takeIf { it.isNotBlank() } ?: fallback
 
     fun isIdeTerminalAvailable(): Boolean {
         return loadIdeTerminalManagerClass() != null
@@ -77,23 +72,27 @@ internal class AcpBridgeCli(
     private fun buildCliCommand(adapterId: String, extraArgs: List<String>): Pair<AcpAdapterConfig.AdapterInfo, String>? {
         val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterId) }.getOrNull() ?: return null
         val cli = adapterInfo.cli ?: return null
-        val adapterRoot = File(AcpAdapterPaths.getDownloadPath(adapterId))
-        if (!adapterRoot.isDirectory) return null
+        val target = AcpAdapterPaths.getExecutionTarget()
+        val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterId, target)
+        if (!AcpAdapterPaths.isDownloaded(adapterId, target)) return null
 
-        val os = System.getProperty("os.name").lowercase()
-        val executable = if (os.contains("win")) cli.executable.win else cli.executable.unix
+        val executable = if (target == AcpExecutionTarget.WSL) cli.executable.unix else cli.executable.win
         val entryPath = cli.entryPath?.takeIf { it.isNotBlank() }
         if (executable.isNullOrBlank()) return null
 
         val commandParts = mutableListOf<String>()
-        commandParts += resolveCliPath(adapterRoot, executable)
+        commandParts += resolveCliPath(adapterRoot, executable, target)
         if (entryPath != null) {
-            commandParts += resolveCliPath(adapterRoot, entryPath)
+            commandParts += resolveCliPath(adapterRoot, entryPath, target)
         }
         commandParts += cli.args
         commandParts += extraArgs
 
-        return adapterInfo to toShellCommand(commandParts)
+        val command = when (target) {
+            AcpExecutionTarget.LOCAL -> toShellCommand(commandParts)
+            AcpExecutionTarget.WSL -> buildWslTerminalCommand(commandParts, project.basePath)
+        }
+        return adapterInfo to command
     }
 
     private fun openInIdeTerminal(workingDir: String, title: String, command: String): Boolean {
@@ -120,10 +119,7 @@ internal class AcpBridgeCli(
                 sendCommand.invoke(widget, command)
             }
             true
-        }.getOrElse {
-            logger.warn("Failed to open IDE terminal", it)
-            false
-        }
+        }.getOrElse { false }
     }
 
     private fun loadIdeTerminalManagerClass(): Class<*>? {
@@ -165,13 +161,21 @@ internal fun applyCliPlaceholders(values: List<String>, placeholders: Map<String
     }
 }
 
-internal fun resolveCliPath(adapterRoot: File, raw: String): String {
+internal fun resolveCliPath(adapterRoot: String, raw: String, target: AcpExecutionTarget): String {
     val path = raw.trim()
     if (path.isEmpty()) return path
+    if (!path.contains("/") && !path.contains("\\")) return path
     val file = File(path)
     if (file.isAbsolute) return file.absolutePath
-    val relative = File(adapterRoot, path.replace("/", File.separator).replace("\\", File.separator))
-    return if (relative.exists()) relative.absolutePath else path
+    return when (target) {
+        AcpExecutionTarget.LOCAL -> {
+            val relative = File(adapterRoot, path.replace("/", File.separator).replace("\\", File.separator))
+            if (relative.exists()) relative.absolutePath else path
+        }
+        AcpExecutionTarget.WSL -> {
+            if (path.startsWith("/")) path else "${adapterRoot.trimEnd('/')}/${path.replace("\\", "/")}"
+        }
+    }
 }
 
 internal fun toShellCommand(parts: List<String>): String {
@@ -201,5 +205,32 @@ internal fun quoteShellArg(value: String): String {
         "'" + value.replace("'", "''") + "'"
     } else {
         "'" + value.replace("'", "'\"'\"'") + "'"
+    }
+}
+
+internal fun buildWslTerminalCommand(parts: List<String>, projectPath: String?): String {
+    val filtered = parts.filter { it.isNotBlank() }
+    if (filtered.isEmpty()) return ""
+    val distro = AcpExecutionMode.selectedWslDistributionName().takeIf { it.isNotBlank() }
+    val command = filtered.joinToString(" ") { quoteUnixShellArg(it) }
+    val cwd = AcpExecutionMode.toWslPath(projectPath)
+    val script = buildString {
+        cwd?.takeIf { it.isNotBlank() }?.let {
+            append("cd ")
+            append(quoteUnixShellArg(it))
+            append(" && ")
+        }
+        append("exec ")
+        append(command)
+    }
+    return buildString {
+        append("wsl.exe ")
+        if (distro != null) {
+            append("-d ")
+            append(quoteShellArg(distro))
+            append(" ")
+        }
+        append("--exec bash -lic ")
+        append(quoteShellArg(script))
     }
 }

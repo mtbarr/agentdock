@@ -191,7 +191,7 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                         mcpBridge = McpBridge(browser, scope)
                         systemInstructionsBridge = SystemInstructionsBridge(browser, scope)
                         promptLibraryBridge = PromptLibraryBridge(browser, scope)
-                        settingsBridge = SettingsBridge(browser, scope)
+                        settingsBridge = SettingsBridge(browser, scope, project, service)
 
                         debugBridge?.install()
                         historyBridge?.install()

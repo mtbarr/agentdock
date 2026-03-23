@@ -46,5 +46,42 @@ data class AudioTranscriptionSettings(
 
 @Serializable
 data class GlobalSettings(
+    val useWslForAcpAdapters: Boolean = false,
+    val wslDistributionName: String = "",
     val audioTranscription: AudioTranscriptionSettings = AudioTranscriptionSettings()
+)
+
+@Serializable
+data class WslDistributionInfo(
+    val name: String
+)
+
+@Serializable
+data class HostSettingsInfo(
+    val hostOs: String,
+    val wslSupported: Boolean,
+    val wslDistributions: List<WslDistributionInfo>
+) {
+    companion object {
+        fun resolve(): HostSettingsInfo {
+            val isWindows = unified.llm.acp.AcpExecutionMode.isWindowsHost()
+            return HostSettingsInfo(
+                hostOs = if (isWindows) "windows" else "other",
+                wslSupported = if (isWindows) unified.llm.acp.AcpExecutionMode.isWslSupportedHost() else false,
+                wslDistributions = if (isWindows) unified.llm.acp.AcpExecutionMode.listWslDistributions()
+                    .map { WslDistributionInfo(it) } else emptyList()
+            )
+        }
+    }
+}
+
+@Serializable
+data class GlobalSettingsPayload(
+    val settings: GlobalSettings = GlobalSettings(),
+    val host: HostSettingsInfo
+)
+
+@Serializable
+data class ExecutionTargetSwitchPayload(
+    val executionTarget: String
 )

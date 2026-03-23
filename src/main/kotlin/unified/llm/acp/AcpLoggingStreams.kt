@@ -54,6 +54,7 @@ internal class LineLoggingOutputStream(
  */
 internal class LineLoggingInputStream(
     delegate: java.io.InputStream,
+    private val transform: ((String) -> String)? = null,
     private val onLine: (String) -> Unit
 ) : java.io.InputStream() {
     private val input = delegate
@@ -83,7 +84,10 @@ internal class LineLoggingInputStream(
 
         while (true) {
             val rawLine = readRawLine() ?: return false
-            val line = rawLine.removeSuffix("\r")
+            var line = rawLine.removeSuffix("\r")
+            if (transform != null) {
+                line = transform(line)
+            }
             if (line.isNotBlank()) {
                 onLine(line)
             }

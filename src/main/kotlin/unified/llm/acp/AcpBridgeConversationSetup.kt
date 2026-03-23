@@ -7,6 +7,16 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import unified.llm.history.UnifiedHistoryService
 
+private fun AcpBridge.refreshDownloadedAdapterInitialization() {
+    val target = AcpAdapterPaths.getExecutionTarget()
+    AcpAdapterConfig.getAllAdapters().values.forEach { info ->
+        if (!AcpAdapterPaths.isDownloaded(info.id, target)) return@forEach
+        if (service.isAdapterReady(info.id)) return@forEach
+        if (service.adapterInitializationStatus(info.id) == AcpClientService.AdapterInitializationStatus.Initializing) return@forEach
+        service.initializeAdapterInBackground(info.id)
+    }
+}
+
 
 internal fun AcpBridge.installConversationQueries() {
     startAgentQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
@@ -76,7 +86,11 @@ internal fun AcpBridge.installConversationQueries() {
         addHandler {
             scope.launch(Dispatchers.IO) {
                 resetAuthStatusRefreshState()
-                pushAdapters()
+                pushAdapters(includeRuntimeChecks = false)
+                refreshDownloadedAdapterInitialization()
+                scope.launch(Dispatchers.IO) {
+                    pushAdapters(includeRuntimeChecks = true)
+                }
             }
             JBCefJSQuery.Response("ok")
         }

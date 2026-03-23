@@ -94,11 +94,6 @@ function App() {
     delete pendingConversationContinuationsRef.current[id];
   };
 
-  // Initialize Bridge and load cached agents
-  useEffect(() => {
-    ACPBridge.initialize();
-  }, []);
-
   // Single global listener for adapter updates
   useEffect(() => {
     return ACPBridge.onAdapters((e) => {
@@ -111,6 +106,39 @@ function App() {
           console.warn('[App] Failed to cache adapters:', e);
         }
       }
+    });
+  }, []);
+
+  useEffect(() => {
+    return ACPBridge.onExecutionTargetSwitched(() => {
+      const chatTabIds = tabsRef.current.filter(tab => tab.type === 'chat').map(tab => tab.id);
+      setTabs(prev => prev.filter(tab => tab.type !== 'chat'));
+      setTabUi(prev => {
+        const next = { ...prev };
+        chatTabIds.forEach(id => delete next[id]);
+        return next;
+      });
+      setTabSessionState(prev => {
+        const next = { ...prev };
+        chatTabIds.forEach(id => delete next[id]);
+        return next;
+      });
+      setPendingHandoffsByTab(prev => {
+        const next = { ...prev };
+        chatTabIds.forEach(id => delete next[id]);
+        return next;
+      });
+      chatTabIds.forEach(id => {
+        delete pendingPermissionRef.current[id];
+        delete pendingConversationContinuationsRef.current[id];
+      });
+
+      const remainingTabs = tabsRef.current.filter(tab => tab.type !== 'chat');
+      setActiveTabId(current => {
+        if (remainingTabs.length === 0) return '';
+        if (remainingTabs.some(tab => tab.id === current)) return current;
+        return remainingTabs[0].id;
+      });
     });
   }, []);
 

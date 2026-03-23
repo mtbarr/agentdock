@@ -8,8 +8,6 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import java.io.File
-
-
 internal fun AcpBridge.installServiceCallbacks() {
     service.setOnLogEntry { pushLogEntry(it) }
     service.setOnPermissionRequest { pushPermissionRequest(it) }
@@ -124,21 +122,25 @@ internal fun AcpBridge.installAdapterQueries() {
                 scope.launch(Dispatchers.IO) {
                     try {
                         downloadStatuses[adapterId] = "Starting download..."
+                        resetDownloadProbeState(adapterId)
                         pushAdapters()
 
                         service.stopSharedProcess(adapterId)
+                        latestVersionStates.remove(adapterId)
                         val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterId)
                         val targetDir = File(AcpAdapterPaths.getDependenciesDir(), adapterInfo.id)
+                        val target = AcpAdapterPaths.getExecutionTarget()
 
                         val statusCallback = { status: String ->
                             downloadStatuses[adapterId] = status
                             pushAdapters()
                         }
 
-                        val success = AcpAdapterPaths.installAdapterRuntime(targetDir, adapterInfo, statusCallback)
+                        val success = AcpAdapterPaths.installAdapterRuntime(targetDir, adapterInfo, statusCallback, target)
 
                         if (success) {
                             downloadStatuses.remove(adapterId)
+                            setDownloadProbeState(adapterId, target, downloaded = true)
                             service.initializeAdapterInBackground(adapterId)
                             pushAdapters()
                         } else {
@@ -161,13 +163,75 @@ internal fun AcpBridge.installAdapterQueries() {
             if (adapterId != null) {
                 scope.launch(Dispatchers.IO) {
                     service.stopSharedProcess(adapterId)
-                    val deleted = AcpAdapterPaths.deleteAdapter(adapterId)
+                    latestVersionStates.remove(adapterId)
+                    resetDownloadProbeState(adapterId)
+                    val deleted = AcpAdapterPaths.deleteAdapter(adapterId, AcpAdapterPaths.getExecutionTarget())
                     if (deleted) {
                         downloadStatuses.remove(adapterId)
+                        setDownloadProbeState(adapterId, AcpAdapterPaths.getExecutionTarget(), downloaded = false)
                     } else {
                         downloadStatuses[adapterId] = "Error: Unable to remove adapter files"
                     }
                     pushAdapters()
+                }
+            }
+            JBCefJSQuery.Response("ok")
+        }
+    }
+
+    updateAgentQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+        addHandler { payload ->
+            val adapterId = parseIdOnlyPayload(payload)
+            if (adapterId != null) {
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterId)
+                        if (!AcpAdapterUpdates.isUpdateCheckSupported(adapterInfo)) {
+                            return@launch
+                        }
+
+                        val latestVersion = latestVersionStates[adapterId]
+                            ?: AcpAdapterUpdates.latestAvailableVersion(adapterInfo)
+                            ?: throw IllegalStateException("Unable to resolve latest version")
+                        latestVersionStates[adapterId] = latestVersion
+
+                        downloadStatuses[adapterId] = "Updating to $latestVersion..."
+                        resetDownloadProbeState(adapterId)
+                        pushAdapters()
+
+                        service.stopSharedProcess(adapterId)
+                        val target = AcpAdapterPaths.getExecutionTarget()
+                        val targetDir = File(AcpAdapterPaths.getDependenciesDir(), adapterInfo.id)
+                        val deleted = AcpAdapterPaths.deleteAdapter(adapterId, target)
+                        if (!deleted) {
+                            throw IllegalStateException("Unable to remove old adapter files")
+                        }
+
+                        val statusCallback = { status: String ->
+                            downloadStatuses[adapterId] = status
+                            pushAdapters()
+                        }
+
+                        val success = AcpAdapterPaths.installAdapterRuntime(
+                            targetDir = targetDir,
+                            adapterInfo = adapterInfo,
+                            statusCallback = statusCallback,
+                            target = target,
+                            versionOverride = latestVersion
+                        )
+
+                        if (success) {
+                            downloadStatuses.remove(adapterId)
+                            setDownloadProbeState(adapterId, target, downloaded = true, installedVersion = latestVersion)
+                            service.initializeAdapterInBackground(adapterId)
+                        } else {
+                            downloadStatuses[adapterId] = "Error: Update failed"
+                        }
+                    } catch (e: Exception) {
+                        downloadStatuses[adapterId] = "Error: ${e.message}"
+                    } finally {
+                        pushAdapters()
+                    }
                 }
             }
             JBCefJSQuery.Response("ok")
@@ -185,14 +249,20 @@ internal fun AcpBridge.installAdapterQueries() {
                         downloadStatuses.remove(adapterId)
                         AcpAuthService.incrementActive(adapterId)
                         pushAdapters()
-                        when (AcpAuthService.getLoginMode(adapterId)) {
-                            "manage_terminal" -> {
+                        when {
+                            AcpAdapterPaths.getExecutionTarget() == AcpExecutionTarget.WSL -> {
                                 if (!cli.isIdeTerminalAvailable()) {
                                     throw Exception("IDE terminal is required for auth management")
                                 }
                                 cli.openAgentCliInTerminal(adapterId)
                             }
-                            "ide_terminal" -> {
+                            AcpAuthService.getLoginMode(adapterId) == "manage_terminal" -> {
+                                if (!cli.isIdeTerminalAvailable()) {
+                                    throw Exception("IDE terminal is required for auth management")
+                                }
+                                cli.openAgentCliInTerminal(adapterId)
+                            }
+                            AcpAuthService.getLoginMode(adapterId) == "ide_terminal" -> {
                                 if (!cli.isIdeTerminalAvailable()) {
                                     throw Exception("IDE terminal is required for login")
                                 }
@@ -202,13 +272,22 @@ internal fun AcpBridge.installAdapterQueries() {
                             }
                             else -> {
                                 val projectPath = service.project.basePath
-                                AcpAuthService.login(adapterId, projectPath) {
+                                val authenticated = AcpAuthService.login(
+                                    adapterName = adapterId,
+                                    projectPath = projectPath,
+                                    onProgress = {
+                                        pushAdapters()
+                                    }
+                                )
+                                if (authenticated) {
+                                    service.stopSharedProcess(adapterId)
+                                    resetDownloadProbeState(adapterId)
+                                    authStates.remove(adapterId)
+                                    service.initializeAdapterInBackground(adapterId)
                                     pushAdapters()
                                 }
                             }
                         }
-                    } catch (_: CancellationException) {
-                    } catch (_: Exception) {
                     } finally {
                         AcpAuthService.decrementActive(adapterId)
                         authActionJobs.remove(adapterId)
@@ -232,9 +311,9 @@ internal fun AcpBridge.installAdapterQueries() {
                     try {
                         AcpAuthService.incrementActive(adapterId)
                         pushAdapters()
-                        AcpAuthService.logout(adapterId)
-                    } catch (_: CancellationException) {
-                    } catch (_: Exception) {
+                        if (AcpAdapterPaths.getExecutionTarget() != AcpExecutionTarget.WSL) {
+                            AcpAuthService.logout(adapterId)
+                        }
                     } finally {
                         AcpAuthService.decrementActive(adapterId)
                         authActionJobs.remove(adapterId)

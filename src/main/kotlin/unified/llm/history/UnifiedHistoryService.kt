@@ -17,6 +17,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import unified.llm.acp.AcpAdapterConfig
 import unified.llm.acp.AcpAdapterPaths
+import unified.llm.acp.AcpExecutionMode
+import unified.llm.acp.AcpExecutionTarget
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -115,7 +117,8 @@ private data class HistoryConversationIndexEntry(
     val title: String = "",
     val promptCount: Int? = null,
     val transcriptPath: String? = null,
-    val sessions: List<HistorySessionIndexEntry> = emptyList()
+    val sessions: List<HistorySessionIndexEntry> = emptyList(),
+    val wslDistributionName: String? = null
 )
 
 
@@ -137,6 +140,26 @@ object UnifiedHistoryService {
         prettyPrint = true
     }
     private const val CONVERSATION_REPLAY_STALE_TOLERANCE_MS = 60_000L
+
+    private fun currentWslDistributionName(): String? {
+        if (AcpAdapterPaths.getExecutionTarget() != AcpExecutionTarget.WSL) return null
+        return AcpExecutionMode.selectedWslDistributionName().trim().takeIf { it.isNotEmpty() }
+    }
+
+    private fun historySyncKey(projectPath: String, wslDistributionName: String? = currentWslDistributionName()): String {
+        return if (wslDistributionName.isNullOrBlank()) projectPath else "$projectPath||wsl:$wslDistributionName"
+    }
+
+    private fun matchesCurrentHistoryEnvironment(
+        conversation: HistoryConversationIndexEntry,
+        wslDistributionName: String? = currentWslDistributionName()
+    ): Boolean {
+        return if (wslDistributionName.isNullOrBlank()) {
+            conversation.wslDistributionName.isNullOrBlank()
+        } else {
+            conversation.wslDistributionName == wslDistributionName
+        }
+    }
     private fun hashSha256(value: String): String {
         val md = MessageDigest.getInstance("SHA-256")
         return md.digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -174,7 +197,8 @@ object UnifiedHistoryService {
     }
 
     fun resolvePathTemplate(template: String, projectPath: String?, sessionId: String? = null): String {
-        val home = System.getProperty("user.home")
+        val target = AcpAdapterPaths.getExecutionTarget()
+        val home = if (target == AcpExecutionTarget.WSL) (AcpExecutionMode.wslHomeDir() ?: return template) else System.getProperty("user.home")
         val canonicalProject = canonicalProjectPath(projectPath)
         val normalizedProject = canonicalProject.replace("/", File.separator).replace("\\", File.separator)
         val windowsProject = normalizeWindowsProjectPath(canonicalProject)
@@ -183,7 +207,7 @@ object UnifiedHistoryService {
         val hashSha256 = hashSha256(windowsProject)
         val hashMd5 = hashMd5(windowsProject)
 
-        return template
+        val resolved = template
             .replace("~", home)
             .replace("{projectPathSlug}", slug)
             .replace("{projectPathSlugCollapsed}", slugCollapsed)
@@ -192,8 +216,12 @@ object UnifiedHistoryService {
             .replace("{slug}", slug)
             .replace("{hash}", hashSha256)
             .replace("{sessionId}", sessionId ?: "")
-            .replace("/", File.separator)
-            .replace("\\", File.separator)
+        return if (target == AcpExecutionTarget.WSL) {
+            val wslPath = resolved.replace("\\", "/")
+            AcpExecutionMode.wslPathToWindowsUnc(wslPath) ?: wslPath
+        } else {
+            resolved.replace("/", File.separator).replace("\\", File.separator)
+        }
     }
 
     private fun buildGlobRegex(glob: String): Regex {
@@ -312,8 +340,9 @@ object UnifiedHistoryService {
     }
 
     private fun latestConversationSourceSessionFile(projectPath: String, conversationId: String): File? {
+        val currentWslDistributionName = currentWslDistributionName()
         val conversation = readExistingProjectIndex(projectPath)
-            .firstOrNull { it.id == conversationId }
+            .firstOrNull { it.id == conversationId && matchesCurrentHistoryEnvironment(it, currentWslDistributionName) }
             ?: return null
         val latestSession = conversation.sessions.maxByOrNull { it.updatedAt } ?: return null
         val sourceFilePath = latestSession.sourceFilePath?.trim().orEmpty()
@@ -345,7 +374,8 @@ object UnifiedHistoryService {
         val cleanProjectPath = canonicalProjectPath(projectPath)
         if (cleanProjectPath.isBlank()) return
         val deferred = CompletableDeferred<Unit>()
-        val existing = initialSyncs.putIfAbsent(cleanProjectPath, deferred)
+        val syncKey = historySyncKey(cleanProjectPath)
+        val existing = initialSyncs.putIfAbsent(syncKey, deferred)
         if (existing != null) return
         backgroundScope.launch {
             try {
@@ -357,7 +387,15 @@ object UnifiedHistoryService {
     }
 
     private suspend fun awaitInitialHistorySync(projectPath: String) {
-        initialSyncs[projectPath]?.await()
+        initialSyncs[historySyncKey(projectPath)]?.await()
+    }
+
+    fun startBackgroundHistorySync(projectPath: String?) {
+        val cleanProjectPath = canonicalProjectPath(projectPath)
+        if (cleanProjectPath.isBlank()) return
+        backgroundScope.launch {
+            syncProjectIndex(cleanProjectPath)
+        }
     }
 
     private fun findSessionSourceMeta(projectPath: String, sessionId: String, adapterName: String): SessionMeta? {
@@ -383,11 +421,15 @@ object UnifiedHistoryService {
 
         val now = Instant.now().toEpochMilli()
         val normalizedTitle = titleCandidate?.trim().orEmpty()
+        val currentWslDistributionName = currentWslDistributionName()
         val indexFile = ensureProjectIndexFile(cleanProjectPath)
         val conversations = readProjectIndex(indexFile).toMutableList()
 
         val sameConversationIndices = conversations.mapIndexedNotNull { index, conversation ->
-            index.takeIf { conversation.id == cleanConversationId }
+            index.takeIf {
+                conversation.id == cleanConversationId &&
+                    ((conversation.wslDistributionName ?: "") == (currentWslDistributionName ?: ""))
+            }
         }
         val insertIndex = sameConversationIndices.firstOrNull() ?: conversations.size
 
@@ -433,7 +475,8 @@ object UnifiedHistoryService {
             },
             promptCount = mergePromptCounts(mergedConversation?.promptCount, promptCount),
             transcriptPath = mergedConversation?.transcriptPath,
-            sessions = updatedSessions
+            sessions = updatedSessions,
+            wslDistributionName = mergedConversation?.wslDistributionName ?: currentWslDistributionName
         )
 
         // Keep one canonical row per conversationId in index.json.
@@ -447,6 +490,9 @@ object UnifiedHistoryService {
         val cleanProjectPath = canonicalProjectPath(projectPath)
         val cleanConversationId = conversationId?.trim().orEmpty()
         if (cleanProjectPath.isBlank() || cleanConversationId.isBlank()) return false
+        if (readExistingProjectIndex(cleanProjectPath).none { it.id == cleanConversationId && matchesCurrentHistoryEnvironment(it) }) {
+            return false
+        }
         return resolveFreshConversationReplayFile(cleanProjectPath, cleanConversationId) != null
     }
 
@@ -454,6 +500,9 @@ object UnifiedHistoryService {
         val cleanProjectPath = canonicalProjectPath(projectPath)
         val cleanConversationId = conversationId?.trim().orEmpty()
         if (cleanProjectPath.isBlank() || cleanConversationId.isBlank()) return null
+        if (readExistingProjectIndex(cleanProjectPath).none { it.id == cleanConversationId && matchesCurrentHistoryEnvironment(it) }) {
+            return null
+        }
         val replayFile = resolveFreshConversationReplayFile(cleanProjectPath, cleanConversationId) ?: return null
         return readConversationData(replayFile)
     }
@@ -476,10 +525,14 @@ object UnifiedHistoryService {
         val transcriptFile = conversationTranscriptFile(cleanProjectPath, cleanConversationId)
         transcriptFile.writeText(normalizedTranscript)
 
+        val currentWslDistributionName = currentWslDistributionName()
         val indexFile = ensureProjectIndexFile(cleanProjectPath)
         val conversations = readProjectIndex(indexFile).toMutableList()
         val sameConversationIndices = conversations.mapIndexedNotNull { index, conversation ->
-            index.takeIf { conversation.id == cleanConversationId }
+            index.takeIf {
+                conversation.id == cleanConversationId &&
+                    ((conversation.wslDistributionName ?: "") == (currentWslDistributionName ?: ""))
+            }
         }
         val insertIndex = sameConversationIndices.firstOrNull() ?: conversations.size
 
@@ -489,7 +542,10 @@ object UnifiedHistoryService {
             mergedConversation = if (mergedConversation == null) current else mergeIndexConversations(mergedConversation!!, current)
         }
 
-        val updatedConversation = (mergedConversation ?: HistoryConversationIndexEntry(id = cleanConversationId)).copy(
+        val updatedConversation = (mergedConversation ?: HistoryConversationIndexEntry(
+            id = cleanConversationId,
+            wslDistributionName = currentWslDistributionName()
+        )).copy(
             transcriptPath = transcriptFile.absolutePath
         )
 
@@ -717,7 +773,8 @@ object UnifiedHistoryService {
                 !right.transcriptPath.isNullOrBlank() -> right.transcriptPath
                 else -> null
             },
-            sessions = mergedSessionsByKey.values.toList()
+            sessions = mergedSessionsByKey.values.toList(),
+            wslDistributionName = left.wslDistributionName ?: right.wslDistributionName
         )
     }
 
@@ -800,7 +857,9 @@ object UnifiedHistoryService {
     }
 
     private fun conversationId(adapterName: String, sessionId: String): String {
-        return "conv_" + hashMd5("$adapterName:$sessionId")
+        val wslDistributionName = currentWslDistributionName()
+        val suffix = if (wslDistributionName.isNullOrBlank()) "" else ":wsl:$wslDistributionName"
+        return "conv_" + hashMd5("$adapterName:$sessionId$suffix")
     }
 
     private fun deleteFileIfExists(file: File): Boolean {
@@ -910,13 +969,16 @@ object UnifiedHistoryService {
 
         val indexFile = ensureProjectIndexFile(projectPath)
         val existing = readProjectIndex(indexFile)
+        val currentWslDistributionName = currentWslDistributionName()
+        val untouchedConversations = existing.filterNot { matchesCurrentHistoryEnvironment(it, currentWslDistributionName) }
+        val targetConversations = existing.filter { matchesCurrentHistoryEnvironment(it, currentWslDistributionName) }
         val availableSessions = collectAvailableSessionMeta(projectPath)
 
         val availableByKey = availableSessions.associateBy { "${it.adapterName}:${it.sessionId}" }
         val keptKeys = linkedSetOf<String>()
         var changed = false
 
-        val syncedExisting = existing.mapNotNull { conversation ->
+        val syncedExisting = targetConversations.mapNotNull { conversation ->
             val keptSessions = conversation.sessions.mapNotNull { session ->
                 val key = "${session.adapterName}:${session.sessionId}"
                 val meta = availableByKey[key] ?: return@mapNotNull null
@@ -971,18 +1033,20 @@ object UnifiedHistoryService {
                             sourceFilePath = meta.filePath.takeIf { it.isNotBlank() },
                             changes = null
                         )
-                    )
+                    ),
+                    wslDistributionName = currentWslDistributionName
                 )
             }
 
+        val combinedConversations = (untouchedConversations + syncedExisting + newConversations)
         syncedExisting.addAll(newConversations)
         if (newConversations.isNotEmpty()) {
             changed = true
         }
-        if (changed) {
-            writeProjectIndex(indexFile, syncedExisting)
+        if (changed || untouchedConversations.size != existing.size - targetConversations.size) {
+            writeProjectIndex(indexFile, combinedConversations)
         }
-        return syncedExisting
+        return combinedConversations
     }
 
 
@@ -990,7 +1054,9 @@ object UnifiedHistoryService {
         projectPath: String,
         conversations: List<HistoryConversationIndexEntry>
     ): List<SessionMeta> {
-        return conversations.mapNotNull { conversation ->
+        return conversations
+            .filter { matchesCurrentHistoryEnvironment(it) }
+            .mapNotNull { conversation ->
             val latestSession = conversation.sessions.maxByOrNull { it.updatedAt } ?: return@mapNotNull null
             SessionMeta(
                 sessionId = latestSession.sessionId,
@@ -1028,7 +1094,7 @@ object UnifiedHistoryService {
         if (cleanProjectPath.isBlank() || cleanConversationId.isBlank()) return@withContext emptyList()
 
         val conversation = readExistingProjectIndex(cleanProjectPath)
-            .firstOrNull { it.id == cleanConversationId }
+            .firstOrNull { it.id == cleanConversationId && matchesCurrentHistoryEnvironment(it) }
             ?: return@withContext emptyList()
 
         val title = conversation.title.ifBlank { "Untitled" }

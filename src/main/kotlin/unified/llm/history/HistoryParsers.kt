@@ -9,6 +9,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import unified.llm.acp.AcpAdapterConfig
+import unified.llm.acp.AcpExecutionMode
 import java.io.File
 import java.time.Instant
 
@@ -58,9 +59,23 @@ private val historyJson = Json { ignoreUnknownKeys = true }
 private fun canonicalizePath(path: String?): String {
     val value = path?.trim().orEmpty()
     if (value.isEmpty()) return ""
-    val normalized = value.replace("/", File.separator).replace("\\", File.separator)
+    val mountMatch = Regex("^/mnt/([A-Za-z])/(.*)$").matchEntire(value.replace("\\", "/"))
+    val comparable = if (mountMatch != null) {
+        val drive = mountMatch.groupValues[1].uppercase()
+        val rest = mountMatch.groupValues[2].replace("/", "\\")
+        "$drive:\\$rest"
+    } else {
+        value
+    }
+    val normalized = comparable.replace("/", File.separator).replace("\\", File.separator)
     val canonical = runCatching { File(normalized).canonicalPath }.getOrDefault(normalized)
     return if (File.separatorChar == '\\') canonical.lowercase() else canonical
+}
+
+private fun readableSourcePath(path: String?): String {
+    val value = path?.trim().orEmpty()
+    if (value.isEmpty()) return ""
+    return AcpExecutionMode.wslPathToWindowsUnc(value) ?: value
 }
 
 private fun JsonElement.stringAtPath(path: String?): String? {
@@ -310,7 +325,7 @@ private class SessionIndexParser : HistoryParser {
             if (expectedProjectPath.isNotBlank() && sessionProjectPath != expectedProjectPath) return@mapNotNull null
 
             val sessionId = entry.stringOrNull("sessionId")?.trim().orEmpty()
-            val fullPath = entry.stringOrNull("fullPath")?.trim().orEmpty()
+            val fullPath = readableSourcePath(entry.stringOrNull("fullPath"))
             if (sessionId.isBlank() || fullPath.isBlank()) return@mapNotNull null
             if (!File(fullPath).isFile) return@mapNotNull null
 

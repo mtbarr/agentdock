@@ -5,7 +5,7 @@
       "iconPath": "/icons/claude.svg",
       "distribution": {
         "type": "npm",
-        "version": "0.21.0",
+        "version": "latest",
         "packageName": "@zed-industries/claude-agent-acp"
       },
       "defaultModel": {
@@ -68,10 +68,10 @@
       "distribution": {
         "type": "npm",
         "packageName": "@google/gemini-cli",
-        "version": "0.34.0"
+        "version": "latest"
       },
       "args": [
-        "--experimental-acp"
+        "--acp"
       ],
       "defaultModel": {
         "modelId": "gemini-3-flash-preview",
@@ -121,8 +121,8 @@
       "iconPath": "/icons/cursor.svg",
       "distribution": {
         "type": "archive",
-        "version": "2026.03.05-2bf2031",
-        "downloadUrl": "https://anysphere-binaries.s3.amazonaws.com/lab/2026.03.05-2bf2031/{platform}/{arch}/agent-cli-package.{ext}",
+        "version": "2026.03.20-44cb435",
+        "downloadUrl": "https://downloads.cursor.com/lab/2026.03.20-44cb435/{platform}/{arch}/agent-cli-package.{ext}",
         "extractSubdir": "dist-package",
         "binaryName": {
           "win": "cursor-agent.cmd",
@@ -142,7 +142,7 @@
       "cli": {
         "executable": {
           "win": "cursor-agent.cmd",
-          "unix": "cursor-agent"
+          "unix": "./cursor-agent"
         },
         "resumeArgs": [
           "--resume",
@@ -178,6 +178,12 @@
         "type": "archive",
         "version": "0.10.0",
         "downloadUrl": "https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{target}.{ext}",
+        "updateSource": {
+          "type": "github_release",
+          "owner": "zed-industries",
+          "repo": "codex-acp",
+          "tagPrefix": "v"
+        },
         "binaryName": {
           "win": "codex-acp.exe",
           "unix": "codex-acp"
@@ -204,7 +210,7 @@
         "command": [
           "npx",
           "-y",
-          "@openai/codex@0.111.0"
+          "@openai/codex@0.116.0"
         ],
         "statusArgs": [
           "login",
@@ -224,7 +230,7 @@
         },
         "args": [
           "-y",
-          "@openai/codex@0.111.0"
+          "@openai/codex@0.116.0"
         ],
         "resumeArgs": [
           "resume",

@@ -154,6 +154,7 @@ class AcpClientService private constructor(val project: Project) {
     internal val adapterRuntimeMetadataMap = ConcurrentHashMap<String, AdapterRuntimeMetadata>()
     internal val availableCommandsByAdapter = ConcurrentHashMap<String, List<AvailableCommandPayload>>()
     internal val systemInstructionsInjectedSessionIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    internal val executionTargetRef = AtomicReference(AcpAdapterPaths.getExecutionTarget())
 
     fun status(chatId: String): Status = sessions[chatId]?.statusRef?.get() ?: Status.NotStarted
     fun sessionId(chatId: String): String? = sessions[chatId]?.sessionIdRef?.get()
@@ -167,9 +168,8 @@ class AcpClientService private constructor(val project: Project) {
     internal fun availableCommands(adapterName: String): List<AvailableCommandPayload> = availableCommandsByAdapter[adapterName] ?: emptyList()
     internal fun allAvailableCommands(): Map<String, List<AvailableCommandPayload>> = availableCommandsByAdapter.toMap()
     fun isAdapterReady(adapterName: String): Boolean {
-        val sharedProc = activeProcesses[adapterName] ?: return false
-        val process = sharedProc.process ?: return false
-        return process.isAlive && sharedProc.client != null && sharedProc.isInitialized
+        val sharedProc = activeProcesses[processKey(adapterName)] ?: return false
+        return sharedProc.isHealthy()
     }
 
     internal fun updateAvailableCommands(adapterName: String, commands: List<AvailableCommandPayload>) {
@@ -189,6 +189,20 @@ class AcpClientService private constructor(val project: Project) {
             adapterInitializationErrors[adapterName] = error
         }
         runCatching { adapterInitializationStateHandler?.invoke(adapterName, state, error) }
+    }
+
+    internal fun SharedProcess.isHealthy(): Boolean {
+        val runningProcess = process ?: return false
+        if (!runningProcess.isAlive || client == null || !isInitialized) return false
+
+        val protocolActive = protocolScope?.coroutineContext?.get(Job)?.isActive == true
+        if (!protocolActive) return false
+
+        if (!sessionUpdateWrapped) return true
+
+        val updateScopeActive = sessionUpdateScope?.coroutineContext?.get(Job)?.isActive == true
+        val updateWorkerActive = sessionUpdateWorker?.isActive == true
+        return updateScopeActive && updateWorkerActive
     }
 
     fun getAvailableModels(adapterName: String? = null): List<AcpAdapterConfig.ModelInfo> {

@@ -16,6 +16,8 @@ import {
   AudioTranscriptionResultPayload,
   AudioRecordingStatePayload,
   AudioTranscriptionSettings,
+  GlobalSettingsPayload,
+  ExecutionTargetSwitchPayload,
 } from '../types/chat';
 import { McpServerConfig } from '../types/mcp';
 import { PromptLibraryItem } from '../types/promptLibrary';
@@ -42,6 +44,8 @@ export interface AudioTranscriptionFeatureEvent { state: AudioTranscriptionFeatu
 export interface AudioTranscriptionResultEvent { payload: AudioTranscriptionResultPayload; }
 export interface AudioRecordingStateEvent { payload: AudioRecordingStatePayload; }
 export interface AudioTranscriptionSettingsEvent { settings: AudioTranscriptionSettings; }
+export interface GlobalSettingsEvent { payload: GlobalSettingsPayload; }
+export interface ExecutionTargetSwitchedEvent { payload: ExecutionTargetSwitchPayload; }
 
 const EVENT_NAMES = {
   CONTENT_CHUNK: 'acp-content-chunk',
@@ -68,6 +72,8 @@ const EVENT_NAMES = {
   AUDIO_TRANSCRIPTION_RESULT: 'audio-transcription-result',
   AUDIO_RECORDING_STATE: 'audio-recording-state',
   AUDIO_TRANSCRIPTION_SETTINGS: 'audio-transcription-settings',
+  GLOBAL_SETTINGS: 'global-settings',
+  EXECUTION_TARGET_SWITCHED: 'execution-target-switched',
 };
 
 let saveTranscriptCounter = 0;
@@ -220,6 +226,14 @@ export const ACPBridge = {
 
     window.__onAudioTranscriptionSettings = (settings) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.AUDIO_TRANSCRIPTION_SETTINGS, { detail: { settings } }));
+    };
+
+    window.__onGlobalSettings = (payload) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.GLOBAL_SETTINGS, { detail: { payload } }));
+    };
+
+    window.__onExecutionTargetSwitched = (payload) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.EXECUTION_TARGET_SWITCHED, { detail: { payload } }));
     };
 
     window.__onFilesResult = (filesJson) => {
@@ -548,5 +562,23 @@ export const ACPBridge = {
   onAudioTranscriptionSettings: (callback: (e: CustomEvent<AudioTranscriptionSettingsEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.AUDIO_TRANSCRIPTION_SETTINGS, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.AUDIO_TRANSCRIPTION_SETTINGS, callback as EventListener);
+  },
+
+  loadGlobalSettings: () => {
+    window.__loadGlobalSettings?.();
+  },
+
+  saveGlobalSettings: (settings: GlobalSettingsPayload['settings']) => {
+    window.__saveGlobalSettings?.(JSON.stringify(settings));
+  },
+
+  onGlobalSettings: (callback: (e: CustomEvent<GlobalSettingsEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.GLOBAL_SETTINGS, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.GLOBAL_SETTINGS, callback as EventListener);
+  },
+
+  onExecutionTargetSwitched: (callback: (e: CustomEvent<ExecutionTargetSwitchedEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.EXECUTION_TARGET_SWITCHED, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.EXECUTION_TARGET_SWITCHED, callback as EventListener);
   },
 };

@@ -10,27 +10,37 @@ internal object AcpUsageDataFetcher {
 
     fun fetchGeminiUsageData(adapterId: String): String {
         return try {
-            val adapterDir = File(AcpAdapterPaths.getDownloadPath(adapterId))
-            if (!adapterDir.exists()) return ""
-
-            val process = ProcessBuilder("node", "node_modules/@google/gemini-cli/dist/index.js", "--usage-json")
-                .directory(adapterDir).start()
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            process.errorStream.bufferedReader().use { it.readText() }
-            process.waitFor()
-
-            val jsonLine = output.lines().find { it.startsWith("__GEMINI_USAGE_JSON__") }
-            if (jsonLine != null) jsonLine.substring("__GEMINI_USAGE_JSON__".length).trim()
-            else output.trim()
+            when (AcpAdapterPaths.getExecutionTarget()) {
+                AcpExecutionTarget.LOCAL -> {
+                    val adapterDir = File(AcpAdapterPaths.getDownloadPath(adapterId))
+                    if (!adapterDir.exists()) return ""
+                    val process = ProcessBuilder("node", "node_modules/@google/gemini-cli/dist/index.js", "--usage-json")
+                        .directory(adapterDir)
+                        .start()
+                    val output = process.inputStream.bufferedReader().use { it.readText() }
+                    process.errorStream.bufferedReader().use { it.readText() }
+                    process.waitFor()
+                    val jsonLine = output.lines().find { it.startsWith("__GEMINI_USAGE_JSON__") }
+                    if (jsonLine != null) jsonLine.substring("__GEMINI_USAGE_JSON__".length).trim() else output.trim()
+                }
+                AcpExecutionTarget.WSL -> {
+                    val adapterDir = AcpAdapterPaths.getDownloadPath(adapterId, AcpExecutionTarget.WSL)
+                    val result = AcpExecutionMode.runWslShell(
+                        script = "cd ${quoteUnixShellArg(adapterDir)} && node node_modules/@google/gemini-cli/dist/index.js --usage-json",
+                        timeoutSeconds = 60
+                    ) ?: return ""
+                    val output = result.stdout.trim()
+                    val jsonLine = output.lines().find { it.startsWith("__GEMINI_USAGE_JSON__") }
+                    if (jsonLine != null) jsonLine.substring("__GEMINI_USAGE_JSON__".length).trim() else output
+                }
+            }
         } catch (_: Exception) { "" }
     }
 
     fun fetchClaudeUsageData(): String {
         val accessToken = try {
-            val credentialsFile = File(System.getProperty("user.home"), ".claude/.credentials.json")
-            if (!credentialsFile.exists()) null
-            else Json.parseToJsonElement(credentialsFile.readText()).jsonObject
-                .get("claudeAiOauth")?.jsonObject?.get("accessToken")?.jsonPrimitive?.content
+            readTargetFile("~/.claude/.credentials.json")
+                ?.let { Json.parseToJsonElement(it).jsonObject.get("claudeAiOauth")?.jsonObject?.get("accessToken")?.jsonPrimitive?.content }
         } catch (_: Exception) { null }
 
         if (accessToken == null) return """{"authType":"api_key"}"""
@@ -56,9 +66,8 @@ internal object AcpUsageDataFetcher {
 
     fun fetchCodexUsageData(): String {
         val authJson = try {
-            val authFile = File(System.getProperty("user.home"), ".codex/auth.json")
-            if (!authFile.exists()) return ""
-            Json.parseToJsonElement(authFile.readText()).jsonObject
+            val text = readTargetFile("~/.codex/auth.json") ?: return ""
+            Json.parseToJsonElement(text).jsonObject
         } catch (_: Exception) { return "" }
 
         if (authJson["auth_mode"]?.jsonPrimitive?.content == "apikey") return """{"authType":"api_key"}"""
@@ -81,5 +90,21 @@ internal object AcpUsageDataFetcher {
                 JsonObject(obj + ("authType" to JsonPrimitive("subscription"))).toString()
             } else """{"authType":"subscription"}"""
         } catch (_: Exception) { """{"authType":"subscription"}""" }
+    }
+
+    private fun readTargetFile(rawPath: String): String? {
+        return when (AcpAdapterPaths.getExecutionTarget()) {
+            AcpExecutionTarget.LOCAL -> {
+                val resolved = rawPath.replace("~", System.getProperty("user.home"))
+                val file = File(resolved)
+                if (!file.exists()) null else file.readText()
+            }
+            AcpExecutionTarget.WSL -> {
+                val wslHome = AcpExecutionMode.wslHomeDir() ?: return null
+                val resolved = rawPath.replace("~", wslHome)
+                val result = AcpExecutionMode.runWslShell("cat ${quoteUnixShellArg(resolved)}", timeoutSeconds = 15) ?: return null
+                if (result.exitCode != 0) null else result.stdout
+            }
+        }
     }
 }

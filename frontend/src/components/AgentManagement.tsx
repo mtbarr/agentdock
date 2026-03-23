@@ -8,17 +8,16 @@ import { CodexUsage } from './usage/CodexUsage';
 import { GeminiUsage } from './usage/GeminiUsage';
 import { CursorUsage } from './usage/CursorUsage';
 
-
 export function AgentManagementView({ initialAgents = [] }: { initialAgents?: AgentOption[] }) {
   const [agents, setAgents] = useState<AgentOption[]>(initialAgents);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [installingIds, setInstallingIds] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmUpdateId, setConfirmUpdateId] = useState<string | null>(null);
   const [authIds, setAuthIds] = useState<Set<string>>(new Set());
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-
     const dispose = ACPBridge.onAdapters((e) => {
       const safeAdapters = Array.isArray(e.detail.adapters) ? e.detail.adapters : [];
       setAgents(safeAdapters);
@@ -26,14 +25,14 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
       setDeletingIds(prev => {
         const next = new Set<string>();
         prev.forEach(id => {
-          if (safeAdapters.some(a => a.id === id && a.downloaded)) next.add(id);
+          if (safeAdapters.some(a => a.id === id && a.downloaded === true)) next.add(id);
         });
         return next;
       });
       setInstallingIds(prev => {
         const next = new Set<string>();
         prev.forEach(id => {
-          if (safeAdapters.some(a => a.id === id && !a.downloaded && a.downloading)) next.add(id);
+          if (safeAdapters.some(a => a.id === id && a.downloaded === false && a.downloading)) next.add(id);
         });
         return next;
       });
@@ -49,7 +48,7 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
     setInstallingIds(prev => new Set(prev).add(id));
     setAgents(prev => prev.map(a => (
       a.id === id
-        ? { ...a, downloading: true, downloaded: false, downloadStatus: 'Starting download...', authError: '' }
+        ? { ...a, downloading: true, downloaded: false, downloadedKnown: true, downloadStatus: 'Starting download...', authError: '' }
         : a
     )));
     window.__downloadAgent(id);
@@ -59,11 +58,23 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
     setConfirmDeleteId(id);
   };
 
+  const handleUpdate = (id: string) => {
+    setConfirmUpdateId(id);
+  };
+
   const performDelete = () => {
     if (confirmDeleteId && window.__deleteAgent) {
       setDeletingIds(prev => new Set(prev).add(confirmDeleteId));
       window.__deleteAgent(confirmDeleteId);
       setConfirmDeleteId(null);
+    }
+  };
+
+  const performUpdate = () => {
+    if (confirmUpdateId && window.__updateAgent) {
+      setInstallingIds(prev => new Set(prev).add(confirmUpdateId));
+      window.__updateAgent(confirmUpdateId);
+      setConfirmUpdateId(null);
     }
   };
 
@@ -115,29 +126,33 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
       <div className="flex-1 overflow-y-auto w-full p-2 space-y-1">
         <div className="flex flex-col">
           {agents.map((agent, index) => {
+            const isDownloadedKnown = agent.downloadedKnown === true;
+            const isDownloaded = agent.downloaded === true;
             const isInstalling = installingIds.has(agent.id) || agent.downloading;
             const isDeleting = deletingIds.has(agent.id);
             const isProcessing = isInstalling || isDeleting;
             const isAuthenticating = authIds.has(agent.id) || !!agent.authenticating;
-            const isAuthLoading = !!agent.authLoading && !isAuthenticating;
             const authUiMode = agent.authUiMode ?? 'login_logout';
             const isManageAuth = authUiMode === 'manage_terminal';
             const isLast = index === agents.length - 1;
             const isStarting = !!agent.initializing;
-            const isStatusLoading = !isStarting && isAuthLoading && !isManageAuth;
-            const isAuthStateUnknown = !isManageAuth && (isStarting || isStatusLoading);
+            const isAuthKnown = isManageAuth || agent.hasAuthentication !== true || agent.authKnown === true;
+            const canResolveStatus = isDownloaded && agent.readyKnown === true && isAuthKnown;
+            const isStatusUnknown = isDownloaded && !isStarting && !canResolveStatus;
+            const isUpdateChecking = isDownloaded && agent.updateSupported === true && agent.updateChecking === true;
+            const canUpdate = isDownloaded && agent.updateAvailable === true;
             const statusLabel = isStarting
               ? 'Starting'
-              : isStatusLoading
-                ? 'Loading'
-              : agent.ready
+              : (agent.hasAuthentication === true && agent.authKnown === true && agent.authAuthenticated === false)
+                ? 'Not logged in'
+              : (agent.initializationError || agent.downloadStatus?.startsWith('Error'))
+                ? 'Not ready'
+              : agent.ready === true
                 ? 'Ready'
-                : (agent.hasAuthentication && !isManageAuth ? 'Not logged in' : 'Not ready');
+                : 'Not ready';
             const statusClass = isStarting
               ? 'text-foreground-secondary'
-              : isStatusLoading
-                ? 'text-foreground-secondary'
-              : agent.ready
+              : statusLabel === 'Ready'
                 ? 'text-success'
                 : 'text-error';
 
@@ -162,20 +177,15 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
                       <span className="font-bold text-base">{agent.name}</span>
                     </div>
 
-                    {!isInstalling && agent.downloaded && (
+                    {!isInstalling && isDownloaded && (
                       <div className="flex items-center gap-1.5 text-[13px]">
                         <span className="font-medium shrink-0 text-foreground-secondary">Status:</span>
-                        <span className={`font-medium ${statusClass}`}>
-                          {statusLabel}
-                        </span>
-                        {isStatusLoading && (
-                          <>
-                            <span className="opacity-50 text-foreground-secondary">&bull;</span>
-                            <span className="flex items-center gap-1 text-foreground-secondary italic">
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                              Checking status...
-                            </span>
-                          </>
+                        {isStatusUnknown ? (
+                          <RefreshCw className="w-3 h-3 animate-spin text-foreground-secondary" />
+                        ) : (
+                          <span className={`font-medium ${statusClass}`}>
+                            {statusLabel}
+                          </span>
                         )}
                       </div>
                     )}
@@ -193,7 +203,7 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
                         <div className="text-error font-medium text-[13px]">{agent.downloadStatus}</div>
                       )}
 
-                      {!isInstalling && agent.downloaded && agent.downloadPath && (
+                      {!isInstalling && isDownloaded && agent.downloadPath && (
                         <div className="flex items-center gap-1.5 text-foreground-secondary">
                           <span className="font-medium shrink-0">Path:</span>
                           <span className="font-mono opacity-90 truncate" title={agent.downloadPath}>
@@ -202,34 +212,34 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
                         </div>
                       )}
 
-                      {!isInstalling && agent.downloaded && agent.ready && agent.id === 'claude-code' && <ClaudeUsage key={refreshKey} />}
-                      {!isInstalling && agent.downloaded && agent.ready && agent.id === 'gemini-cli' && <GeminiUsage key={refreshKey} disabledModels={agent.disabledModels} />}
-                      {!isInstalling && agent.downloaded && agent.ready && agent.id === 'codex' && <CodexUsage key={refreshKey} />}
-                      {!isInstalling && agent.downloaded && agent.ready && agent.id === 'cursor-cli' && <CursorUsage />}
+                      {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'claude-code' && <ClaudeUsage key={refreshKey} />}
+                      {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'gemini-cli' && <GeminiUsage key={refreshKey} disabledModels={agent.disabledModels} />}
+                      {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'codex' && <CodexUsage key={refreshKey} />}
+                      {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'cursor-cli' && <CursorUsage />}
 
-                      {!isInstalling && agent.downloaded && agent.hasAuthentication && (
+                      {!isInstalling && isDownloaded && agent.hasAuthentication && (
                         <div className="flex flex-col gap-1 items-start text-foreground-secondary">
-                          <button
-                            type="button"
-                            onClick={() => handleAuth(agent)}
-                            disabled={
-                              isProcessing ||
-                              isAuthenticating ||
-                              isAuthLoading ||
-                              isAuthStateUnknown ||
-                              (isManageAuth && !agent.cliAvailable)
-                            }
-                            className="text-link hover:brightness-150 focus:outline-none disabled:opacity-50 transition-colors flex items-center gap-1 font-medium select-none"
-                          >
-                            {(isAuthenticating || isAuthStateUnknown) && (
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                            )}
-                            {isManageAuth ? 'CLI auth' : (agent.authAuthenticated ? 'Log out' : 'Log in')}
-                          </button>
+                          {(isManageAuth || agent.authKnown === true) && (
+                            <button
+                              type="button"
+                              onClick={() => handleAuth(agent)}
+                              disabled={
+                                isProcessing ||
+                                isAuthenticating ||
+                                (isManageAuth && !agent.cliAvailable)
+                              }
+                              className="text-link hover:brightness-150 focus:outline-none disabled:opacity-50 transition-colors flex items-center gap-1 font-medium select-none"
+                            >
+                              {isAuthenticating && (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              )}
+                              {isManageAuth ? 'CLI auth' : (agent.authAuthenticated === true ? 'Log out' : 'Log in')}
+                            </button>
+                          )}
                           {isManageAuth && !agent.cliAvailable && (
                             <span className="text-error">IDE terminal is required</span>
                           )}
-                          {!isManageAuth && (agent.id === 'claude-code' || agent.id === 'codex') && (
+                          {!isManageAuth && agent.authKnown === true && (agent.id === 'claude-code' || agent.id === 'codex') && (
                             <button
                               type="button"
                               onClick={() => window.__openAgentCli?.(agent.id)}
@@ -250,7 +260,9 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0 pt-0.5 whitespace-nowrap">
-                    {!agent.downloaded ? (
+                    {!isDownloadedKnown ? (
+                      <RefreshCw className="w-4 h-4 animate-spin text-foreground-secondary" />
+                    ) : !isDownloaded ? (
                       !isInstalling && (
                         <button
                           onClick={() => handleDownload(agent.id)}
@@ -260,13 +272,27 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
                         </button>
                       )
                     ) : (
-                      <button
-                        onClick={() => handleDelete(agent.id)}
-                        disabled={isDeleting || isInstalling}
-                        className="px-4 py-1 flex items-center justify-center bg-secondary text-secondary-foreground border border-secondary-border hover:brightness-110 font-medium rounded-[4px] disabled:opacity-50 transition-colors select-none focus:outline-none focus:ring-2 focus:ring-primary/50 text-[13px]"
-                      >
-                        {isDeleting ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Uninstall'}
-                      </button>
+                      <>
+                        {isUpdateChecking && !canUpdate && (
+                          <RefreshCw className="w-4 h-4 animate-spin text-foreground-secondary" />
+                        )}
+                        {canUpdate && (
+                          <button
+                            onClick={() => handleUpdate(agent.id)}
+                            disabled={isDeleting || isInstalling}
+                            className="px-4 py-1 flex items-center justify-center bg-primary text-primary-foreground border-primary-border outline outline-1 outline-primary/30 outline-offset-1 hover:brightness-110 font-medium rounded-[4px] disabled:opacity-50 transition-colors select-none focus:outline-none focus:ring-2 focus:ring-primary/50 text-[13px]"
+                          >
+                            Update
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDelete(agent.id)}
+                          disabled={isDeleting || isInstalling}
+                          className="px-4 py-1 flex items-center justify-center bg-secondary text-secondary-foreground border border-secondary-border hover:brightness-110 font-medium rounded-[4px] disabled:opacity-50 transition-colors select-none focus:outline-none focus:ring-2 focus:ring-primary/50 text-[13px]"
+                        >
+                          {isDeleting ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Uninstall'}
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -283,6 +309,14 @@ export function AgentManagementView({ initialAgents = [] }: { initialAgents?: Ag
         onConfirm={performDelete}
         confirmLabel="Confirm"
         onCancel={() => setConfirmDeleteId(null)}
+      />
+      <ConfirmationModal
+        isOpen={confirmUpdateId !== null}
+        title="Confirm Update"
+        message={`Are you sure you want to update ${agents.find(a => a.id === confirmUpdateId)?.name || 'this agent'} to the latest version?`}
+        onConfirm={performUpdate}
+        confirmLabel="Update"
+        onCancel={() => setConfirmUpdateId(null)}
       />
     </div>
   );

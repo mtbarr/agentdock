@@ -85,13 +85,27 @@ object AcpAdapterConfig {
     }
 
     @Serializable
+    enum class UpdateSourceType {
+        @SerialName("github_release") GITHUB_RELEASE
+    }
+
+    @Serializable
+    data class UpdateSource(
+        val type: UpdateSourceType,
+        val owner: String? = null,
+        val repo: String? = null,
+        val tagPrefix: String = "v"
+    )
+
+    @Serializable
     data class Distribution(
         val type: DistributionType,
         val version: String,
         val packageName: String? = null,
         val downloadUrl: String? = null,
         val binaryName: PlatformBinary? = null,
-        val extractSubdir: String? = null
+        val extractSubdir: String? = null,
+        val updateSource: UpdateSource? = null
     )
 
     @Serializable
@@ -120,6 +134,10 @@ object AcpAdapterConfig {
         val usageStrategy: String? = null
     ) {
         fun getConfiguredVersion(): String = distribution.version
+
+        fun withDistributionVersion(version: String): AdapterInfo {
+            return copy(distribution = distribution.copy(version = version))
+        }
     }
 
     @Serializable

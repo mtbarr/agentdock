@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, Mic, Settings2 } from 'lucide-react';
-import { AudioTranscriptionFeatureState, AudioTranscriptionSettings } from '../types/chat';
+import { AudioTranscriptionFeatureState, AudioTranscriptionSettings, GlobalSettingsPayload } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
+import ConfirmationModal from './ConfirmationModal';
 
 const emptyState: AudioTranscriptionFeatureState = {
   id: 'whisper-transcription',
@@ -14,22 +15,78 @@ const emptyState: AudioTranscriptionFeatureState = {
   installPath: '',
 };
 
+const defaultGlobalSettings: GlobalSettingsPayload = {
+  settings: { useWslForAcpAdapters: false, wslDistributionName: '', audioTranscription: { language: 'auto' } },
+  host: { hostOs: 'other', wslSupported: false, wslDistributions: [] },
+};
+
+function normalizeGlobalSettings(payload: Partial<GlobalSettingsPayload> | undefined): GlobalSettingsPayload {
+  const wslDistributions = Array.isArray(payload?.host?.wslDistributions)
+    ? payload!.host!.wslDistributions.filter((item): item is { name: string } => Boolean(item?.name))
+    : [];
+  const requestedDistribution = payload?.settings?.wslDistributionName?.trim() ?? '';
+  const selectedDistribution = wslDistributions.some((item) => item.name === requestedDistribution)
+    ? requestedDistribution
+    : (wslDistributions[0]?.name ?? requestedDistribution);
+  return {
+    settings: {
+      useWslForAcpAdapters: Boolean(payload?.settings?.useWslForAcpAdapters),
+      wslDistributionName: selectedDistribution,
+      audioTranscription: payload?.settings?.audioTranscription ?? { language: 'auto' },
+    },
+    host: {
+      hostOs: payload?.host?.hostOs === 'windows' ? 'windows' : 'other',
+      wslSupported: Boolean(payload?.host?.wslSupported),
+      wslDistributions,
+    },
+  };
+}
+
 export function SettingsView() {
   const [feature, setFeature] = useState<AudioTranscriptionFeatureState>(emptyState);
   const [settings, setSettings] = useState<AudioTranscriptionSettings>({ language: 'auto' });
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettingsPayload>(defaultGlobalSettings);
+  const pendingWslSaveRef = useRef(false);
+  const [pendingWslTarget, setPendingWslTarget] = useState<boolean | null>(null);
+  const [switchInProgress, setSwitchInProgress] = useState(false);
+  const hasWslDistributions = globalSettings.host.wslDistributions.length > 0;
 
   useEffect(() => {
+    const requestSettings = () => {
+      ACPBridge.loadAudioTranscriptionFeature();
+      ACPBridge.loadAudioTranscriptionSettings();
+      ACPBridge.loadGlobalSettings();
+    };
+
     const cleanupFeature = ACPBridge.onAudioTranscriptionFeature((e) => {
       setFeature(e.detail.state);
     });
     const cleanupSettings = ACPBridge.onAudioTranscriptionSettings((e) => {
       setSettings(e.detail.settings);
     });
-    ACPBridge.loadAudioTranscriptionFeature();
-    ACPBridge.loadAudioTranscriptionSettings();
+    const cleanupGlobalSettings = ACPBridge.onGlobalSettings((e) => {
+      setGlobalSettings(normalizeGlobalSettings(e.detail?.payload));
+      if (pendingWslSaveRef.current) {
+        pendingWslSaveRef.current = false;
+        setSwitchInProgress(false);
+      }
+    });
+
+    const handleBridgeReady = () => {
+      requestSettings();
+    };
+
+    if (window.__settingsBridgeReady) {
+      requestSettings();
+    } else {
+      window.addEventListener('settings-bridge-ready', handleBridgeReady);
+    }
+
     return () => {
       cleanupFeature();
       cleanupSettings();
+      cleanupGlobalSettings();
+      window.removeEventListener('settings-bridge-ready', handleBridgeReady);
     };
   }, []);
 
@@ -44,6 +101,35 @@ export function SettingsView() {
     ACPBridge.saveAudioTranscriptionSettings(next);
   };
 
+  const handleUseWslChange = (useWslForAcpAdapters: boolean) => {
+    setPendingWslTarget(useWslForAcpAdapters);
+  };
+
+  const handleWslDistributionChange = (wslDistributionName: string) => {
+    const next = { ...globalSettings.settings, wslDistributionName };
+    setGlobalSettings(prev => ({ ...prev, settings: next }));
+    pendingWslSaveRef.current = true;
+    ACPBridge.saveGlobalSettings(next);
+  };
+
+  const confirmUseWslChange = () => {
+    if (pendingWslTarget === null) return;
+    pendingWslSaveRef.current = true;
+    setSwitchInProgress(true);
+    setGlobalSettings(prev => ({
+      ...prev,
+      settings: {
+        ...prev.settings,
+        useWslForAcpAdapters: pendingWslTarget,
+      },
+    }));
+    ACPBridge.saveGlobalSettings({
+      ...globalSettings.settings,
+      useWslForAcpAdapters: pendingWslTarget,
+    });
+    setPendingWslTarget(null);
+  };
+
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
       <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
@@ -55,6 +141,58 @@ export function SettingsView() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="px-4 py-4">
+          {(globalSettings.host.hostOs === 'windows') && (
+            <div className="mb-4 rounded-ide border border-border bg-background-secondary">
+              <div className="flex items-start justify-between gap-4 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-foreground">Agent Environment</div>
+                  <div className="mt-1 text-xs text-foreground/60">
+                    Choose whether coding agents run in Windows or inside WSL. Switching affects installation, detection and terminal-based sign-in.
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <label htmlFor="wsl-distribution" className="text-xs text-foreground/60">Distribution</label>
+                    <select
+                      id="wsl-distribution"
+                      value={globalSettings.settings.wslDistributionName}
+                      onChange={(e) => handleWslDistributionChange(e.target.value)}
+                      disabled={globalSettings.settings.useWslForAcpAdapters || switchInProgress || !hasWslDistributions}
+                      className="min-w-[180px] rounded-ide border border-border bg-background px-2 py-1 text-xs text-foreground disabled:opacity-50"
+                    >
+                      {globalSettings.host.wslDistributions.length === 0 ? (
+                        <option value="">No distributions</option>
+                      ) : (
+                        globalSettings.host.wslDistributions.map((distribution) => (
+                          <option key={distribution.name} value={distribution.name}>
+                            {distribution.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                  {!globalSettings.host.wslSupported && (
+                    <div className="mt-2 text-xs text-error">WSL could not be detected from the IDE process.</div>
+                  )}
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={globalSettings.settings.useWslForAcpAdapters}
+                  aria-label="Use WSL"
+                  onClick={() => handleUseWslChange(!globalSettings.settings.useWslForAcpAdapters)}
+                  disabled={!globalSettings.host.wslSupported || !globalSettings.settings.wslDistributionName || switchInProgress}
+                  className={`relative mt-0.5 inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    globalSettings.settings.useWslForAcpAdapters ? 'bg-primary' : 'bg-border'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${
+                      globalSettings.settings.useWslForAcpAdapters ? 'translate-x-3' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="rounded-ide border border-border bg-background-secondary">
             <div className="flex items-start justify-between gap-4 px-4 py-3">
               <div className="flex min-w-0 items-start gap-3">
@@ -104,6 +242,19 @@ export function SettingsView() {
           </div>
         </div>
       </div>
+
+      <ConfirmationModal
+        isOpen={pendingWslTarget !== null}
+        title={pendingWslTarget ? 'Switch to WSL' : 'Switch to Windows'}
+        message={
+          pendingWslTarget
+            ? `This will close all open conversations, stop all running ACP agents, refresh Service Providers immediately and restart downloaded agents inside WSL (${globalSettings.settings.wslDistributionName}).`
+            : 'This will close all open conversations, stop all running ACP agents, refresh Service Providers immediately and restart downloaded agents in Windows.'
+        }
+        confirmLabel="Switch"
+        onConfirm={confirmUseWslChange}
+        onCancel={() => setPendingWslTarget(null)}
+      />
     </div>
   );
 }

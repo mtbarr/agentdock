@@ -51,6 +51,27 @@ private fun McpServerConfig.toSdkMcpServer(): McpServer? = when (transport) {
     else -> null
 }
 
+internal fun AcpClientService.processKey(adapterName: String): String {
+    return "${AcpAdapterPaths.getExecutionTarget().name.lowercase()}:$adapterName"
+}
+
+internal fun AcpClientService.ensureExecutionTargetCurrent() {
+    val currentTarget = AcpAdapterPaths.getExecutionTarget()
+    val previousTarget = executionTargetRef.getAndSet(currentTarget)
+    if (previousTarget == currentTarget) {
+        return
+    }
+
+    resetExecutionEnvironment(previousTarget, clearSessions = false, restartDownloadedAdapters = false)
+}
+
+internal fun AcpClientService.resolveSessionCwd(path: String): String {
+    return when (AcpAdapterPaths.getExecutionTarget()) {
+        AcpExecutionTarget.LOCAL -> path
+        AcpExecutionTarget.WSL -> AcpExecutionMode.toWslPath(path) ?: path
+    }
+}
+
 @Suppress("OPT_IN_USAGE")
 internal suspend fun AcpClientService.startAgent(
     chatId: String,
@@ -59,6 +80,7 @@ internal suspend fun AcpClientService.startAgent(
     resumeSessionId: String? = null,
     forceRestart: Boolean = false
 ) {
+    ensureExecutionTargetCurrent()
     val context = sessions.computeIfAbsent(chatId) { createAgentContext(chatId) }
 
     withContext(Dispatchers.IO) {
@@ -84,7 +106,7 @@ internal suspend fun AcpClientService.startAgent(
             context.statusRef.set(AcpClientService.Status.Initializing)
 
             try {
-            val sharedProc = activeProcesses.computeIfAbsent(requestedAdapterName) { createSharedProcess(requestedAdapterName) }
+            val sharedProc = activeProcesses.computeIfAbsent(processKey(requestedAdapterName)) { createSharedProcess(requestedAdapterName) }
             context.sharedProcess = sharedProc
 
             ensureSharedProcessStarted(sharedProc, adapterInfo, forceRestart)
@@ -92,7 +114,7 @@ internal suspend fun AcpClientService.startAgent(
             val runtimeMetadata = adapterRuntimeMetadataMap[requestedAdapterName]
 
             val client = sharedProc.client!!
-            val cwd = project.basePath ?: System.getProperty("user.dir")
+            val cwd = resolveSessionCwd(project.basePath ?: System.getProperty("user.dir"))
 
                 val factory = object : ClientOperationsFactory {
                     override suspend fun createClientOperations(
@@ -163,6 +185,7 @@ internal suspend fun AcpClientService.loadSession(
     preferredModelId: String? = null,
     preferredModeId: String? = null
 ) {
+    ensureExecutionTargetCurrent()
     val context = sessions.computeIfAbsent(chatId) { createAgentContext(chatId) }
 
     withContext(Dispatchers.IO) {
@@ -202,6 +225,7 @@ internal suspend fun AcpClientService.loadSession(
 
 @Suppress("OPT_IN_USAGE")
 internal suspend fun AcpClientService.loadConversation(chatId: String, sessionsChain: List<SessionMeta>) {
+    ensureExecutionTargetCurrent()
     if (sessionsChain.isEmpty()) {
         throw IllegalArgumentException("Conversation session chain is empty")
     }
@@ -253,11 +277,12 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
     preferredModeId: String?,
     keepLoadedSessionActive: Boolean
 ) {
+    ensureExecutionTargetCurrent()
     val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
     val requestedAdapterName = adapterInfo.id
     replayOwnerBySessionId[sessionId] = context.chatId
 
-    val sharedProc = activeProcesses.computeIfAbsent(requestedAdapterName) { createSharedProcess(requestedAdapterName) }
+    val sharedProc = activeProcesses.computeIfAbsent(processKey(requestedAdapterName)) { createSharedProcess(requestedAdapterName) }
     context.sharedProcess = sharedProc
 
     ensureSharedProcessStarted(sharedProc, adapterInfo)
@@ -269,7 +294,7 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
     context.sessionIdRef.set(sessionId)
 
     val client = sharedProc.client!!
-    val cwd = project.basePath ?: System.getProperty("user.dir")
+    val cwd = resolveSessionCwd(project.basePath ?: System.getProperty("user.dir"))
 
     val factory = object : ClientOperationsFactory {
         override suspend fun createClientOperations(
@@ -461,9 +486,10 @@ internal suspend fun AcpClientService.stopAgent(chatId: String) {
 }
 
 internal fun AcpClientService.stopSharedProcess(adapterName: String) {
+    ensureExecutionTargetCurrent()
     adapterInitializationJobs.remove(adapterName)?.cancel()
     adapterInitializationScopes.remove(adapterName)?.coroutineContext?.cancel()
-    val shared = activeProcesses.remove(adapterName)
+    val shared = activeProcesses.remove(processKey(adapterName))
     teardownAdapterProcess(adapterName, shared)
     updateAdapterInitializationState(adapterName, AcpClientService.AdapterInitializationStatus.NotStarted)
     adapterInitialization.remove(adapterName)
@@ -474,32 +500,71 @@ internal fun AcpClientService.stopSharedProcess(adapterName: String) {
 }
 
 internal fun AcpClientService.replaceSharedProcess(adapterName: String): AcpClientService.SharedProcess {
-    val previous = activeProcesses.remove(adapterName)
+    ensureExecutionTargetCurrent()
+    val previous = activeProcesses.remove(processKey(adapterName))
     teardownAdapterProcess(adapterName, previous)
-    return createSharedProcess(adapterName).also { activeProcesses[adapterName] = it }
+    return createSharedProcess(adapterName).also { activeProcesses[processKey(adapterName)] = it }
 }
 
-internal fun AcpClientService.teardownAdapterProcess(adapterName: String, shared: AcpClientService.SharedProcess?) {
+internal fun AcpClientService.teardownAdapterProcess(
+    adapterName: String,
+    shared: AcpClientService.SharedProcess?,
+    target: AcpExecutionTarget = executionTargetRef.get()
+) {
     runCatching { shared?.stop() }
-    runCatching { AcpProcessUtils.stopProcessesUsingAdapterRoot(adapterName) }
+    runCatching { AcpProcessUtils.stopProcessesUsingAdapterRoot(adapterName, target) }
 }
 
-internal fun AcpClientService.shutdown() {
-    scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+internal fun AcpClientService.resetExecutionEnvironment(
+    teardownTarget: AcpExecutionTarget,
+    clearSessions: Boolean,
+    restartDownloadedAdapters: Boolean
+) {
+    adapterInitializationJobs.values.forEach { it.cancel() }
+    adapterInitializationJobs.clear()
     adapterInitializationScopes.values.forEach { it.coroutineContext.cancel() }
     adapterInitializationScopes.clear()
-    sessions.values.forEach { it.stop() }
-    sessions.clear()
-    activeProcesses.entries.toList().forEach { (adapterName, shared) ->
-        runCatching { teardownAdapterProcess(adapterName, shared) }
-    }
-    activeProcesses.clear()
-    adapterInitializationJobs.clear()
     adapterInitialization.clear()
     adapterInitializationState.clear()
     adapterInitializationErrors.clear()
     adapterRuntimeMetadataMap.clear()
     availableCommandsByAdapter.clear()
+    systemInstructionsInjectedSessionIds.clear()
+    replayOwnerBySessionId.clear()
+
+    sessions.values.forEach { it.stop() }
+    if (clearSessions) {
+        sessions.clear()
+    }
+
+    val processes = activeProcesses.values.toList()
+    activeProcesses.clear()
+    processes.forEach { shared ->
+        runCatching { teardownAdapterProcess(shared.adapterName, shared, teardownTarget) }
+    }
+
+    startupInitializationStarted.set(false)
+    if (restartDownloadedAdapters) {
+        initializeDownloadedAdaptersInBackground()
+    }
+}
+
+internal fun AcpClientService.switchExecutionTarget(previousTarget: AcpExecutionTarget) {
+    executionTargetRef.set(AcpAdapterPaths.getExecutionTarget())
+    resetExecutionEnvironment(
+        teardownTarget = previousTarget,
+        clearSessions = true,
+        restartDownloadedAdapters = true
+    )
+}
+
+internal fun AcpClientService.shutdown() {
+    scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+    resetExecutionEnvironment(
+        teardownTarget = executionTargetRef.get(),
+        clearSessions = true,
+        restartDownloadedAdapters = false
+    )
 }
 
 /**
@@ -508,7 +573,7 @@ internal fun AcpClientService.shutdown() {
  * on the same scope will only execute after the worker suspends (queue drained).
  */
 internal suspend fun AcpClientService.awaitPendingSessionUpdates(adapterName: String) {
-    val sharedProc = activeProcesses[adapterName] ?: return
+    val sharedProc = activeProcesses[processKey(adapterName)] ?: return
     val updateScope = sharedProc.sessionUpdateScope ?: return
     val completed = CompletableDeferred<Unit>()
     updateScope.launch { completed.complete(Unit) }

@@ -19,9 +19,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.io.asSource
 import kotlinx.io.buffered
@@ -34,6 +36,9 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import java.util.Collections
+
+private const val ADAPTER_INITIALIZATION_TIMEOUT_MS = 60_000L
 
 internal fun AcpClientService.initializeDownloadedAdaptersInBackground() {
     if (!startupInitializationStarted.compareAndSet(false, true)) return
@@ -47,7 +52,6 @@ internal fun AcpClientService.initializeDownloadedAdaptersInBackground() {
 internal fun AcpClientService.initializeAdapterInBackground(adapterName: String) {
     val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
     if (!AcpAdapterPaths.isDownloaded(adapterInfo.id)) return
-
     adapterInitializationJobs.remove(adapterInfo.id)?.cancel()
     adapterInitializationScopes.remove(adapterInfo.id)?.coroutineContext?.cancel()
     adapterInitialization.remove(adapterInfo.id)
@@ -60,20 +64,30 @@ internal fun AcpClientService.initializeAdapterInBackground(adapterName: String)
     val job = initScope.launch {
         try {
             val sharedProc = replaceSharedProcess(adapterInfo.id)
-            initializeSharedProcessAtStartup(sharedProc, adapterInfo)
+            withTimeout(ADAPTER_INITIALIZATION_TIMEOUT_MS) {
+                initializeSharedProcessAtStartup(sharedProc, adapterInfo)
+            }
             if (!deferred.isCompleted) deferred.complete(Unit)
             updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.Ready)
+        } catch (e: TimeoutCancellationException) {
+            if (!deferred.isCompleted) deferred.completeExceptionally(e)
+            activeProcesses[processKey(adapterInfo.id)]?.stop()
+            updateAdapterInitializationState(
+                adapterInfo.id,
+                AcpClientService.AdapterInitializationStatus.Failed,
+                "Adapter initialization timed out after ${ADAPTER_INITIALIZATION_TIMEOUT_MS / 1000}s"
+            )
         } catch (_: CancellationException) {
             if (!deferred.isCompleted) deferred.cancel()
-            activeProcesses[adapterInfo.id]?.stop()
+            activeProcesses[processKey(adapterInfo.id)]?.stop()
             updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.NotStarted)
         } catch (e: Exception) {
             if (!deferred.isCompleted) deferred.completeExceptionally(e)
-        updateAdapterInitializationState(
-            adapterInfo.id,
-            AcpClientService.AdapterInitializationStatus.Failed,
-            e.message ?: e.toString()
-        )
+            updateAdapterInitializationState(
+                adapterInfo.id,
+                AcpClientService.AdapterInitializationStatus.Failed,
+                e.message ?: e.toString()
+            )
         } finally {
             adapterInitializationJobs.remove(adapterInfo.id)
             adapterInitializationScopes.remove(adapterInfo.id)?.coroutineContext?.cancel()
@@ -92,7 +106,9 @@ internal suspend fun AcpClientService.initializeAdapterIfEligible(adapterName: S
     updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.Initializing)
     try {
         val sharedProc = replaceSharedProcess(adapterInfo.id)
-        ensureSharedProcessStarted(sharedProc, adapterInfo)
+        withTimeout(ADAPTER_INITIALIZATION_TIMEOUT_MS) {
+            ensureSharedProcessStarted(sharedProc, adapterInfo)
+        }
         if (!deferred.isCompleted) deferred.complete(Unit)
         updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.Ready)
     } catch (e: Exception) {
@@ -136,10 +152,7 @@ internal suspend fun AcpClientService.ensureSharedProcessStarted(
         sharedProc.stop()
     }
 
-    val isHealthy = sharedProc.process != null &&
-        sharedProc.process!!.isAlive &&
-        sharedProc.client != null &&
-        sharedProc.isInitialized
+    val isHealthy = sharedProc.isHealthy()
 
     if (!isHealthy) {
         updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.Initializing)
@@ -169,52 +182,65 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
 ) {
     val requestedAdapterName = adapterInfo.id
     sharedProc.mutex.withLock {
-        val alreadyHealthy = sharedProc.process != null &&
-            sharedProc.process!!.isAlive &&
-            sharedProc.client != null &&
-            sharedProc.isInitialized
+        val alreadyHealthy = sharedProc.isHealthy()
         if (alreadyHealthy) return
 
         if (sharedProc.process != null) {
             sharedProc.stop()
         }
 
-        val adapterRoot = AcpAdapterPaths.getAdapterRoot(requestedAdapterName)
-            ?: throw IllegalStateException("ACP adapter directory not found: $requestedAdapterName")
+        val target = AcpAdapterPaths.getExecutionTarget()
+        val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterInfo.id, target)
 
-        val launchFile = AcpAdapterPaths.resolveLaunchFile(adapterRoot, adapterInfo)
-            ?: throw IllegalStateException("Missing launch target for adapter: ${adapterInfo.id}")
-        if (!launchFile.isFile) throw IllegalStateException("Missing launch target: ${launchFile.absolutePath}")
+        val command = AcpAdapterPaths.buildLaunchCommand(
+            adapterRootPath = adapterRoot,
+            adapterInfo = adapterInfo,
+            projectPath = project.basePath,
+            target = target
+        )
 
-        val command = AcpAdapterPaths.buildLaunchCommand(adapterRoot, adapterInfo).toMutableList()
-        command.addAll(adapterInfo.args)
-
-        val pb = ProcessBuilder(command).directory(resolveAdapterProcessWorkingDirectory(adapterRoot)).redirectErrorStream(false)
+        val pb = ProcessBuilder(command)
+            .directory(resolveAdapterProcessWorkingDirectory(File(adapterRoot)))
+            .redirectErrorStream(false)
         val env = pb.environment()
         env.putAll(System.getenv())
 
         val proc = withContext(Dispatchers.IO) { pb.start() }
         sharedProc.process = proc
+        val startupOutput = Collections.synchronizedList(mutableListOf<String>())
 
         Thread {
             proc.errorStream.bufferedReader().useLines { lines ->
                 lines.forEach { line ->
                     if (line.isNotBlank()) {
+                        startupOutput.add(line)
                         onLogEntry(AcpLogEntry(AcpLogEntry.Direction.RECEIVED, line, AcpLogEntry.Category.STDERR))
                     }
                 }
             }
         }.apply { isDaemon = true; start() }
 
-        val input = LineLoggingInputStream(proc.inputStream) { line ->
+        val input = LineLoggingInputStream(
+            proc.inputStream,
+            transform = { line ->
+                // Fix protocol version mismatch: Codex 0.10.x sends AuthMethod env_var objects
+                // with "vars":[{"name":"VAR"}] instead of the flat "varName":"VAR" that ACP SDK
+                // 0.16.6 requires. Extract the first var name and add it as "varName" after the
+                // vars array, inside the same env_var object.
+                if (!line.contains("\"env_var\"")) line
+                else line.replace(
+                    Regex(""""vars"\s*:\s*\[(\{"name"\s*:\s*"([^"]+)"[^\]]*)\]""")
+                ) { m -> "\"vars\":[${m.groupValues[1]}],\"varName\":\"${m.groupValues[2]}\"" }
+            }
+        ) { line ->
+            startupOutput.add(line)
             onLogEntry(AcpLogEntry(AcpLogEntry.Direction.RECEIVED, line))
         }.asSource().buffered()
-
         val output = LineLoggingOutputStream(proc.outputStream) { line ->
             onLogEntry(AcpLogEntry(AcpLogEntry.Direction.SENT, line))
         }.asSink().buffered()
 
-        val protocolScope = CoroutineScope(SupervisorJob(scope.coroutineContext[Job]) + Dispatchers.IO)
+        val protocolScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         sharedProc.protocolScope = protocolScope
         val transport = StdioTransport(protocolScope, Dispatchers.IO, input, output)
         val prot = Protocol(protocolScope, transport)
@@ -223,11 +249,61 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
         val c = Client(prot)
         sharedProc.client = c
         prot.start()
-        c.initialize(ClientInfo(LATEST_PROTOCOL_VERSION, ClientCapabilities()))
+
+        var initialized = false
+        var attempts = 0
+        val maxAttempts = 60
+        var lastInitializeError: Exception? = null
+
+        while (!initialized && attempts < maxAttempts) {
+            try {
+                attempts++
+                withTimeout(10_000L) {
+                    c.initialize(ClientInfo(LATEST_PROTOCOL_VERSION, ClientCapabilities()))
+                }
+                initialized = true
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                val normalized = normalizeAdapterStartupException(e, startupOutput)
+                if (normalized !== e) throw normalized
+                lastInitializeError = e
+                if (attempts < maxAttempts) {
+                    kotlinx.coroutines.delay(5_000L)
+                }
+            }
+        }
+        if (!initialized) {
+            throw normalizeAdapterStartupException(
+                lastInitializeError ?: IllegalStateException("Adapter initialization failed"),
+                startupOutput
+            )
+        }
         runCatching { ensureAsyncSessionUpdates(sharedProc) }
-        adapterRuntimeMetadataMap[requestedAdapterName] = fetchAdapterRuntimeMetadata(c, adapterInfo)
+        try {
+            adapterRuntimeMetadataMap[requestedAdapterName] = fetchAdapterRuntimeMetadata(c, adapterInfo)
+        } catch (_: kotlinx.serialization.SerializationException) {
+            // Protocol version mismatch between adapter binary and ACP SDK -
+            // models/modes will fall back to config defaults in pushAdapters.
+        } catch (e: Exception) {
+            throw normalizeAdapterStartupException(e, startupOutput)
+        }
         sharedProc.isInitialized = true
     }
+}
+
+private fun normalizeAdapterStartupException(error: Exception, startupOutput: List<String>): Exception {
+    val haystacks = buildList {
+        add(error.message.orEmpty())
+        addAll(startupOutput)
+    }
+    val authRequired = haystacks.any { line ->
+        line.contains("Please visit the following URL to authorize the application", ignoreCase = true) ||
+            line.contains("accounts.google.com/o/oauth2/", ignoreCase = true) ||
+            line.contains("Enter the authorization code:", ignoreCase = true) ||
+            line.contains("Authentication required", ignoreCase = true)
+    }
+    if (!authRequired) return error
+    return IllegalStateException("[AUTH_REQUIRED] Authentication required")
 }
 
 @OptIn(com.agentclientprotocol.annotations.UnstableApi::class)
@@ -235,7 +311,7 @@ internal suspend fun AcpClientService.fetchAdapterRuntimeMetadata(
     client: Client,
     adapterInfo: AcpAdapterConfig.AdapterInfo
 ): AcpClientService.AdapterRuntimeMetadata {
-    val cwd = project.basePath ?: System.getProperty("user.dir")
+    val cwd = resolveSessionCwd(project.basePath ?: System.getProperty("user.dir"))
     val params = SessionCreationParameters(cwd = cwd, mcpServers = emptyList())
     val factory = object : ClientOperationsFactory {
         override suspend fun createClientOperations(
@@ -329,7 +405,7 @@ internal fun AcpClientService.ensureAsyncSessionUpdates(sharedProc: AcpClientSer
         val handlers = field.get(protocol) as AtomicRef<PersistentMap<MethodName, suspend (JsonRpcNotification) -> Unit>>
         val methodName = AcpMethod.ClientMethods.SessionUpdate.methodName
         val original = handlers.value[methodName] ?: return
-        val updateScope = CoroutineScope(scope.coroutineContext + Dispatchers.Default.limitedParallelism(1))
+        val updateScope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
         sharedProc.sessionUpdateScope = updateScope
         val queue = Channel<JsonRpcNotification>(Channel.UNLIMITED)
         sharedProc.sessionUpdateQueue = queue
