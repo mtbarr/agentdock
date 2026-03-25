@@ -45,6 +45,7 @@ class HistoryBridge(
     )
 
     private var listHistoryQuery: JBCefJSQuery? = null
+    private var syncHistoryQuery: JBCefJSQuery? = null
     private var deleteHistoryQuery: JBCefJSQuery? = null
     private var renameHistoryQuery: JBCefJSQuery? = null
 
@@ -60,6 +61,21 @@ class HistoryBridge(
                         pushHistoryList(permissiveJson.encodeToString(history))
                     } catch (e: Exception) {
                         sendJsError("Failed to list history: ${e.message}")
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
+        syncHistoryQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+            addHandler { payload ->
+                val projectPath = payload?.trim()?.takeUnless { it.isEmpty() || it == "undefined" } ?: defaultProjectPath
+                scope.launch(Dispatchers.Default) {
+                    try {
+                        val history = UnifiedHistoryService.syncAndGetHistoryList(projectPath)
+                        pushHistoryList(permissiveJson.encodeToString(history))
+                    } catch (e: Exception) {
+                        sendJsError("Failed to sync history: ${e.message}")
                     }
                 }
                 JBCefJSQuery.Response("ok")
@@ -131,6 +147,7 @@ class HistoryBridge(
 
     fun injectApi(cefBrowser: CefBrowser) {
         val listInject = listHistoryQuery?.inject("projectPath") ?: "console.error('[HistoryBridge] List query not ready')"
+        val syncInject = syncHistoryQuery?.inject("projectPath") ?: "console.error('[HistoryBridge] Sync query not ready')"
         val deleteInject = deleteHistoryQuery?.inject("JSON.stringify(payload)") ?: "console.error('[HistoryBridge] Delete query not ready')"
         val renameInject = renameHistoryQuery?.inject("JSON.stringify(payload)") ?: "console.error('[HistoryBridge] Rename query not ready')"
 
@@ -141,6 +158,10 @@ class HistoryBridge(
 
                 window.__requestHistoryList = function(projectPath) {
                     try { $listInject } catch(e) { console.error('[HistoryBridge] Request error', e); }
+                };
+
+                window.__syncHistoryList = function(projectPath) {
+                    try { $syncInject } catch(e) { console.error('[HistoryBridge] Sync error', e); }
                 };
 
                 window.__deleteHistoryConversations = function(payload) {

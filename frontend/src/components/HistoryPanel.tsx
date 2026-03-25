@@ -151,7 +151,7 @@ export default function HistoryPanel({ availableAgents, onOpenSession }: History
   const refreshHistory = () => {
     setIsLoading(true);
     setDeleteErrors({});
-    ACPBridge.requestHistoryList();
+    ACPBridge.syncHistoryList();
   };
 
   const openDeleteConfirmation = (items: HistorySessionMeta[]) => {

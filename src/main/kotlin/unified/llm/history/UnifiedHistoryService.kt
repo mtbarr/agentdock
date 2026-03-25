@@ -946,6 +946,7 @@ object UnifiedHistoryService {
         val result = mutableListOf<SessionMeta>()
 
         adapters.values.forEach { adapter ->
+            if (!AcpAdapterPaths.isDownloaded(adapter.id)) return@forEach
             val historyConfig = adapter.historyConfig ?: return@forEach
 
             val parser = HistoryParserRegistry.getParser(historyConfig.parserStrategy) ?: return@forEach
@@ -996,10 +997,17 @@ object UnifiedHistoryService {
 
             if (keptSessions.isEmpty()) {
                 changed = true
+                deleteConversationReplay(projectPath, conversation.id)
                 null
             } else {
                 if (keptSessions.size != conversation.sessions.size) {
                     changed = true
+                    val latestOriginalSession = conversation.sessions.maxByOrNull { it.updatedAt }
+                    if (latestOriginalSession != null && keptSessions.none {
+                        it.sessionId == latestOriginalSession.sessionId && it.adapterName == latestOriginalSession.adapterName
+                    }) {
+                        deleteConversationReplay(projectPath, conversation.id)
+                    }
                 }
                 val syncedTitle = keptSessions.firstNotNullOfOrNull { session ->
                     val key = "${session.adapterName}:${session.sessionId}"
@@ -1086,6 +1094,11 @@ object UnifiedHistoryService {
         startInitialHistorySync(cleanProjectPath)
         awaitInitialHistorySync(cleanProjectPath)
         buildHistoryList(cleanProjectPath, readExistingProjectIndex(cleanProjectPath))
+    }
+
+    suspend fun syncAndGetHistoryList(projectPath: String?): List<SessionMeta> = withContext(Dispatchers.IO) {
+        val cleanProjectPath = canonicalProjectPath(projectPath)
+        buildHistoryList(cleanProjectPath, syncProjectIndex(cleanProjectPath))
     }
 
     suspend fun getConversationSessions(projectPath: String?, conversationId: String?): List<SessionMeta> = withContext(Dispatchers.IO) {

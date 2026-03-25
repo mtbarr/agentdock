@@ -308,6 +308,10 @@ export const ACPBridge = {
     window.__requestHistoryList?.(projectPath);
   },
 
+  syncHistoryList: (projectPath?: string) => {
+    window.__syncHistoryList?.(projectPath);
+  },
+
   onHistoryList: (callback: (e: CustomEvent<HistoryListEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.HISTORY_LIST, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.HISTORY_LIST, callback as EventListener);
