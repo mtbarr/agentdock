@@ -108,6 +108,7 @@ export default function ChatSessionView({
 
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState(false);
+  const lastReportedSessionStateRef = useRef('');
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -209,6 +210,9 @@ export default function ChatSessionView({
   }, [permissionRequest, onPermissionRequestChange]);
 
   useEffect(() => {
+    const fingerprint = `${acpSessionId}|${adapterName}`;
+    if (lastReportedSessionStateRef.current === fingerprint) return;
+    lastReportedSessionStateRef.current = fingerprint;
     onSessionStateChange?.({
       acpSessionId,
       adapterName

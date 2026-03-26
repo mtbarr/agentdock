@@ -16,6 +16,7 @@ import {
   AudioTranscriptionResultPayload,
   AudioRecordingStatePayload,
   AudioTranscriptionSettings,
+  ConversationReplayLoadedPayload,
   GlobalSettingsPayload,
   ExecutionTargetSwitchPayload,
 } from '../types/chat';
@@ -36,6 +37,7 @@ export interface UndoResultEvent { chatId: string; result: UndoResultPayload; }
 export interface ChangesStateEvent { chatId: string; state: ChangesState; }
 export interface ToolCallBridgeEvent { chatId: string; payload: ToolCallEvent; }
 export interface ConversationTranscriptSavedEvent { payload: ConversationTranscriptSavedPayload; }
+export interface ConversationReplayLoadedEvent { payload: ConversationReplayLoadedPayload; }
 
 export interface McpServersEvent { servers: McpServerConfig[]; }
 export interface PromptLibraryEvent { items: PromptLibraryItem[]; }
@@ -68,6 +70,7 @@ const EVENT_NAMES = {
   TOOL_CALL: 'acp-tool-call',
   TOOL_CALL_UPDATE: 'acp-tool-call-update',
   CONVERSATION_TRANSCRIPT_SAVED: 'conversation-transcript-saved',
+  CONVERSATION_REPLAY_LOADED: 'conversation-replay-loaded',
   AUDIO_TRANSCRIPTION_FEATURE: 'audio-transcription-feature',
   AUDIO_TRANSCRIPTION_RESULT: 'audio-transcription-result',
   AUDIO_RECORDING_STATE: 'audio-recording-state',
@@ -198,6 +201,10 @@ export const ACPBridge = {
 
     window.__onConversationTranscriptSaved = (payload) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, { detail: { payload } }));
+    };
+
+    window.__onConversationReplayLoaded = (payload) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.CONVERSATION_REPLAY_LOADED, { detail: { payload } }));
     };
 
     window.__onMcpServers = (servers) => {
@@ -406,6 +413,11 @@ export const ACPBridge = {
   onConversationTranscriptSaved: (callback: (e: CustomEvent<ConversationTranscriptSavedEvent>) => void) => {
     window.addEventListener(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, callback as EventListener);
     return () => window.removeEventListener(EVENT_NAMES.CONVERSATION_TRANSCRIPT_SAVED, callback as EventListener);
+  },
+
+  onConversationReplayLoaded: (callback: (e: CustomEvent<ConversationReplayLoadedEvent>) => void) => {
+    window.addEventListener(EVENT_NAMES.CONVERSATION_REPLAY_LOADED, callback as EventListener);
+    return () => window.removeEventListener(EVENT_NAMES.CONVERSATION_REPLAY_LOADED, callback as EventListener);
   },
 
   searchFiles: (query: string) => {

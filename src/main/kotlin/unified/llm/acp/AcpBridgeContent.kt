@@ -8,6 +8,7 @@ import kotlinx.serialization.json.*
 import unified.llm.changes.ChangesState
 import unified.llm.changes.ChangesStateService
 import unified.llm.history.ConversationAssistantMetadata
+import unified.llm.history.ConversationReplayData
 import unified.llm.utils.escapeForJsString
 
 
@@ -28,6 +29,20 @@ internal fun AcpBridge.pushContentChunk(chatId: String, role: String, type: Stri
     if (replaySeq != null) parts.add("\"replaySeq\":$replaySeq")
     val json = "{${parts.joinToString(",")}}"
     dispatchContentChunkJson(json)
+}
+
+internal fun AcpBridge.pushConversationReplayLoaded(chatId: String, data: ConversationReplayData) {
+    val payload = buildJsonObject {
+        put("chatId", chatId)
+        put("data", Json.encodeToJsonElement(data))
+    }.toString().escapeForJsString()
+    runOnEdt {
+        browser.cefBrowser.executeJavaScript(
+            "if(window.__onConversationReplayLoaded) window.__onConversationReplayLoaded(JSON.parse('$payload'));",
+            browser.cefBrowser.url,
+            0
+        )
+    }
 }
 
 /** Convenience: send a ContentBlock from the ACP SDK through the unified pipeline. */

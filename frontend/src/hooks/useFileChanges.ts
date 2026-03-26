@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { diff_match_patch, DIFF_INSERT, DIFF_DELETE } from 'diff-match-patch';
 import { ToolCallEvent, FileChangeSummary } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
+import { buildReplayToolCallEvents } from '../utils/replay';
 
 const _dmp = new diff_match_patch();
 
@@ -172,10 +173,16 @@ export function useFileChanges(
       }
     });
 
+    const unsubConversationReplayLoaded = ACPBridge.onConversationReplayLoaded((e) => {
+      if (e.detail.payload.chatId !== conversationId) return;
+      setToolCallEvents(buildReplayToolCallEvents(e.detail.payload.data));
+    });
+
     return () => {
       unsubChangesState();
       unsubToolCall();
       unsubToolCallUpdate();
+      unsubConversationReplayLoaded();
     };
   }, [conversationId, sessionId, adapterName]);
 

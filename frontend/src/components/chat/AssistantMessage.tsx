@@ -120,25 +120,27 @@ export const AssistantMessage = memo(({ message, onImageClick, showBorder, agent
                 {(message.agentName || '?').slice(0, 1)}
               </div>
             )}
-            <Tooltip
-              content={
-                <div className="min-w-[220px] space-y-1.5">
-                  {tooltipRows.map((row) => (
-                    <div key={row.label} className="flex justify-between gap-3 text-xs">
-                      <span className="text-foreground-secondary">{row.label}</span>
-                      <span className="text-foreground font-mono text-right">{row.value}</span>
-                    </div>
-                  ))}
-                </div>
-              }
-            >
-              <button
-                type="button"
-                className="inline-flex items-center justify-center w-5 h-5 rounded-sm text-foreground-secondary hover:text-foreground hover:bg-accent transition-colors"
+            {(promptTime || duration || contextUsage) && (
+              <Tooltip
+                content={
+                  <div className="min-w-[220px] space-y-1.5">
+                    {tooltipRows.map((row) => (
+                      <div key={row.label} className="flex justify-between gap-3 text-xs">
+                        <span className="text-foreground-secondary">{row.label}</span>
+                        <span className="text-foreground font-mono text-right">{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                }
               >
-                <Info size={14} />
-              </button>
-            </Tooltip>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center w-5 h-5 rounded-sm text-foreground-secondary hover:text-foreground hover:bg-accent transition-colors"
+                >
+                  <Info size={14} />
+                </button>
+              </Tooltip>
+            )}
           </div>
         )}
 

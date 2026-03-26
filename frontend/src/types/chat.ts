@@ -224,6 +224,58 @@ export interface ContentChunk {
   contextWindowSize?: number;
 }
 
+export interface ReplayContentBlock {
+  role?: 'user' | 'assistant';
+  type?: string;
+  text?: string;
+  data?: string;
+  path?: string;
+  name?: string;
+  mimeType?: string;
+  startLine?: number;
+  endLine?: number;
+  toolCallId?: string;
+  toolKind?: string;
+  toolTitle?: string;
+  toolStatus?: string;
+  toolRawJson?: string;
+  planEntries?: PlanEntry[];
+}
+
+export interface ConversationAssistantMetadata {
+  agentId?: string;
+  agentName?: string;
+  modelId?: string;
+  modelName?: string;
+  modeId?: string;
+  modeName?: string;
+  promptStartedAtMillis?: number;
+  durationSeconds?: number;
+  contextTokensUsed?: number;
+  contextWindowSize?: number;
+}
+
+export interface ReplayPromptEntry {
+  blocks?: ReplayContentBlock[];
+  events?: ReplayContentBlock[];
+  assistantMeta?: ConversationAssistantMetadata;
+}
+
+export interface ReplaySessionEntry {
+  sessionId: string;
+  adapterName: string;
+  prompts?: ReplayPromptEntry[];
+}
+
+export interface ConversationReplayData {
+  sessions?: ReplaySessionEntry[];
+}
+
+export interface ConversationReplayLoadedPayload {
+  chatId: string;
+  data: ConversationReplayData;
+}
+
 
 export interface ToolCallDiff {
   path: string;
@@ -395,6 +447,7 @@ declare global {
     __onPermissionRequest?: (request: PermissionRequest) => void;
     __onHistoryList?: (list: HistorySessionMeta[]) => void;
     __onHistoryDeleteResult?: (result: HistoryDeleteResultPayload) => void;
+    __onConversationReplayLoaded?: (payload: ConversationReplayLoadedPayload) => void;
     __onAttachmentsAdded?: (chatId: string, files: ChatAttachment[]) => void;
     __onConversationTranscriptSaved?: (payload: ConversationTranscriptSavedPayload) => void;
     __onUsageData?: (adapterId: string, json: string) => void;

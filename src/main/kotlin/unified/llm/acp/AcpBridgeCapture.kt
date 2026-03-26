@@ -7,6 +7,18 @@ import kotlinx.serialization.json.*
 import unified.llm.history.ConversationAssistantMetadata
 import unified.llm.history.UnifiedHistoryService
 
+private val replayIgnoredUserCommandTags = listOf(
+    "command-name",
+    "command-message",
+    "command-args",
+    "local-command-stdout",
+    "local-command-stderr"
+)
+
+private val replayIgnoredUserCommandRegexes = replayIgnoredUserCommandTags.map { tag ->
+    Regex("<$tag>.*?</$tag>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+}
+
 
 internal fun AcpBridge.beginLivePromptCapture(chatId: String, blocks: List<JsonObject>): String? {
     val projectPath = service.project.basePath.orEmpty()
@@ -125,7 +137,7 @@ internal fun AcpBridge.flushHistoryReplayCapture(chatId: String) {
 internal fun AcpBridge.recordReplayUserBlock(chatId: String, sessionId: String, adapterName: String, content: ContentBlock) {
     val capture = historyReplayCaptures[chatId] ?: return
     if (sessionId.isBlank() || adapterName.isBlank()) return
-    val block = storedPromptBlockFromContentBlock(content) ?: return
+    val block = storedReplayPromptBlockFromContentBlock(content) ?: return
     val session = getOrCreateReplaySession(capture, sessionId, adapterName)
     val prompt = getOrCreateReplayPrompt(session, startNewIfNeeded = true)
     prompt.blocks.add(block)
@@ -194,10 +206,30 @@ internal fun AcpBridge.getOrCreateReplayPrompt(
     if (current == null) {
         return ReplayPromptCapture().also { session.prompts.add(it) }
     }
-    if (startNewIfNeeded && current.events.isNotEmpty()) {
+    if (startNewIfNeeded && (current.events.isNotEmpty() || current.blocks.isNotEmpty())) {
         return ReplayPromptCapture().also { session.prompts.add(it) }
     }
     return current
+}
+
+internal fun AcpBridge.storedReplayPromptBlockFromContentBlock(content: ContentBlock): JsonObject? {
+    val serialized = serializeContentBlock(content) ?: return null
+    if (serialized.type != "text") {
+        return buildJsonObject {
+            put("type", serialized.type)
+            serialized.text?.let { put("text", it) }
+            serialized.data?.let { put("data", it) }
+            serialized.mimeType?.let { put("mimeType", it) }
+        }
+    }
+
+    val sanitizedText = sanitizeReplayUserText(serialized.text ?: return null) ?: return null
+    return buildJsonObject {
+        put("type", serialized.type)
+        put("text", sanitizedText)
+        serialized.data?.let { put("data", it) }
+        serialized.mimeType?.let { put("mimeType", it) }
+    }
 }
 
 internal fun AcpBridge.storedPromptBlockFromContentBlock(content: ContentBlock): JsonObject? {
@@ -208,6 +240,14 @@ internal fun AcpBridge.storedPromptBlockFromContentBlock(content: ContentBlock):
         serialized.data?.let { put("data", it) }
         serialized.mimeType?.let { put("mimeType", it) }
     }
+}
+
+internal fun AcpBridge.sanitizeReplayUserText(text: String): String? {
+    var sanitized = text
+    replayIgnoredUserCommandRegexes.forEach { regex ->
+        sanitized = sanitized.replace(regex, "")
+    }
+    return sanitized.takeUnless { it.isBlank() }
 }
 
 internal fun AcpBridge.storedEventFromContentBlock(role: String, content: ContentBlock, isThought: Boolean): JsonObject? {

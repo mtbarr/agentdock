@@ -176,6 +176,7 @@ internal fun AcpBridge.injectReadySignal(cefBrowser: CefBrowser) {
         window.__onUndoResult = window.__onUndoResult || function(chatId, result) {};
         window.__onChangesState = window.__onChangesState || function(chatId, state) {};
         window.__onConversationTranscriptSaved = window.__onConversationTranscriptSaved || function(payload) {};
+        window.__onConversationReplayLoaded = window.__onConversationReplayLoaded || function(payload) {};
 
         window.__notifyReady = function() {
             try { $readyInject } catch (e) { }

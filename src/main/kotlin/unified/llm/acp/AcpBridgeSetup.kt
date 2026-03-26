@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
+import unified.llm.history.UnifiedHistoryService
 import java.io.File
 internal fun AcpBridge.installServiceCallbacks() {
     service.setOnLogEntry { pushLogEntry(it) }
@@ -142,6 +143,7 @@ internal fun AcpBridge.installAdapterQueries() {
                             downloadStatuses.remove(adapterId)
                             setDownloadProbeState(adapterId, target, downloaded = true)
                             service.initializeAdapterInBackground(adapterId)
+                            UnifiedHistoryService.startBackgroundHistorySync(service.project.basePath)
                             pushAdapters()
                         } else {
                             downloadStatuses[adapterId] = "Error: Download failed"
@@ -169,6 +171,7 @@ internal fun AcpBridge.installAdapterQueries() {
                     if (deleted) {
                         downloadStatuses.remove(adapterId)
                         setDownloadProbeState(adapterId, AcpAdapterPaths.getExecutionTarget(), downloaded = false)
+                        UnifiedHistoryService.startBackgroundHistorySync(service.project.basePath)
                     } else {
                         downloadStatuses[adapterId] = "Error: Unable to remove adapter files"
                     }

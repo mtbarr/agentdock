@@ -11,6 +11,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -339,6 +340,58 @@ object UnifiedHistoryService {
         file.writeText(indexJson.encodeToString(data))
     }
 
+    private fun normalizeReplayBlocks(blocks: List<JsonObject>): List<JsonObject> {
+        if (blocks.size < 2) return blocks
+        val normalized = ArrayList<JsonObject>(blocks.size)
+        blocks.forEach { block ->
+            val currentRole = (block["role"] as? JsonPrimitive)?.content
+            val currentType = (block["type"] as? JsonPrimitive)?.content
+            val currentText = (block["text"] as? JsonPrimitive)?.content
+            val last = normalized.lastOrNull()
+            val lastRole = last?.get("role")?.let { it as? JsonPrimitive }?.content
+            val lastType = last?.get("type")?.let { it as? JsonPrimitive }?.content
+            val lastText = last?.get("text")?.let { it as? JsonPrimitive }?.content
+            val mergeable = last != null &&
+                currentRole == "assistant" &&
+                lastRole == "assistant" &&
+                currentText != null &&
+                lastText != null &&
+                currentType == lastType &&
+                (currentType == "thinking" || currentType == "text")
+            if (!mergeable) {
+                normalized.add(block)
+                return@forEach
+            }
+            normalized[normalized.lastIndex] = buildJsonObject {
+                last.forEach { (key, value) ->
+                    if (key != "text") put(key, value)
+                }
+                put("text", JsonPrimitive("${lastText}${currentText}"))
+            }
+        }
+        return normalized
+    }
+
+    private fun normalizeReplayPrompt(prompt: ConversationPromptReplayEntry): ConversationPromptReplayEntry {
+        val normalizedBlocks = normalizeReplayBlocks(prompt.blocks)
+        val normalizedEvents = normalizeReplayBlocks(prompt.events)
+        return if (normalizedBlocks === prompt.blocks && normalizedEvents === prompt.events) {
+            prompt
+        } else {
+            prompt.copy(
+                blocks = normalizedBlocks,
+                events = normalizedEvents
+            )
+        }
+    }
+
+    private fun normalizeReplayData(data: ConversationReplayData): ConversationReplayData {
+        val normalizedSessions = data.sessions.map { session ->
+            session.copy(prompts = session.prompts.map(::normalizeReplayPrompt))
+        }
+        return data.copy(sessions = normalizedSessions)
+    }
+
     private fun latestConversationSourceSessionFile(projectPath: String, conversationId: String): File? {
         val currentWslDistributionName = currentWslDistributionName()
         val conversation = readExistingProjectIndex(projectPath)
@@ -512,7 +565,7 @@ object UnifiedHistoryService {
         val cleanConversationId = conversationId.trim()
         if (cleanProjectPath.isBlank() || cleanConversationId.isBlank()) return false
         val file = conversationDataFile(cleanProjectPath, cleanConversationId)
-        writeConversationData(file, data)
+        writeConversationData(file, normalizeReplayData(data))
         return true
     }
 
@@ -574,8 +627,8 @@ object UnifiedHistoryService {
         val file = conversationDataFile(cleanProjectPath, cleanConversationId)
         val current = readConversationData(file) ?: ConversationReplayData()
         val prompt = ConversationPromptReplayEntry(
-            blocks = blocks,
-            events = events,
+            blocks = normalizeReplayBlocks(blocks),
+            events = normalizeReplayBlocks(events),
             assistantMeta = assistantMeta
         )
 
@@ -1054,7 +1107,29 @@ object UnifiedHistoryService {
         if (changed || untouchedConversations.size != existing.size - targetConversations.size) {
             writeProjectIndex(indexFile, combinedConversations)
         }
+        deleteOrphanedConversationFiles(projectPath, combinedConversations)
         return combinedConversations
+    }
+
+    private fun deleteOrphanedConversationFiles(
+        projectPath: String,
+        conversations: List<HistoryConversationIndexEntry>
+    ) {
+        val conversationsDir = projectConversationsDir(projectPath)
+        if (!conversationsDir.exists() || !conversationsDir.isDirectory) return
+        val referencedIds = conversations.mapTo(hashSetOf()) { it.id }
+        conversationsDir.listFiles()?.forEach { file ->
+            if (!file.isFile) return@forEach
+            val name = file.name
+            val conversationId = when {
+                name.endsWith(".json") -> name.removeSuffix(".json")
+                name.endsWith(".transcript.txt") -> name.removeSuffix(".transcript.txt")
+                else -> return@forEach
+            }
+            if (conversationId !in referencedIds) {
+                runCatching { file.delete() }
+            }
+        }
     }
 
 

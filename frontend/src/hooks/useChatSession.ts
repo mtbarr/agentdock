@@ -19,6 +19,7 @@ import {
 import { ACPBridge } from '../utils/bridge';
 import { safeParseJson, buildToolCallEntry, extractResultTexts, appendToolOutput, truncateToolOutput } from '../utils/toolCallUtils';
 import { buildConversationHandoffPromptPrefix } from '../utils/conversationHandoff';
+import { buildReplayMessages } from '../utils/replay';
 
 function selectPreferredAgentId(agents: AgentOption[], preferredId?: string): string {
   if (preferredId && agents.some((agent) => agent.id === preferredId && isAgentRunnable(agent))) {
@@ -495,6 +496,7 @@ export function useChatSession(
   const startTimeRef = useRef<number | null>(null);
   const historyLoadTimerRef = useRef<number | null>(null);
   const replaySettleTimerRef = useRef<number | null>(null);
+  const liveSettleTimerRef = useRef<number | null>(null);
   const lastMetadataFingerprintRef = useRef<string>('');
   const allowMetadataUpdateRef = useRef(!historySession);
   const touchUpdatedAtRef = useRef(!historySession);
@@ -701,8 +703,28 @@ export function useChatSession(
           setIsHistoryReplaying(false);
           setIsSending(false);
         }, 60);
+      } else if (chunk.role === 'assistant' && chunk.type !== 'assistant_meta') {
+        if (liveSettleTimerRef.current !== null) {
+          window.clearTimeout(liveSettleTimerRef.current);
+          liveSettleTimerRef.current = null;
+        }
+        setIsSending(true);
       }
       enqueueChunk(chunk);
+    });
+
+    const unsubConversationReplayLoaded = ACPBridge.onConversationReplayLoaded((e) => {
+      const payload = e.detail.payload;
+      if (payload.chatId !== conversationId) return;
+      if (replaySettleTimerRef.current !== null) {
+        window.clearTimeout(replaySettleTimerRef.current);
+        replaySettleTimerRef.current = null;
+      }
+      chunkBufferRef.current = [];
+      flushScheduledRef.current = false;
+      setMessages(buildReplayMessages(payload.data));
+      setIsHistoryReplaying(false);
+      setIsSending(false);
     });
 
     const unsubStatus = ACPBridge.onStatus((e) => {
@@ -727,7 +749,13 @@ export function useChatSession(
         applyBufferedChunks('status-ready');
 
         if (!pendingPromptRef.current) {
-          setIsSending(false);
+          if (liveSettleTimerRef.current !== null) {
+            window.clearTimeout(liveSettleTimerRef.current);
+          }
+          liveSettleTimerRef.current = window.setTimeout(() => {
+            liveSettleTimerRef.current = null;
+            setIsSending(false);
+          }, 150);
           setIsHistoryReplaying(false);
         }
       }
@@ -736,6 +764,10 @@ export function useChatSession(
         if (replaySettleTimerRef.current !== null) {
           window.clearTimeout(replaySettleTimerRef.current);
           replaySettleTimerRef.current = null;
+        }
+        if (liveSettleTimerRef.current !== null) {
+          window.clearTimeout(liveSettleTimerRef.current);
+          liveSettleTimerRef.current = null;
         }
         setIsSending(false);
         setIsHistoryReplaying(false);
@@ -781,6 +813,7 @@ export function useChatSession(
     return () => {
       unsubAvailableCommands();
       unsubContent();
+      unsubConversationReplayLoaded();
       unsubStatus();
       unsubSessionId();
       unsubMode();
@@ -788,6 +821,10 @@ export function useChatSession(
       if (replaySettleTimerRef.current !== null) {
         window.clearTimeout(replaySettleTimerRef.current);
         replaySettleTimerRef.current = null;
+      }
+      if (liveSettleTimerRef.current !== null) {
+        window.clearTimeout(liveSettleTimerRef.current);
+        liveSettleTimerRef.current = null;
       }
     };
   }, [conversationId, enqueueChunk, applyBufferedChunks, consumeHandoff]);
@@ -1038,6 +1075,10 @@ export function useChatSession(
 
   const handleStop = () => {
     if (typeof window.__cancelPrompt === 'function') {
+      if (liveSettleTimerRef.current !== null) {
+        window.clearTimeout(liveSettleTimerRef.current);
+        liveSettleTimerRef.current = null;
+      }
       window.__cancelPrompt(conversationId);
       setIsSending(false);
       setPermissionRequest(null);

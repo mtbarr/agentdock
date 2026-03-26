@@ -190,7 +190,7 @@ internal fun AcpBridge.installConversationQueries() {
                     try {
                         val storedConversation = UnifiedHistoryService.loadConversationReplay(projectPath, conversationId)
                         if (storedConversation != null) {
-                            replayStoredConversation(chatId, storedConversation)
+                            pushConversationReplayLoaded(chatId, storedConversation)
 
                             val lastStoredSession = storedConversation.sessions.lastOrNull()
                                 ?: throw IllegalStateException("Conversation replay '$conversationId' is empty")
@@ -240,7 +240,7 @@ internal fun AcpBridge.installConversationQueries() {
                             flushHistoryReplayCapture(chatId)
                             val refreshedConversation = UnifiedHistoryService.loadConversationReplay(projectPath, conversationId)
                             if (refreshedConversation != null) {
-                                replayStoredConversation(chatId, refreshedConversation)
+                                pushConversationReplayLoaded(chatId, refreshedConversation)
                             }
 
                             val lastSession = sessionsChain.last()
