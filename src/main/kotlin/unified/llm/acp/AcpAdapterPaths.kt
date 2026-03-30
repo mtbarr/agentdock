@@ -241,6 +241,9 @@ object AcpAdapterPaths {
 
     fun downloadFromNpm(targetDir: File, adapterInfo: AcpAdapterConfig.AdapterInfo, statusCallback: ((String) -> Unit)? = null): Boolean {
         return try {
+            if (!requireLocalCommand("node", "Node.js is required", statusCallback)) return false
+            if (!requireLocalCommand("npm", "Node.js is required", statusCallback)) return false
+
             val packageName = adapterInfo.distribution.packageName
                 ?: throw IllegalStateException("Adapter '${adapterInfo.id}' missing distribution.packageName in configuration")
             val version = adapterInfo.distribution.version
@@ -591,6 +594,35 @@ object AcpAdapterPaths {
             statusCallback?.invoke("Applying patch...")
             val applied = AcpPatchService.applyPatch(patchRootFile, patchContent)
             if (!applied) throw IllegalStateException("Failed to apply patch in WSL")
+        }
+    }
+
+    private fun requireLocalCommand(commandName: String, errorMessage: String, statusCallback: ((String) -> Unit)? = null): Boolean {
+        val executable = when {
+            System.getProperty("os.name").lowercase().contains("win") && commandName.equals("npm", ignoreCase = true) -> "npm.cmd"
+            System.getProperty("os.name").lowercase().contains("win") && commandName.equals("npx", ignoreCase = true) -> "npx.cmd"
+            System.getProperty("os.name").lowercase().contains("win") && commandName.equals("node", ignoreCase = true) -> "node.exe"
+            else -> commandName
+        }
+        return try {
+            val process = ProcessBuilder(executable, "--version")
+                .redirectErrorStream(true)
+                .start()
+            val finished = process.waitFor(15, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                statusCallback?.invoke("Error: $errorMessage")
+                return false
+            }
+            if (process.exitValue() == 0) {
+                true
+            } else {
+                statusCallback?.invoke("Error: $errorMessage")
+                false
+            }
+        } catch (_: Exception) {
+            statusCallback?.invoke("Error: $errorMessage")
+            false
         }
     }
 
