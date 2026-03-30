@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, Mic, Settings2 } from 'lucide-react';
-import { AudioTranscriptionFeatureState, AudioTranscriptionSettings, GlobalSettingsPayload } from '../types/chat';
+import { AgentOption, AudioTranscriptionFeatureState, AudioTranscriptionSettings, GitCommitGenerationSettings as GitCommitGenerationSettingsValue, GlobalSettingsPayload } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
 import ConfirmationModal from './ConfirmationModal';
+import { GitCommitGenerationSettings } from './settings/GitCommitGenerationSettings';
 
 const emptyState: AudioTranscriptionFeatureState = {
   id: 'whisper-transcription',
@@ -16,9 +17,23 @@ const emptyState: AudioTranscriptionFeatureState = {
 };
 
 const defaultGlobalSettings: GlobalSettingsPayload = {
-  settings: { useWslForAcpAdapters: false, wslDistributionName: '', audioTranscription: { language: 'auto' } },
+  settings: {
+    useWslForAcpAdapters: false,
+    wslDistributionName: '',
+    audioTranscription: { language: 'auto' },
+    gitCommitGeneration: { enabled: false, adapterId: '', modelId: '', instructions: '' },
+  },
   host: { hostOs: 'other', wslSupported: false, wslDistributions: [] },
 };
+
+function normalizeGitCommitGenerationSettings(payload: Partial<GitCommitGenerationSettingsValue> | undefined): GitCommitGenerationSettingsValue {
+  return {
+    enabled: Boolean(payload?.enabled),
+    adapterId: payload?.adapterId?.trim() ?? '',
+    modelId: payload?.modelId?.trim() ?? '',
+    instructions: payload?.instructions ?? '',
+  };
+}
 
 function normalizeGlobalSettings(payload: Partial<GlobalSettingsPayload> | undefined): GlobalSettingsPayload {
   const wslDistributions = Array.isArray(payload?.host?.wslDistributions)
@@ -33,6 +48,7 @@ function normalizeGlobalSettings(payload: Partial<GlobalSettingsPayload> | undef
       useWslForAcpAdapters: Boolean(payload?.settings?.useWslForAcpAdapters),
       wslDistributionName: selectedDistribution,
       audioTranscription: payload?.settings?.audioTranscription ?? { language: 'auto' },
+      gitCommitGeneration: normalizeGitCommitGenerationSettings(payload?.settings?.gitCommitGeneration),
     },
     host: {
       hostOs: payload?.host?.hostOs === 'windows' ? 'windows' : 'other',
@@ -46,6 +62,7 @@ export function SettingsView() {
   const [feature, setFeature] = useState<AudioTranscriptionFeatureState>(emptyState);
   const [settings, setSettings] = useState<AudioTranscriptionSettings>({ language: 'auto' });
   const [globalSettings, setGlobalSettings] = useState<GlobalSettingsPayload>(defaultGlobalSettings);
+  const [installedAgents, setInstalledAgents] = useState<AgentOption[]>([]);
   const pendingWslSaveRef = useRef(false);
   const [pendingWslTarget, setPendingWslTarget] = useState<boolean | null>(null);
   const [switchInProgress, setSwitchInProgress] = useState(false);
@@ -56,6 +73,7 @@ export function SettingsView() {
       ACPBridge.loadAudioTranscriptionFeature();
       ACPBridge.loadAudioTranscriptionSettings();
       ACPBridge.loadGlobalSettings();
+      ACPBridge.requestAdapters();
     };
 
     const cleanupFeature = ACPBridge.onAudioTranscriptionFeature((e) => {
@@ -70,6 +88,12 @@ export function SettingsView() {
         pendingWslSaveRef.current = false;
         setSwitchInProgress(false);
       }
+    });
+    const cleanupAdapters = ACPBridge.onAdapters((e) => {
+      const nextInstalledAgents = Array.isArray(e.detail.adapters)
+        ? e.detail.adapters.filter((agent) => agent.downloaded === true)
+        : [];
+      setInstalledAgents(nextInstalledAgents);
     });
 
     const handleBridgeReady = () => {
@@ -86,6 +110,7 @@ export function SettingsView() {
       cleanupFeature();
       cleanupSettings();
       cleanupGlobalSettings();
+      cleanupAdapters();
       window.removeEventListener('settings-bridge-ready', handleBridgeReady);
     };
   }, []);
@@ -128,6 +153,12 @@ export function SettingsView() {
       useWslForAcpAdapters: pendingWslTarget,
     });
     setPendingWslTarget(null);
+  };
+
+  const handleGitCommitGenerationChange = (gitCommitGeneration: GitCommitGenerationSettingsValue) => {
+    const next = { ...globalSettings.settings, gitCommitGeneration };
+    setGlobalSettings(prev => ({ ...prev, settings: next }));
+    ACPBridge.saveGlobalSettings(next);
   };
 
   return (
@@ -192,6 +223,12 @@ export function SettingsView() {
               </div>
             </div>
           )}
+
+          <GitCommitGenerationSettings
+            settings={globalSettings.settings.gitCommitGeneration}
+            installedAgents={installedAgents}
+            onChange={handleGitCommitGenerationChange}
+          />
 
           <div className="rounded-ide border border-border bg-background-secondary">
             <div className="flex items-start justify-between gap-4 px-4 py-3">

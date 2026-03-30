@@ -45,10 +45,19 @@ data class AudioTranscriptionSettings(
 )
 
 @Serializable
+data class GitCommitGenerationSettings(
+    val enabled: Boolean = false,
+    val adapterId: String = "",
+    val modelId: String = "",
+    val instructions: String = ""
+)
+
+@Serializable
 data class GlobalSettings(
     val useWslForAcpAdapters: Boolean = false,
     val wslDistributionName: String = "",
-    val audioTranscription: AudioTranscriptionSettings = AudioTranscriptionSettings()
+    val audioTranscription: AudioTranscriptionSettings = AudioTranscriptionSettings(),
+    val gitCommitGeneration: GitCommitGenerationSettings = GitCommitGenerationSettings()
 )
 
 @Serializable

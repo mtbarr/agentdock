@@ -3,6 +3,7 @@ package unified.llm.history
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -1257,6 +1258,70 @@ object UnifiedHistoryService {
             success = failures.isEmpty(),
             failures = failures
         )
+    }
+
+    suspend fun deleteSessionImmediately(
+        projectPath: String?,
+        sessionId: String,
+        adapterName: String,
+        waitTimeoutMillis: Long = 5_000L,
+        pollIntervalMillis: Long = 250L
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanProjectPath = canonicalProjectPath(projectPath)
+        val cleanSessionId = sessionId.trim()
+        val cleanAdapterName = adapterName.trim()
+        if (cleanProjectPath.isBlank() || cleanSessionId.isBlank() || cleanAdapterName.isBlank()) {
+            return@withContext false
+        }
+
+        val deadline = System.currentTimeMillis() + waitTimeoutMillis.coerceAtLeast(0L)
+        var sourceMeta = findSessionSourceMeta(cleanProjectPath, cleanSessionId, cleanAdapterName)
+        while (sourceMeta == null && System.currentTimeMillis() < deadline) {
+            delay(pollIntervalMillis.coerceAtLeast(50L))
+            sourceMeta = findSessionSourceMeta(cleanProjectPath, cleanSessionId, cleanAdapterName)
+        }
+
+        val sessionEntry = HistorySessionIndexEntry(
+            sessionId = cleanSessionId,
+            adapterName = cleanAdapterName,
+            createdAt = sourceMeta?.createdAt ?: Instant.now().toEpochMilli(),
+            updatedAt = sourceMeta?.updatedAt ?: Instant.now().toEpochMilli(),
+            sourceFilePath = sourceMeta?.filePath?.takeIf { it.isNotBlank() },
+            changes = null
+        )
+
+        val deletedArtifacts = if (sourceMeta != null || !sessionEntry.sourceFilePath.isNullOrBlank()) {
+            deleteSessionArtifacts(cleanProjectPath, sessionEntry)
+        } else {
+            true
+        }
+
+        val indexFile = ensureProjectIndexFile(cleanProjectPath)
+        val existing = readProjectIndex(indexFile)
+        var indexChanged = false
+        val rewritten = existing.mapNotNull { conversation ->
+            val remainingSessions = conversation.sessions.filterNot {
+                it.sessionId == cleanSessionId && it.adapterName == cleanAdapterName
+            }
+            if (remainingSessions.size == conversation.sessions.size) {
+                return@mapNotNull conversation
+            }
+            indexChanged = true
+            if (remainingSessions.isEmpty()) {
+                deleteConversationReplay(cleanProjectPath, conversation.id)
+                deleteConversationTranscript(cleanProjectPath, conversation)
+                null
+            } else {
+                conversation.copy(sessions = remainingSessions)
+            }
+        }
+
+        if (indexChanged) {
+            writeProjectIndex(indexFile, rewritten)
+        }
+
+        syncProjectIndex(cleanProjectPath)
+        deletedArtifacts
     }
 
     suspend fun renameConversation(projectPath: String?, conversationId: String, newTitle: String): Boolean = withContext(Dispatchers.IO) {

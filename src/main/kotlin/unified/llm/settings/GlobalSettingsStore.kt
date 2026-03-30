@@ -30,6 +30,11 @@ object GlobalSettingsStore {
             wslDistributionName = settings.wslDistributionName.trim(),
             audioTranscription = settings.audioTranscription.copy(
                 language = normalizeLanguage(settings.audioTranscription.language)
+            ),
+            gitCommitGeneration = settings.gitCommitGeneration.copy(
+                adapterId = settings.gitCommitGeneration.adapterId.trim(),
+                modelId = settings.gitCommitGeneration.modelId.trim(),
+                instructions = settings.gitCommitGeneration.instructions.trim()
             )
         )
         val file = settingsFile()

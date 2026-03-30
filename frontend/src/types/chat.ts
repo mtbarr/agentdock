@@ -376,6 +376,13 @@ export interface AudioTranscriptionSettings {
   language: string;
 }
 
+export interface GitCommitGenerationSettings {
+  enabled: boolean;
+  adapterId: string;
+  modelId: string;
+  instructions: string;
+}
+
 export interface HostSettingsInfo {
   hostOs: 'windows' | 'other';
   wslSupported: boolean;
@@ -386,6 +393,7 @@ export interface GlobalSettings {
   useWslForAcpAdapters: boolean;
   wslDistributionName: string;
   audioTranscription: AudioTranscriptionSettings;
+  gitCommitGeneration: GitCommitGenerationSettings;
 }
 
 export interface GlobalSettingsPayload {
