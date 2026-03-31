@@ -2,9 +2,13 @@ package unified.llm.acp
 
 import com.github.difflib.DiffUtils
 import com.github.difflib.UnifiedDiffUtils
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 object AcpPatchService {
+    private val patchJson = Json { ignoreUnknownKeys = true }
 
     /**
      * Applies a unified diff patch to a target directory.
@@ -16,6 +20,11 @@ object AcpPatchService {
      * @return true if patch applied or safely skipped/already present.
      */
     fun applyPatch(adapterRoot: File, patchContent: String): Boolean {
+        val trimmed = patchContent.trimStart()
+        if (trimmed.startsWith("{")) {
+            return applyStructuredPatch(adapterRoot, trimmed)
+        }
+
         // Normalize line separators
         val patchLines = patchContent.lines()
         if (patchLines.isEmpty()) return false
@@ -52,6 +61,32 @@ object AcpPatchService {
         }
 
         return applyPatchToFile(targetFile, patchLines)
+    }
+
+    private fun applyStructuredPatch(adapterRoot: File, patchContent: String): Boolean {
+        return try {
+            val root = patchJson.parseToJsonElement(patchContent).jsonObject
+            val path = root["path"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val find = root["find"]?.jsonPrimitive?.content ?: return false
+            val replace = root["replace"]?.jsonPrimitive?.content ?: return false
+            if (path.isBlank()) return false
+
+            val targetFile = File(adapterRoot, path)
+            if (!targetFile.exists()) return false
+
+            val currentText = targetFile.readText()
+            if (currentText.contains(replace)) {
+                return true
+            }
+            if (!currentText.contains(find)) {
+                return false
+            }
+
+            targetFile.writeText(currentText.replaceFirst(find, replace))
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun normalizePath(rawPath: String): String? {

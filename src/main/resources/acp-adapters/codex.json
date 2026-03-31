@@ -1,0 +1,76 @@
+{
+  "id": "codex",
+  "name": "Codex",
+  "iconPath": "/icons/codex.svg",
+  "distribution": {
+    "type": "archive",
+    "version": "0.11.1",
+    "downloadUrl": "https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{target}.{ext}",
+    "updateSource": {
+      "type": "github_release",
+      "owner": "zed-industries",
+      "repo": "codex-acp",
+      "tagPrefix": "v"
+    },
+    "binaryName": {
+      "win": "codex-acp.exe",
+      "unix": "codex-acp"
+    }
+  },
+  "defaultModel": {
+    "modelId": "gpt-5.4/medium",
+    "name": "gpt-5.4 (medium)",
+    "description": ""
+  },
+  "disabledModels": [
+    "-5.1",
+    "-5.2",
+    "mini"
+  ],
+  "defaultMode": {
+    "modeId": "read-only",
+    "name": "Read Only",
+    "description": ""
+  },
+  "disabledModes": [],
+  "authConfig": {
+    "uiMode": "login_logout",
+    "loginMode": "background",
+    "command": [
+      "npx",
+      "-y",
+      "@openai/codex@0.118.0"
+    ],
+    "statusArgs": [
+      "login",
+      "status"
+    ],
+    "loginArgs": [
+      "login"
+    ],
+    "logoutArgs": [
+      "logout"
+    ]
+  },
+  "cli": {
+    "executable": {
+      "win": "npx.cmd",
+      "unix": "npx"
+    },
+    "args": [
+      "-y",
+      "@openai/codex@0.116.0"
+    ],
+    "resumeArgs": [
+      "resume",
+      "{sessionId}"
+    ]
+  },
+  "historyConfig": {
+    "parserStrategy": "jsonl_event_stream",
+    "pathTemplate": "~/.codex/sessions/*/*/*/*.jsonl",
+    "cleanup": {
+      "strategy": "delete_source_file"
+    }
+  }
+}

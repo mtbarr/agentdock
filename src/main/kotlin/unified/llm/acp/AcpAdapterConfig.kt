@@ -7,7 +7,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * Configuration for ACP adapters.
- * Reads adapter configuration from acp-adapters.json file.
+ * Reads adapter configuration from per-adapter JSON files.
  */
 @OptIn(ExperimentalSerializationApi::class)
 object AcpAdapterConfig {
@@ -130,8 +130,7 @@ object AcpAdapterConfig {
          * - "in-session": call sess.setModel() without restarting (works if adapter supports it)
          * Default: "in-session"
          */
-        val modelChangeStrategy: String = "in-session",
-        val usageStrategy: String? = null
+        val modelChangeStrategy: String = "in-session"
     ) {
         fun getConfiguredVersion(): String = distribution.version
 
@@ -141,11 +140,11 @@ object AcpAdapterConfig {
     }
 
     @Serializable
-    private data class ConfigRoot(
-        val adapters: Map<String, AdapterInfo>
+    private data class ConfigIndex(
+        val files: List<String>
     )
 
-    private const val CONFIG_FILE = "/acp-adapters.json"
+    private const val CONFIG_INDEX_FILE = "/acp-adapters/index.json"
 
     private val json = Json { 
         ignoreUnknownKeys = true 
@@ -164,18 +163,19 @@ object AcpAdapterConfig {
     fun getAllAdapters(): Map<String, AdapterInfo> = loadedConfig
 
     private fun parseConfig(): Map<String, AdapterInfo> {
-        val content = readResource(CONFIG_FILE)
-        val root = json.decodeFromString<ConfigRoot>(content)
-        
-        val processedAdapters = root.adapters.mapValues { (key, info) ->
-            // Resolve external patch files
-            val strings = info.patches.map { p -> resolveContent(p) }
+        val content = readResource(CONFIG_INDEX_FILE)
+        val index = json.decodeFromString<ConfigIndex>(content)
 
-            // Ensure name is set
-            info.copy(id = key, patches = strings)
+        return index.files.associate { file ->
+            val resourcePath = if (file.startsWith("/")) file else "/$file"
+            val info = json.decodeFromString<AdapterInfo>(readResource(resourcePath))
+            val adapterId = info.id.ifBlank {
+                throw IllegalStateException("Adapter config '$resourcePath' is missing a non-blank id")
+            }
+
+            val strings = info.patches.map { p -> resolveContent(p) }
+            adapterId to info.copy(id = adapterId, patches = strings)
         }
-        
-        return processedAdapters
     }
 
     private fun resolveContent(text: String): String {

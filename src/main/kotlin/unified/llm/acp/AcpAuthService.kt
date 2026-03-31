@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
@@ -55,22 +56,24 @@ object AcpAuthService {
 
     fun getAuthStatus(adapterName: String): AuthStatus {
         val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterName) }.getOrNull()
-            ?: return AuthStatus(authenticated = false)
-        val authConfig = adapterInfo.authConfig ?: return AuthStatus(authenticated = false)
-        if (authConfig.statusArgs.isEmpty()) return AuthStatus(authenticated = false)
+            ?: return AuthStatus(authenticated = true)
+        val authConfig = adapterInfo.authConfig ?: return AuthStatus(authenticated = true)
+        if (authConfig.statusArgs.isEmpty()) return AuthStatus(authenticated = true)
         val target = AcpAdapterPaths.getExecutionTarget()
 
         return runCatching {
             val cmd = buildCommand(adapterInfo, authConfig, authConfig.statusArgs).orEmpty()
-            if (cmd.isEmpty()) return@runCatching AuthStatus(authenticated = false)
+            if (cmd.isEmpty()) return@runCatching AuthStatus(authenticated = true)
             if (target == AcpExecutionTarget.WSL) {
                 val result = AcpExecutionMode.runWslExec(
                     command = cmd,
                     cwd = resolveWorkingDir(adapterInfo, target = target),
                     timeoutSeconds = STATUS_COMMAND_TIMEOUT_SECONDS
-                ) ?: return@runCatching AuthStatus(authenticated = false)
-                if (result.exitCode != 0) return@runCatching AuthStatus(authenticated = false)
-                return@runCatching AuthStatus(authenticated = parseAuthenticatedFromStatusOutput(result.stdout.trim()))
+                ) ?: return@runCatching AuthStatus(authenticated = true)
+                val output = listOf(result.stdout.trim(), result.stderr.trim()).filter { it.isNotBlank() }.joinToString("\n")
+                val parsed = parseAuthenticatedFromStatusOutput(output)
+                if (parsed != null) return@runCatching AuthStatus(authenticated = parsed)
+                return@runCatching AuthStatus(authenticated = true)
             }
 
             val proc = ProcessBuilder(cmd)
@@ -81,13 +84,13 @@ object AcpAuthService {
             val finished = proc.waitFor(STATUS_COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             if (!finished) {
                 proc.destroyForcibly()
-                return@runCatching AuthStatus(authenticated = false)
+                return@runCatching AuthStatus(authenticated = true)
             }
             val parsedResult = parseAuthenticatedFromStatusOutput(output)
-            if (proc.exitValue() != 0) return@runCatching AuthStatus(authenticated = false)
-            AuthStatus(authenticated = parsedResult)
+            if (parsedResult != null) return@runCatching AuthStatus(authenticated = parsedResult)
+            AuthStatus(authenticated = true)
         }.getOrElse {
-            AuthStatus(authenticated = false)
+            AuthStatus(authenticated = true)
         }
     }
 
@@ -339,8 +342,8 @@ object AcpAuthService {
         return if (AcpAdapterPaths.getExecutionTarget() == AcpExecutionTarget.LOCAL) "node.exe" else "node"
     }
 
-    private fun parseAuthenticatedFromStatusOutput(output: String): Boolean {
-        if (output.isBlank()) return false
+    private fun parseAuthenticatedFromStatusOutput(output: String): Boolean? {
+        if (output.isBlank()) return null
 
         val parsedJson = runCatching {
             // Attempt to locate JSON boundary if stream is dirtied with node warnings
@@ -355,6 +358,8 @@ object AcpAuthService {
             if (loggedIn != null) return loggedIn
             val authenticated = parsedJson["authenticated"]?.jsonPrimitive?.booleanOrNull
             if (authenticated != null) return authenticated
+            val login = parsedJson["login"]?.jsonPrimitive?.contentOrNull
+            if (!login.isNullOrBlank()) return true
         }
 
         val lower = output.lowercase()
@@ -362,7 +367,7 @@ object AcpAuthService {
         if (lower.contains("not logged in")) return false
         if (lower.contains("logged in")) return true
         if (lower.contains("authenticated")) return true
-        return false
+        return null
     }
 
 }

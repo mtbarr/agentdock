@@ -127,7 +127,6 @@ export interface AgentOption {
   updateKnown?: boolean;
   updateAvailable?: boolean;
   cliAvailable?: boolean;
-  usageStrategy?: string;
   executionTarget?: 'windows' | 'wsl';
 }
 

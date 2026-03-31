@@ -2,7 +2,6 @@ package unified.llm.gitcommit
 
 import com.intellij.openapi.project.Project
 import unified.llm.acp.AcpAdapterConfig
-import unified.llm.acp.AcpAdapterPaths
 import unified.llm.settings.GlobalSettingsStore
 
 data class GitCommitGenerationConfig(
@@ -17,24 +16,25 @@ object GitCommitGenerationSettingsFacade {
             return null
         }
 
-        val settings = GlobalSettingsStore.load().gitCommitGeneration
-        if (!settings.enabled) {
-            return null
-        }
+        return runCatching {
+            val settings = GlobalSettingsStore.load().gitCommitGeneration
+            if (!settings.enabled) {
+                return null
+            }
 
-        val installedAdapters = AcpAdapterConfig.getAllAdapters().values
-            .filter { AcpAdapterPaths.isDownloaded(it.id) }
-        if (installedAdapters.isEmpty()) {
-            return null
-        }
+            val adapterId = settings.adapterId.trim()
+            if (adapterId.isBlank()) {
+                return null
+            }
 
-        val selectedAdapter = installedAdapters.firstOrNull { it.id == settings.adapterId }
-            ?: return null
+            val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterId) }.getOrNull()
+                ?: return null
 
-        return GitCommitGenerationConfig(
-            adapterId = selectedAdapter.id,
-            modelId = settings.modelId.trim(),
-            instructions = settings.instructions.trim()
-        )
+            GitCommitGenerationConfig(
+                adapterId = adapterInfo.id,
+                modelId = settings.modelId.trim(),
+                instructions = settings.instructions.trim()
+            )
+        }.getOrNull()
     }
 }

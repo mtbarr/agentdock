@@ -349,12 +349,11 @@ internal fun AcpBridge.installAdapterQueries() {
         addHandler { payload ->
             val adapterId = parseIdOnlyPayload(payload) ?: payload?.trim() ?: ""
             scope.launch(Dispatchers.IO) {
-                val info = AcpAdapterConfig.getAllAdapters()[adapterId]
-                val strategy = info?.usageStrategy
-                val result = when (strategy) {
-                    "claude-oauth" -> AcpUsageDataFetcher.fetchClaudeUsageData()
-                    "codex-chatgpt" -> AcpUsageDataFetcher.fetchCodexUsageData()
+                val result = when (adapterId) {
+                    "claude-code" -> AcpUsageDataFetcher.fetchClaudeUsageData()
+                    "codex" -> AcpUsageDataFetcher.fetchCodexUsageData()
                     "gemini-cli" -> AcpUsageDataFetcher.fetchGeminiUsageData(adapterId)
+                    "github-copilot-cli" -> AcpUsageDataFetcher.fetchCopilotUsageData(adapterId)
                     else -> ""
                 }
                 val escapedAdapterId = jsStringLiteral(adapterId)

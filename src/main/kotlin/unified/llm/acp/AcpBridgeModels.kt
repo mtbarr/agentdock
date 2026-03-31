@@ -52,7 +52,6 @@ internal data class AdapterPayload(
     val downloadStatus: String,
     val disabledModels: List<String>,
     val cliAvailable: Boolean,
-    val usageStrategy: String? = null,
     val executionTarget: String = "windows"
 )
 

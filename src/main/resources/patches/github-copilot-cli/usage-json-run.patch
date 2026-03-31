@@ -1,0 +1,5 @@
+{
+  "path": "app.js",
+  "find": "q6i=process.env.COPILOT_CLI_RUN_AS_NODE?{from:\"node\"}:void 0;await Fyt.parseAsync(void 0,q6i);",
+  "replace": "q6i=process.env.COPILOT_CLI_RUN_AS_NODE?{from:\"node\"}:void 0;if(process.argv.includes(\"--usage-json\")){await I7i()}await Fyt.parseAsync(void 0,q6i);"
+}

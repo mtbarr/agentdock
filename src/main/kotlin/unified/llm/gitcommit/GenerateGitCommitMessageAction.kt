@@ -21,17 +21,14 @@ class GenerateGitCommitMessageAction : AnAction(), DumbAware {
         val project = e.project
         e.presentation.text = "Generate Commit Message"
         e.presentation.description = "Generate a commit message with the configured AI agent"
-        e.presentation.isEnabledAndVisible = project != null && GitCommitGenerationSettingsFacade.resolve(project) != null
+        e.presentation.isEnabledAndVisible = project != null && GitCommitFeatureRuntimeState.isEnabled()
     }
 
     override fun actionPerformed(e: @NotNull AnActionEvent) {
         val project = e.project ?: return
-        val config = GitCommitGenerationSettingsFacade.resolve(project)
-        if (config == null) {
-            showWarning(project, "Git Commit Generation", "Git commit generation is disabled or not configured.")
+        if (!GitCommitFeatureRuntimeState.isEnabled()) {
             return
         }
-
         val commitContext = resolveCommitContext(e)
         val commitMessageTarget = commitContext.commitMessageTarget
         if (commitMessageTarget == null) {
@@ -50,6 +47,8 @@ class GenerateGitCommitMessageAction : AnAction(), DumbAware {
         val acpService = AcpClientService.getInstance(project)
         acpService.scope.launch {
             val result = runCatching {
+                val config = GitCommitGenerationSettingsFacade.resolve(project)
+                    ?: error("Git commit generation is disabled or not configured.")
                 GitCommitAcpExecutor(project, acpService).generateMessage(config, commitContext.changes)
             }
 

@@ -1,0 +1,62 @@
+{
+  "id": "claude-code",
+  "name": "Claude Code",
+  "iconPath": "/icons/claude.svg",
+  "distribution": {
+    "type": "npm",
+    "version": "latest",
+    "packageName": "@zed-industries/claude-agent-acp"
+  },
+  "defaultModel": {
+    "modelId": "opus",
+    "name": "Opus 4.6",
+    "description": ""
+  },
+  "disabledModels": [],
+  "defaultMode": {
+    "modeId": "default",
+    "name": "Default",
+    "description": "Standard behavior, prompts for dangerous operations"
+  },
+  "disabledModes": [],
+  "patches": [],
+  "historyConfig": {
+    "parserStrategy": "root_user_jsonl",
+    "pathTemplate": "~/.claude/projects/{projectPathSlug}/*.jsonl",
+    "indexPathTemplate": "~/.claude/projects/{projectPathSlug}/sessions-index.json",
+    "cleanup": {
+      "strategy": "delete_source_file_and_session_index_entry"
+    }
+  },
+  "cli": {
+    "executable": {
+      "win": "node.exe",
+      "unix": "node"
+    },
+    "entryPath": "node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
+    "resumeArgs": [
+      "-r",
+      "{sessionId}"
+    ]
+  },
+  "modelChangeStrategy": "restart-resume",
+  "authConfig": {
+    "uiMode": "login_logout",
+    "loginMode": "background",
+    "statusArgs": [
+      "--cli",
+      "auth",
+      "status"
+    ],
+    "loginArgs": [
+      "--cli",
+      "auth",
+      "login"
+    ],
+    "logoutArgs": [
+      "--cli",
+      "auth",
+      "logout"
+    ]
+  }
+}

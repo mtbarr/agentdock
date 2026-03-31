@@ -14,7 +14,7 @@ const UsageLifecycleContext = createContext<UsageLifecycleContextValue>(null);
 const providerCache: Record<string, string | null> = {};
 const chatCache: Record<string, string | null> = {};
 
-const RICH_USAGE_FIELDS = ['five_hour', 'seven_day', 'extra_usage', 'rate_limit', 'quota', 'usage'];
+const RICH_USAGE_FIELDS = ['five_hour', 'seven_day', 'extra_usage', 'rate_limit', 'quota', 'usage', 'quota_snapshots'];
 
 function parseUsageJson(json: string | null | undefined): Record<string, unknown> | null {
   if (!json || !json.trim()) return null;

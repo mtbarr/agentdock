@@ -164,7 +164,6 @@ internal fun applyCliPlaceholders(values: List<String>, placeholders: Map<String
 internal fun resolveCliPath(adapterRoot: String, raw: String, target: AcpExecutionTarget): String {
     val path = raw.trim()
     if (path.isEmpty()) return path
-    if (!path.contains("/") && !path.contains("\\")) return path
     val file = File(path)
     if (file.isAbsolute) return file.absolutePath
     return when (target) {

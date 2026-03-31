@@ -4,6 +4,7 @@ import { ACPBridge } from '../utils/bridge';
 import ConfirmationModal from './ConfirmationModal';
 import { RefreshCw } from 'lucide-react';
 import { ClaudeUsage } from './usage/ClaudeUsage';
+import { CopilotUsage } from './usage/CopilotUsage';
 import { CodexUsage } from './usage/CodexUsage';
 import { GeminiUsage } from './usage/GeminiUsage';
 import { CursorUsage } from './usage/CursorUsage';
@@ -234,40 +235,38 @@ export function AgentManagementView({
                       {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'claude-code' && <ClaudeUsage key={refreshKey} />}
                       {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'gemini-cli' && <GeminiUsage key={refreshKey} disabledModels={agent.disabledModels} />}
                       {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'codex' && <CodexUsage key={refreshKey} />}
+                      {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'github-copilot-cli' && <CopilotUsage key={refreshKey} />}
                       {!isInstalling && isDownloaded && agent.ready === true && agent.id === 'cursor-cli' && <CursorUsage />}
 
-                      {!isInstalling && isDownloaded && agent.hasAuthentication && (
+                      {!isInstalling && isDownloaded && (
                         <div className="flex flex-col gap-1 items-start text-foreground-secondary">
-                          {(isManageAuth || agent.authKnown === true) && (
+                          {agent.hasAuthentication && !isManageAuth && agent.authKnown === true && (
                             <button
                               type="button"
                               onClick={() => handleAuth(agent)}
                               disabled={
                                 isProcessing ||
-                                isAuthenticating ||
-                                (isManageAuth && !agent.cliAvailable)
+                                isAuthenticating
                               }
                               className="text-link hover:brightness-150 focus:outline-none disabled:opacity-50 transition-colors flex items-center gap-1 font-medium select-none"
                             >
                               {isAuthenticating && (
                                 <RefreshCw className="w-3 h-3 animate-spin" />
                               )}
-                              {isManageAuth ? 'CLI auth' : (agent.authAuthenticated === true ? 'Log out' : 'Log in')}
+                              {agent.authAuthenticated === true ? 'Log out' : 'Log in'}
                             </button>
                           )}
-                          {isManageAuth && !agent.cliAvailable && (
+                          {!agent.cliAvailable && (
                             <span className="text-error">IDE terminal is required</span>
                           )}
-                          {!isManageAuth && agent.authKnown === true && (agent.id === 'claude-code' || agent.id === 'codex') && (
-                            <button
-                              type="button"
-                              onClick={() => window.__openAgentCli?.(agent.id)}
-                              disabled={!agent.cliAvailable}
-                              className="text-link hover:brightness-150 focus:outline-none disabled:opacity-50 transition-colors font-medium select-none"
-                            >
-                              CLI auth
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => window.__openAgentCli?.(agent.id)}
+                            disabled={!agent.cliAvailable}
+                            className="text-link hover:brightness-150 focus:outline-none disabled:opacity-50 transition-colors font-medium select-none"
+                          >
+                            CLI auth
+                          </button>
                         </div>
                       )}
 

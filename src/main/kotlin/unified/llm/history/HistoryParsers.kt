@@ -30,7 +30,8 @@ object HistoryParserRegistry {
         "jsonl_event_stream" to JsonlEventStreamParser(),
         "root_user_jsonl" to RootUserJsonlParser(),
         "session_index" to SessionIndexParser(),
-        "session_dir_mtime" to SessionDirMtimeParser()
+        "session_dir_mtime" to SessionDirMtimeParser(),
+        "yaml_workspace_jsonl_event_stream" to YamlWorkspaceJsonlEventStreamParser()
     )
 
     fun getParser(strategy: String): HistoryParser? = parsers[strategy]
@@ -50,6 +51,25 @@ private fun fallbackTitle(raw: String?): String {
     val normalized = raw?.trim().orEmpty().ifBlank { "Untitled Session" }
     if (normalized.length <= 64) return normalized
     return normalized.take(64) + "..."
+}
+
+private fun parseSimpleYamlMap(file: File): Map<String, String> {
+    if (!file.isFile) return emptyMap()
+    val values = linkedMapOf<String, String>()
+    runCatching {
+        file.forEachLine { rawLine ->
+            if (rawLine.isBlank()) return@forEachLine
+            if (rawLine.trimStart().startsWith("#")) return@forEachLine
+            if (rawLine.firstOrNull()?.isWhitespace() == true) return@forEachLine
+            val separator = rawLine.indexOf(':')
+            if (separator <= 0) return@forEachLine
+            val key = rawLine.substring(0, separator).trim()
+            if (key.isBlank()) return@forEachLine
+            val value = rawLine.substring(separator + 1).trim().trim('"', '\'')
+            values[key] = value
+        }
+    }
+    return values
 }
 
 // Maximum lines to scan when parsing JSONL files to extract title and metadata
@@ -373,5 +393,77 @@ private class SessionDirMtimeParser : HistoryParser {
             createdAt = updatedAt,
             updatedAt = updatedAt
         ))
+    }
+}
+
+private class YamlWorkspaceJsonlEventStreamParser : HistoryParser {
+    override fun parseSessions(
+        file: File,
+        adapterInfo: AcpAdapterConfig.AdapterInfo,
+        historyConfig: AcpAdapterConfig.HistoryConfig,
+        projectPath: String
+    ): List<SessionMeta> {
+        val sessionDir = file.parentFile ?: return emptyList()
+        val workspaceFile = File(sessionDir, "workspace.yaml")
+        val workspace = parseSimpleYamlMap(workspaceFile)
+        val expectedProjectPath = canonicalizePath(projectPath)
+
+        var sessionId = workspace["id"]?.trim().orEmpty().ifBlank { sessionDir.name }
+        var createdAt = parseTimestamp(workspace["created_at"])
+        var updatedAt = parseTimestamp(workspace["updated_at"])
+        var title = workspace["summary"]?.takeIf { it.isNotBlank() }
+        var workspaceCwd = canonicalizePath(workspace["cwd"])
+        var eventCwd = ""
+        var gitRoot = ""
+
+        runCatching {
+            file.useLines { lines ->
+                for (line in lines.take(200)) {
+                    if (!line.trimStart().startsWith("{")) continue
+                    val root = historyJson.parseToJsonElement(line).jsonObject
+                    val type = root.stringOrNull("type")?.lowercase()
+                    val data = root["data"]?.jsonObject
+
+                    if (type == "session.start" && data != null) {
+                        sessionId = data.stringOrNull("sessionId")?.trim().orEmpty().ifBlank { sessionId }
+                        createdAt = parseTimestamp(data.stringOrNull("startTime")) ?: createdAt
+                        val context = data["context"]?.jsonObject
+                        eventCwd = canonicalizePath(context?.stringOrNull("cwd"))
+                        gitRoot = canonicalizePath(context?.stringOrNull("gitRoot"))
+                    }
+
+                    if (title.isNullOrBlank() && type == "user.message" && data != null) {
+                        title = data.stringOrNull("content")?.trim()
+                    }
+                }
+            }
+        }
+
+        val matchesProject = expectedProjectPath.isBlank() || listOf(workspaceCwd, eventCwd, gitRoot)
+            .filter { it.isNotBlank() }
+            .any { it == expectedProjectPath }
+        if (!matchesProject) return emptyList()
+
+        val resolvedUpdatedAt = listOf(
+            updatedAt ?: 0L,
+            file.lastModified(),
+            workspaceFile.lastModified(),
+            sessionDir.lastModified()
+        ).maxOrNull() ?: file.lastModified()
+        val resolvedCreatedAt = createdAt ?: resolvedUpdatedAt
+
+        return listOf(
+            SessionMeta(
+                sessionId = sessionId,
+                adapterName = adapterInfo.id,
+                modelId = null,
+                modeId = null,
+                projectPath = projectPath,
+                title = fallbackTitle(title),
+                filePath = file.absolutePath,
+                createdAt = resolvedCreatedAt,
+                updatedAt = resolvedUpdatedAt
+            )
+        )
     }
 }

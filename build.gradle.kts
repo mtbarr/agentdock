@@ -19,7 +19,7 @@ dependencies {
         intellijIdeaCommunity("2024.3.1")
         jetbrainsRuntime()
     }
-    implementation("com.agentclientprotocol:acp:0.17.0")
+    implementation("com.agentclientprotocol:acp:0.18.0")
     implementation("io.github.java-diff-utils:java-diff-utils:4.15")
 }
 

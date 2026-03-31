@@ -1,0 +1,51 @@
+{
+  "id": "github-copilot-cli",
+  "name": "GitHub Copilot",
+  "iconPath": "/icons/copilot.svg",
+  "distribution": {
+    "type": "npm",
+    "version": "latest",
+    "packageName": "@github/copilot"
+  },
+  "launchPath": "index.js",
+  "args": [
+    "--acp",
+    "--stdio"
+  ],
+  "defaultMode": {
+    "modeId": "default",
+    "name": "Default",
+    "description": "Copilot CLI default behavior"
+  },
+  "patches": [
+    "@patches/github-copilot-cli/usage-json-loader.patch",
+    "@patches/github-copilot-cli/usage-json.patch",
+    "@patches/github-copilot-cli/usage-json-run.patch",
+    "@patches/github-copilot-cli/acp-load-session-reuse.patch"
+  ],
+  "historyConfig": {
+    "parserStrategy": "yaml_workspace_jsonl_event_stream",
+    "pathTemplate": "~/.copilot/session-state/*/events.jsonl",
+    "cleanup": {
+      "strategy": "delete_source_parent_dir"
+    }
+  },
+  "disabledModes": [],
+  "disabledModels": [
+    "gpt-5.1",
+    "gpt-5.2",
+    "mini",
+    "opus-4.5",
+    "sonnet-4.5"
+  ],
+  "cli": {
+    "executable": {
+      "win": "node_modules/.bin/copilot.cmd",
+      "unix": "node_modules/.bin/copilot"
+    },
+    "resumeArgs": [
+      "--resume",
+      "{sessionId}"
+    ]
+  }
+}

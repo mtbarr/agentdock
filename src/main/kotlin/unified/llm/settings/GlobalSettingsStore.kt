@@ -3,6 +3,7 @@ package unified.llm.settings
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import unified.llm.acp.AcpAdapterPaths
+import unified.llm.gitcommit.GitCommitFeatureRuntimeState
 import java.io.File
 
 object GlobalSettingsStore {
@@ -20,9 +21,11 @@ object GlobalSettingsStore {
             return save(GlobalSettings())
         }
 
-        return runCatching {
+        val loaded = runCatching {
             json.decodeFromString<GlobalSettings>(file.readText())
         }.getOrDefault(GlobalSettings())
+        GitCommitFeatureRuntimeState.setEnabled(loaded.gitCommitGeneration.enabled)
+        return loaded
     }
 
     fun save(settings: GlobalSettings): GlobalSettings {
@@ -40,6 +43,7 @@ object GlobalSettingsStore {
         val file = settingsFile()
         file.parentFile?.mkdirs()
         file.writeText(json.encodeToString(normalized))
+        GitCommitFeatureRuntimeState.setEnabled(normalized.gitCommitGeneration.enabled)
         return normalized
     }
 

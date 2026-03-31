@@ -1,4 +1,5 @@
 import { ClaudeChatUsage } from './ClaudeChatUsage';
+import { CopilotChatUsage } from './CopilotChatUsage';
 import { CodexChatUsage } from './CodexChatUsage';
 import { GeminiChatUsage } from './GeminiChatUsage';
 
@@ -13,6 +14,8 @@ export function ChatUsageIndicator({ agentId, modelId }: ChatUsageIndicatorProps
       return <ClaudeChatUsage />;
     case 'codex':
       return <CodexChatUsage />;
+    case 'github-copilot-cli':
+      return <CopilotChatUsage />;
     case 'gemini-cli':
       return <GeminiChatUsage modelId={modelId} />;
     default:

@@ -184,7 +184,6 @@ private fun AcpBridge.buildAdapterPayload(
         downloadStatus = dlStatus,
         disabledModels = info.disabledModels,
         cliAvailable = cliAvailable,
-        usageStrategy = info.usageStrategy,
         executionTarget = if (isWslMode) "wsl" else "windows"
     )
 }
@@ -304,7 +303,7 @@ internal fun AcpBridge.pushAdapters(includeRuntimeChecks: Boolean = true) {
         for (id in idsToFetch) {
             if (authFetchJobs[id]?.isActive == true) continue
             authFetchJobs[id] = scope.launch(Dispatchers.IO) {
-                val authenticated = try { AcpAuthService.getAuthStatus(id).authenticated } catch (_: Exception) { false }
+                val authenticated = try { AcpAuthService.getAuthStatus(id).authenticated } catch (_: Exception) { true }
                 authStates[id] = authenticated
                 authFetchJobs.remove(id)
                 pushAdapters()

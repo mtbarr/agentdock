@@ -92,6 +92,64 @@ internal object AcpUsageDataFetcher {
         } catch (_: Exception) { """{"authType":"subscription"}""" }
     }
 
+    fun fetchCopilotUsageData(adapterId: String): String {
+        val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterId) }.getOrNull() ?: return ""
+        val cli = adapterInfo.cli ?: return ""
+        val target = AcpAdapterPaths.getExecutionTarget()
+        val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterId, target)
+        if (!AcpAdapterPaths.isDownloaded(adapterId, target)) return ""
+
+        val executable = when (target) {
+            AcpExecutionTarget.LOCAL -> cli.executable.win
+            AcpExecutionTarget.WSL -> cli.executable.unix
+        }?.takeIf { it.isNotBlank() } ?: return ""
+
+        val commandParts = mutableListOf(resolveCliPath(adapterRoot, executable, target))
+        cli.entryPath?.takeIf { it.isNotBlank() }?.let { commandParts += resolveCliPath(adapterRoot, it, target) }
+        commandParts += "--usage-json"
+
+        return try {
+            when (target) {
+                AcpExecutionTarget.LOCAL -> {
+                    val process = buildLocalCliProcess(commandParts).directory(File(adapterRoot)).start()
+                    val stdout = process.inputStream.bufferedReader().use { it.readText() }
+                    process.errorStream.bufferedReader().use { it.readText() }
+                    process.waitFor()
+                    extractJsonPayload(stdout)
+                }
+                AcpExecutionTarget.WSL -> {
+                    val command = commandParts.joinToString(" ") { quoteUnixShellArg(it) }
+                    val result = AcpExecutionMode.runWslShell(
+                        script = "cd ${quoteUnixShellArg(adapterRoot)} && $command",
+                        timeoutSeconds = 30
+                    ) ?: return ""
+                    extractJsonPayload(result.stdout)
+                }
+            }
+        } catch (_: Exception) { "" }
+    }
+
+    private fun extractJsonPayload(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed
+
+        val firstBrace = trimmed.indexOf('{')
+        val lastBrace = trimmed.lastIndexOf('}')
+        if (firstBrace == -1 || lastBrace == -1 || lastBrace <= firstBrace) return ""
+        return trimmed.substring(firstBrace, lastBrace + 1).trim()
+    }
+
+    private fun buildLocalCliProcess(commandParts: List<String>): ProcessBuilder {
+        val executable = commandParts.firstOrNull() ?: return ProcessBuilder(emptyList<String>())
+        val args = commandParts.drop(1)
+        val osName = System.getProperty("os.name").lowercase()
+        return if (osName.contains("win") && executable.lowercase().endsWith(".cmd")) {
+            ProcessBuilder(listOf("cmd.exe", "/c", executable, *args.toTypedArray()))
+        } else {
+            ProcessBuilder(listOf(executable, *args.toTypedArray()))
+        }
+    }
+
     private fun readTargetFile(rawPath: String): String? {
         return when (AcpAdapterPaths.getExecutionTarget()) {
             AcpExecutionTarget.LOCAL -> {
