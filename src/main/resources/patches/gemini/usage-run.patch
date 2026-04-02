@@ -1,0 +1,5 @@
+{
+  "path": "bundle/gemini.js",
+  "find": "  }\n  const remoteAdminSettings = partialConfig.getRemoteAdminSettings();",
+  "replace": "  }\n  if (argv[\"usage-json\"]) {\n    await outputUsageJson(partialConfig);\n  }\n  const remoteAdminSettings = partialConfig.getRemoteAdminSettings();"
+}

@@ -1,31 +1,5 @@
---- dist/src/gemini.js
-+++ dist/src/gemini.js
-@@ -185,4 +185,27 @@
- export async function main() {
-+    if (process.argv.includes('--usage-json')) {
-+        const { CodeAssistServer, UserAccountManager, setupUser } = await import('@google/gemini-cli-core');
-+        const { OAuthCredentialStorage } = await import('@google/gemini-cli-core/dist/src/code_assist/oauth-credential-storage.js');
-+        const { OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET } = await import('@google/gemini-cli-core/dist/src/code_assist/oauth2.js');
-+        const { OAuth2Client } = await import('google-auth-library');
-+        const userAccountManager = new UserAccountManager();
-+        const email = userAccountManager.getCachedGoogleAccount();
-+        const creds = await OAuthCredentialStorage.loadCredentials();
-+        const oauth2Client = new OAuth2Client(OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET);
-+        if (creds) oauth2Client.setCredentials(creds);
-+        const httpClient = {
-+            request: async (opts) => {
-+                const headers = { ...opts.headers };
-+                if (creds) Object.assign(headers, await oauth2Client.getRequestHeaders());
-+                const response = await fetch(opts.url, { method: opts.method, headers, body: opts.body });
-+                return { data: await response.json() };
-+            }
-+        };
-+        try {
-+            const userData = await setupUser(httpClient, () => Promise.resolve('cancel'), {});
-+            const caServer = new CodeAssistServer(httpClient, userData.projectId, {}, '', userData.userTier, userData.userTierName);
-+            const quota = await caServer.retrieveUserQuota({ project: userData.projectId });
-+            process.stdout.write('__GEMINI_USAGE_JSON__' + JSON.stringify({ email, userTierName: userData.userTierName, quota }) + '\n');
-+        } catch (e) {}
-+        process.exit(0);
-+    }
-     const cliStartupHandle = startupProfiler.start('cli_startup');
+{
+  "path": "bundle/gemini.js",
+  "find": "async function main() {\n  const cliStartupHandle = startupProfiler.start(\"cli_startup\");",
+  "replace": "async function outputUsageJson(config) {\n  try {\n    const authType = config.getContentGeneratorConfig()?.authType;\n    if (authType !== \"oauth-personal\" && authType !== \"compute-default-credentials\") {\n      return;\n    }\n    const { CodeAssistServer, UserAccountManager, setupUser } = await import(\"./chunk-2OFO4ODK.js\");\n    const authClient = await getOauthClient(authType, config);\n    const userData = await setupUser(authClient, config, {});\n    const caServer = new CodeAssistServer(\n      authClient,\n      userData.projectId,\n      {},\n      \"\",\n      userData.userTier,\n      userData.userTierName,\n      userData.paidTier,\n      config\n    );\n    const quota = await caServer.retrieveUserQuota({\n      project: userData.projectId\n    });\n    const email = new UserAccountManager().getCachedGoogleAccount();\n    process.stdout.write(\"__GEMINI_USAGE_JSON__\" + JSON.stringify({ email, userTierName: userData.userTierName, quota }) + \"\\n\");\n  } catch {\n  }\n  await runExitCleanup();\n  process.exit(0);\n}\nasync function main() {\n  const cliStartupHandle = startupProfiler.start(\"cli_startup\");"
+}

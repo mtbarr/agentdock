@@ -1,5 +1,6 @@
 {
   "path": "app.js",
-  "find": "q6i=process.env.COPILOT_CLI_RUN_AS_NODE?{from:\"node\"}:void 0;await Fyt.parseAsync(void 0,q6i);",
-  "replace": "q6i=process.env.COPILOT_CLI_RUN_AS_NODE?{from:\"node\"}:void 0;if(process.argv.includes(\"--usage-json\")){await I7i()}await Fyt.parseAsync(void 0,q6i);"
+  "findRegex": "([A-Za-z0-9_$]+)=process\\.env\\.COPILOT_CLI_RUN_AS_NODE\\?\\{from:\"node\"\\}:void 0;await ([A-Za-z0-9_$]+)\\.parseAsync\\(void 0,\\1\\);",
+  "replace": "$1=process.env.COPILOT_CLI_RUN_AS_NODE?{from:\"node\"}:void 0;if(process.argv.includes(\"--usage-json\")){await __unifiedCopilotUsageJson()}await $2.parseAsync(void 0,$1);",
+  "alreadyApplied": "if(process.argv.includes(\"--usage-json\")){await __unifiedCopilotUsageJson()}"
 }

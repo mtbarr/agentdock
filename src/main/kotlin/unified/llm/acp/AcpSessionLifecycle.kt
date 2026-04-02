@@ -183,7 +183,8 @@ internal suspend fun AcpClientService.loadSession(
     adapterName: String,
     sessionId: String,
     preferredModelId: String? = null,
-    preferredModeId: String? = null
+    preferredModeId: String? = null,
+    deliverReplay: Boolean = true
 ) {
     ensureExecutionTargetCurrent()
     val context = sessions.computeIfAbsent(chatId) { createAgentContext(chatId) }
@@ -199,7 +200,8 @@ internal suspend fun AcpClientService.loadSession(
             }
 
             context.statusRef.set(AcpClientService.Status.Initializing)
-            context.lastHistoryLoadTime = System.currentTimeMillis()
+            context.allowReplayDelivery = deliverReplay
+            context.lastHistoryLoadTime = if (deliverReplay) System.currentTimeMillis() else 0L
             context.activeAdapterNameRef.set(null)
             context.activeModelIdRef.set(null)
             context.activeModeIdRef.set(null)
@@ -211,7 +213,8 @@ internal suspend fun AcpClientService.loadSession(
                     sessionId = sessionId,
                     preferredModelId = preferredModelId,
                     preferredModeId = preferredModeId,
-                    keepLoadedSessionActive = true
+                    keepLoadedSessionActive = true,
+                    deliverReplay = deliverReplay
                 )
                 context.statusRef.set(AcpClientService.Status.Ready)
             } catch (e: Exception) {
@@ -275,12 +278,15 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
     sessionId: String,
     preferredModelId: String?,
     preferredModeId: String?,
-    keepLoadedSessionActive: Boolean
+    keepLoadedSessionActive: Boolean,
+    deliverReplay: Boolean = true
 ) {
     ensureExecutionTargetCurrent()
     val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
     val requestedAdapterName = adapterInfo.id
-    replayOwnerBySessionId[sessionId] = context.chatId
+    if (deliverReplay) {
+        replayOwnerBySessionId[sessionId] = context.chatId
+    }
 
     val sharedProc = activeProcesses.computeIfAbsent(processKey(requestedAdapterName)) { createSharedProcess(requestedAdapterName) }
     context.sharedProcess = sharedProc
@@ -302,7 +308,9 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
             sessionResponse: AcpCreatedSessionResponse
         ): ClientSessionOperations {
             context.sessionIdRef.set(sessionId.value)
-            replayOwnerBySessionId[sessionId.value] = context.chatId
+            if (deliverReplay) {
+                replayOwnerBySessionId[sessionId.value] = context.chatId
+            }
             return createSharedSessionOperations(sessionId.value, requestedAdapterName)
         }
     }
@@ -311,7 +319,9 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
     val sess = client.loadSession(SessionId(sessionId), params, factory)
 
     context.sessionIdRef.set(sess.sessionId.value)
-    replayOwnerBySessionId[sess.sessionId.value] = context.chatId
+    if (deliverReplay) {
+        replayOwnerBySessionId[sess.sessionId.value] = context.chatId
+    }
     systemInstructionsInjectedSessionIds.add(sess.sessionId.value)
 
     if (keepLoadedSessionActive) {
@@ -337,7 +347,9 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
     try {
         awaitPendingSessionUpdates(requestedAdapterName)
     } finally {
-        replayOwnerBySessionId.remove(sess.sessionId.value, context.chatId)
+        if (deliverReplay) {
+            replayOwnerBySessionId.remove(sess.sessionId.value, context.chatId)
+        }
     }
 }
 

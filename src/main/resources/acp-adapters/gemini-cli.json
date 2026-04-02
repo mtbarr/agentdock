@@ -7,6 +7,10 @@
     "packageName": "@google/gemini-cli",
     "version": "latest"
   },
+  "launchBinary": {
+    "win": "node_modules/.bin/gemini.cmd",
+    "unix": "node_modules/.bin/gemini"
+  },
   "args": [
     "--acp"
   ],
@@ -28,7 +32,8 @@
   "disabledModes": [],
   "patches": [
     "@patches/gemini/usage-config.patch",
-    "@patches/gemini/usage-gemini.patch"
+    "@patches/gemini/usage-gemini.patch",
+    "@patches/gemini/usage-run.patch"
   ],
   "cli": {
     "executable": {

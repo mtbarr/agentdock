@@ -67,18 +67,30 @@ object AcpPatchService {
         return try {
             val root = patchJson.parseToJsonElement(patchContent).jsonObject
             val path = root["path"]?.jsonPrimitive?.content?.trim().orEmpty()
-            val find = root["find"]?.jsonPrimitive?.content ?: return false
             val replace = root["replace"]?.jsonPrimitive?.content ?: return false
+            val find = root["find"]?.jsonPrimitive?.content
+            val findRegex = root["findRegex"]?.jsonPrimitive?.content
+            val alreadyApplied = root["alreadyApplied"]?.jsonPrimitive?.content
             if (path.isBlank()) return false
+            if (find == null && findRegex == null) return false
 
             val targetFile = File(adapterRoot, path)
             if (!targetFile.exists()) return false
 
             val currentText = targetFile.readText()
-            if (currentText.contains(replace)) {
+            if (!alreadyApplied.isNullOrEmpty() && currentText.contains(alreadyApplied)) {
                 return true
             }
-            if (!currentText.contains(find)) {
+            if (currentText.contains(replace)) return true
+
+            if (findRegex != null) {
+                val regex = Regex(findRegex, setOf(RegexOption.DOT_MATCHES_ALL))
+                val match = regex.find(currentText) ?: return false
+                targetFile.writeText(currentText.replaceRange(match.range, match.value.replace(regex, replace)))
+                return true
+            }
+
+            if (find == null || !currentText.contains(find)) {
                 return false
             }
 

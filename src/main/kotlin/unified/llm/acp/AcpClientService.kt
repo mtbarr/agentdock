@@ -245,6 +245,7 @@ class AcpClientService private constructor(val project: Project) {
         val activeModelIdRef = AtomicReference<String?>(null)
         val activeModeIdRef = AtomicReference<String?>(null)
         @Volatile var lastHistoryLoadTime: Long = System.currentTimeMillis()
+        @Volatile var allowReplayDelivery: Boolean = true
 
         val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<RequestPermissionResponse>>()
 
@@ -261,6 +262,7 @@ class AcpClientService private constructor(val project: Project) {
             activeModelIdRef.set(null)
             activeModeIdRef.set(null)
             lastHistoryLoadTime = 0
+            allowReplayDelivery = true
             replayOwnerBySessionId.entries.removeIf { it.value == chatId }
             pendingRequests.values.forEach {
                 it.complete(RequestPermissionResponse(RequestPermissionOutcome.Cancelled))
@@ -321,9 +323,9 @@ class AcpClientService private constructor(val project: Project) {
             val notificationType = notification::class.simpleName ?: "Unknown"
             val ownerChatId = replayOwnerBySessionId[sessionId]
             var matchingContexts = if (ownerChatId != null) {
-                sessions[ownerChatId]?.let { listOf(it) } ?: emptyList()
+                sessions[ownerChatId]?.takeIf { it.allowReplayDelivery }?.let { listOf(it) } ?: emptyList()
             } else {
-                sessions.values.filter { it.sessionIdRef.get() == sessionId }
+                sessions.values.filter { it.allowReplayDelivery && it.sessionIdRef.get() == sessionId }
             }
             if (matchingContexts.isEmpty()) {
                 // Fallback path: during session load, ACP can emit updates before the
@@ -332,13 +334,14 @@ class AcpClientService private constructor(val project: Project) {
                 // same adapter process in a recent load window.
                 val now = System.currentTimeMillis()
                 matchingContexts = sessions.values.filter { ctx ->
+                    ctx.allowReplayDelivery &&
                     ctx.statusRef.get() == Status.Initializing &&
                         ctx.sharedProcess?.adapterName == adapterName &&
                         (now - ctx.lastHistoryLoadTime) <= 60_000L
                 }
                 // Last-resort routing: deliver-first for same adapter contexts.
                 if (matchingContexts.isEmpty()) {
-                    matchingContexts = sessions.values.filter { it.sharedProcess?.adapterName == adapterName }
+                    matchingContexts = sessions.values.filter { it.allowReplayDelivery && it.sharedProcess?.adapterName == adapterName }
                 }
                 if (matchingContexts.isNotEmpty()) {
                     replayOwnerBySessionId[sessionId] = matchingContexts.first().chatId

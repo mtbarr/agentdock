@@ -10,28 +10,27 @@ internal object AcpUsageDataFetcher {
 
     fun fetchGeminiUsageData(adapterId: String): String {
         return try {
-            when (AcpAdapterPaths.getExecutionTarget()) {
+            val target = AcpAdapterPaths.getExecutionTarget()
+            val (_, commandParts) = buildAdapterCliCommandParts(adapterId, listOf("--usage-json")) ?: return ""
+            val adapterDir = AcpAdapterPaths.getDownloadPath(adapterId, target)
+            when (target) {
                 AcpExecutionTarget.LOCAL -> {
-                    val adapterDir = File(AcpAdapterPaths.getDownloadPath(adapterId))
-                    if (!adapterDir.exists()) return ""
-                    val process = ProcessBuilder("node", "node_modules/@google/gemini-cli/dist/index.js", "--usage-json")
-                        .directory(adapterDir)
-                        .start()
+                    val process = buildLocalCliProcess(commandParts).directory(File(adapterDir)).start()
                     val output = process.inputStream.bufferedReader().use { it.readText() }
                     process.errorStream.bufferedReader().use { it.readText() }
                     process.waitFor()
                     val jsonLine = output.lines().find { it.startsWith("__GEMINI_USAGE_JSON__") }
-                    if (jsonLine != null) jsonLine.substring("__GEMINI_USAGE_JSON__".length).trim() else output.trim()
+                    if (jsonLine != null) jsonLine.substring("__GEMINI_USAGE_JSON__".length).trim() else extractJsonPayload(output)
                 }
                 AcpExecutionTarget.WSL -> {
-                    val adapterDir = AcpAdapterPaths.getDownloadPath(adapterId, AcpExecutionTarget.WSL)
+                    val command = commandParts.joinToString(" ") { quoteUnixShellArg(it) }
                     val result = AcpExecutionMode.runWslShell(
-                        script = "cd ${quoteUnixShellArg(adapterDir)} && node node_modules/@google/gemini-cli/dist/index.js --usage-json",
+                        script = "cd ${quoteUnixShellArg(adapterDir)} && $command",
                         timeoutSeconds = 60
                     ) ?: return ""
                     val output = result.stdout.trim()
                     val jsonLine = output.lines().find { it.startsWith("__GEMINI_USAGE_JSON__") }
-                    if (jsonLine != null) jsonLine.substring("__GEMINI_USAGE_JSON__".length).trim() else output
+                    if (jsonLine != null) jsonLine.substring("__GEMINI_USAGE_JSON__".length).trim() else extractJsonPayload(output)
                 }
             }
         } catch (_: Exception) { "" }

@@ -1,5 +1,6 @@
 {
   "path": "app.js",
-  "find": "async loadSession(e){if(this.sessions.has(e.sessionId))throw new tc(-32602,`Session ${e.sessionId} is already loaded`);let n=await this.authManager.getCurrentAuthInfo();if(!n)throw tc.authRequired();",
-  "replace": "async loadSession(e){let n=await this.authManager.getCurrentAuthInfo();if(!n)throw tc.authRequired();let i=this.sessions.get(e.sessionId);if(i)return j.info(`ACP session ${e.sessionId} is already loaded; replaying existing session`),await this.replaySessionHistory(e.sessionId,i.session),await this.buildSessionStateResponse(e.sessionId,i,n);"
+  "findRegex": "async loadSession\\(e\\)\\{if\\(this\\.sessions\\.has\\(e\\.sessionId\\)\\)throw new ([A-Za-z0-9_$]+)\\(-32602,`Session \\$\\{e\\.sessionId\\} is already loaded`\\);let n=await this\\.authManager\\.getCurrentAuthInfo\\(\\);if\\(!n\\)throw \\1\\.authRequired\\(\\);",
+  "replace": "async loadSession(e){let n=await this.authManager.getCurrentAuthInfo();if(!n)throw $1.authRequired();let i=this.sessions.get(e.sessionId);if(i)return await this.replaySessionHistory(e.sessionId,i.session),await this.buildSessionStateResponse(e.sessionId,i,n);",
+  "alreadyApplied": "this.replaySessionHistory(e.sessionId,i.session)"
 }

@@ -219,7 +219,8 @@ internal fun AcpBridge.installConversationQueries() {
                                             service.loadSession(
                                                 chatId = chatId,
                                                 adapterName = lastStoredSession.adapterName,
-                                                sessionId = lastStoredSession.sessionId
+                                                sessionId = lastStoredSession.sessionId,
+                                                deliverReplay = false
                                             )
                                         }
                                     } finally {

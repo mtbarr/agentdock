@@ -1,11 +1,5 @@
---- dist/src/config/config.js
-+++ dist/src/config/config.js
-@@ -173,4 +173,8 @@
-         description: 'The format of the CLI output.',
-         choices: ['text', 'json', 'stream-json'],
-     })
-+        .option('usage-json', {
-+        type: 'boolean',
-+        hidden: true,
-+    })
-         .option('fake-responses', {
+{
+  "path": "bundle/gemini.js",
+  "find": "    }).option(\"output-format\", {\n      alias: \"o\",\n      type: \"string\",\n      nargs: 1,\n      description: \"The format of the CLI output.\",\n      choices: [\"text\", \"json\", \"stream-json\"]\n    }).option(\"fake-responses\", {",
+  "replace": "    }).option(\"output-format\", {\n      alias: \"o\",\n      type: \"string\",\n      nargs: 1,\n      description: \"The format of the CLI output.\",\n      choices: [\"text\", \"json\", \"stream-json\"]\n    }).option(\"usage-json\", {\n      type: \"boolean\",\n      hidden: true\n    }).option(\"fake-responses\", {"
+}
