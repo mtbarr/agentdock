@@ -10,10 +10,11 @@ import {
   RichContentBlock,
   TextBlock,
   ToolCallBlock,
+  ToolCallDiffEntry,
   ToolCallEntry,
   ToolCallEvent,
 } from '../types/chat';
-import { appendToolOutput, buildToolCallEntry, extractResultTexts, replaceToolOutput, safeParseJson } from './toolCallUtils';
+import { appendToolOutput, buildToolCallEntry, extractResultTexts, extractToolCallDiffEntries, replaceToolOutput, safeParseJson } from './toolCallUtils';
 
 const IMPACTFUL_KEYWORDS = [
   'rm', 'mv', 'cp', 'mkdir', 'touch', 'chmod', 'chown',
@@ -85,12 +86,11 @@ function matchesToolCallId(entryId: string, toolCallId: string): boolean {
   return entryId === toolCallId || entryId.startsWith(`${toolCallId}${EDIT_SPLIT_SEPARATOR}`);
 }
 
-function normalizeDiffEntry(item: Record<string, any>) {
+function normalizeDiffEntry(item: Record<string, any>): ToolCallDiffEntry {
   const path = typeof item.path === 'string' ? item.path : '';
   const oldText = item.oldText ?? null;
   const newText = item.newText ?? '';
   return {
-    ...item,
     type: 'diff',
     path,
     oldText,
@@ -109,8 +109,11 @@ function hasMeaningfulDiff(entries: Record<string, any>[]): boolean {
 }
 
 function createToolCallBlocks(entry: ToolCallEntry): ToolCallBlock[] {
-  if (entry.kind !== 'edit' || !Array.isArray(entry.content)) {
+  if (entry.kind !== 'edit') {
     return [{ type: 'tool_call', entry, isReplay: true }];
+  }
+  if (!Array.isArray(entry.content)) {
+    return [];
   }
 
   const diffs = entry.content
@@ -127,7 +130,7 @@ function createToolCallBlocks(entry: ToolCallEntry): ToolCallBlock[] {
       : [];
   }
 
-  const groupedDiffs = new Map<string, { path?: string; diffs: Record<string, any>[] }>();
+  const groupedDiffs = new Map<string, { path?: string; diffs: ToolCallDiffEntry[] }>();
   diffs.forEach((diff, index) => {
     const diffPath = diff.path || undefined;
     const key = diffPath || `idx-${index}`;
@@ -243,6 +246,11 @@ function closeStreamingExploring(blocks: RichContentBlock[]) {
 
 function applyToolCall(blocks: RichContentBlock[], chunk: ContentChunk, replayKeyPrefix: string) {
   const entry = buildToolCallEntry(chunk);
+  const json = safeParseJson(chunk.toolRawJson);
+  const diffs = extractToolCallDiffEntries(json);
+  if (diffs.length > 0) {
+    entry.content = diffs;
+  }
   const exploring = isExploringTool(entry.kind, entry.title);
   const lastBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
 
@@ -307,7 +315,7 @@ function applyToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
   const nextTitle = chunk.toolTitle || json.title;
   const nextKind = chunk.toolKind || json.kind;
   const nextStatus = chunk.toolStatus || json.status;
-  const nextContent = json.content || json.diff;
+  let nextContent = json.content || json.diff;
 
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i];
@@ -315,6 +323,11 @@ function applyToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
       const matchingIndexes = blocks
         .map((item, index) => item.type === 'tool_call' && matchesToolCallId((item as ToolCallBlock).entry.toolCallId, toolCallId) ? index : -1)
         .filter((index) => index >= 0);
+      const initialJson = safeParseJson(block.entry.rawJson);
+      const diffEntries = extractToolCallDiffEntries(json, initialJson.rawInput);
+      if (diffEntries.length > 0) {
+        nextContent = diffEntries;
+      }
       const updatedBaseEntry: ToolCallEntry = {
         ...buildToolCallEntry(chunk),
         status: nextStatus || block.entry.status,
@@ -370,9 +383,16 @@ function applyToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
   }
 
   const entry = buildToolCallEntry(chunk);
+  const diffEntries = extractToolCallDiffEntries(json);
+  if (diffEntries.length > 0) {
+    entry.content = diffEntries;
+  }
   const resultText = extractResultTexts(json);
   if (resultText) {
     entry.result = replaceToolOutput(resultText, undefined, entry.kind || json.kind).text;
+  }
+  if (entry.kind === 'edit' && (!Array.isArray(entry.content) || entry.content.length === 0) && !entry.result) {
+    return;
   }
   blocks.push(...createToolCallBlocks(entry));
 }
@@ -510,11 +530,8 @@ function extractToolCallPayload(event: ReplayContentBlock): ToolCallEvent | null
   const type = event.type || '';
   if (type !== 'tool_call' && type !== 'tool_call_update') return null;
   const raw = safeParseJson(event.toolRawJson);
-  const diffs = Array.isArray(raw.content)
-    ? raw.content
-        .filter((item: any) => item.type === 'diff' || (item.path !== undefined && item.newText !== undefined))
-        .map((item: any) => ({ path: item.path, oldText: item.oldText ?? null, newText: item.newText ?? '' }))
-    : (Array.isArray(raw.diffs) ? raw.diffs : []);
+  const diffs = extractToolCallDiffEntries(raw)
+    .map((item: any) => ({ path: item.path, oldText: item.oldText ?? null, newText: item.newText ?? '' }));
 
   if (diffs.length > 0) {
     return {

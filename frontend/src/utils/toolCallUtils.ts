@@ -1,4 +1,6 @@
-import { ToolCallEntry, ContentChunk } from '../types/chat';
+import { ToolCallEntry, ContentChunk, ToolCallDiffEntry } from '../types/chat';
+
+export type { ToolCallDiffEntry };
 
 export interface ToolCallStatus {
   isPending: boolean;
@@ -39,6 +41,45 @@ export function buildToolCallEntry(chunk: ContentChunk): ToolCallEntry {
   };
 }
 
+export function extractToolCallDiffEntries(
+  json: Record<string, any>,
+  fallbackRawInput?: Record<string, any>
+): ToolCallDiffEntry[] {
+  const structuredDiffs = Array.isArray(json.content)
+    ? json.content
+        .filter((item: any) => item?.type === 'diff' || (item?.path !== undefined && item?.newText !== undefined))
+        .map((item: any) => ({
+          type: 'diff' as const,
+          path: typeof item.path === 'string' ? item.path : '',
+          oldText: item.oldText ?? null,
+          newText: item.newText ?? '',
+        }))
+    : (Array.isArray(json.diffs)
+        ? json.diffs.map((item: any) => ({
+            type: 'diff' as const,
+            path: typeof item.path === 'string' ? item.path : '',
+            oldText: item.oldText ?? null,
+            newText: item.newText ?? '',
+          }))
+        : []);
+
+  if (structuredDiffs.length > 0) {
+    return structuredDiffs;
+  }
+
+  const rawInput = (json.rawInput && typeof json.rawInput === 'object' ? json.rawInput : fallbackRawInput) as Record<string, any> | undefined;
+  if (!rawInput || typeof rawInput.path !== 'string' || rawInput.path.length === 0 || rawInput.file_text === undefined) {
+    return [];
+  }
+
+  return [{
+    type: 'diff',
+    path: rawInput.path,
+    oldText: null,
+    newText: typeof rawInput.file_text === 'string' ? rawInput.file_text : String(rawInput.file_text),
+  }];
+}
+
 function stripExecuteMarkdown(text: string): string {
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = normalized.split('\n');
@@ -73,7 +114,11 @@ export function extractResultTexts(json: Record<string, any>): string | undefine
   } else if (json.text) {
     texts.push(json.text);
   }
-  if (texts.length === 0) return undefined;
+  if (texts.length === 0) {
+    const msg = json.rawOutput?.message;
+    if (typeof msg === 'string' && msg.trim()) return msg.trim();
+    return undefined;
+  }
   return texts.join('\n\n');
 }
 

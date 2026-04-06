@@ -3,24 +3,7 @@ import { ToolCallBlock } from '../../../types/chat';
 import { ChevronRight, SquareTerminal } from 'lucide-react';
 import { parseToolStatus } from '../../../utils/toolCallUtils';
 import { useAutoCollapse } from '../../../hooks/useAutoCollapse';
-import { Marked } from 'marked';
-import { markedHighlight } from 'marked-highlight';
-import hljs from '../../../utils/highlight';
-
-// Configure marked for terminal output blocks
-const terminalMarked = new Marked(
-  markedHighlight({
-    highlight(code, lang) {
-      const language = hljs.getLanguage(lang) ? lang : (lang === 'console' ? 'bash' : 'plaintext');
-      return hljs.highlight(code, { language }).value;
-    }
-  })
-);
-
-terminalMarked.setOptions({
-  breaks: true,
-  gfm: true,
-});
+import { MarkdownMessage } from '../MarkdownMessage';
 
 const TerminalIcon = () => (
   <SquareTerminal size={16} className="text-primary" />
@@ -71,16 +54,6 @@ export const ExecuteBlock: React.FC<Props> = ({ block, isActivePrompt = false })
     return String(fallback).replace(/^`|`$/g, '');
   }, [block.entry.rawJson, block.entry.title, block.entry.kind]);
 
-  const renderedContent = useMemo(() => {
-    if (!block.entry.result) return null;
-    try {
-      const html = terminalMarked.parse(String(block.entry.result));
-      return <div className="syntax-highlighted" dangerouslySetInnerHTML={{ __html: html as string }} />;
-    } catch (e) {
-      return <div>{String(block.entry.result)}</div>;
-    }
-  }, [block.entry.result]);
-
   return (
     <div className="my-2 border border-border rounded-md overflow-hidden shadow-sm">
       <button
@@ -113,13 +86,15 @@ export const ExecuteBlock: React.FC<Props> = ({ block, isActivePrompt = false })
       >
         <div className="overflow-hidden">
           <div className="p-3 bg-editor-bg max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
-            <div className="font-mono whitespace-pre-wrap break-all leading-relaxed text-editor-fg min-h-[0.5rem]">
+            <div className="leading-relaxed text-editor-fg min-h-[0.5rem]">
               <div className="mb-1 text-editor-fg opacity-100 font-bold">
-                <span className="opacity-50 mr-2 select-none">$</span>
+                <span className="opacity-50 mr-2 select-none font-mono">$</span>
                 {command}
               </div>
               {block.entry.result ? (
-                <div className="mt-2 opacity-90">{renderedContent}</div>
+                <div className="mt-2 opacity-90">
+                  <MarkdownMessage content={String(block.entry.result)} />
+                </div>
               ) : !showFinished ? (
                 <span className="opacity-40 italic">Executing...</span>
               ) : null}

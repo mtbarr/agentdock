@@ -1,3 +1,10 @@
+export interface ToolCallDiffEntry {
+  type: 'diff';
+  path: string;
+  oldText: string | null;
+  newText: string;
+}
+
 export interface AcpLogEntryPayload {
   direction: 'SENT' | 'RECEIVED';
   category: 'PROTOCOL' | 'INTERNAL' | 'STDERR';
@@ -39,7 +46,7 @@ export interface ToolCallEntry {
   status?: string;
   result?: string;
   rawJson: string;
-  content?: Record<string, string | undefined>[];
+  content?: ToolCallDiffEntry[];
   locations?: { path: string }[];
   // For thinking entries
   text?: string;

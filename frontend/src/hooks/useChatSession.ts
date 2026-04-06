@@ -17,7 +17,7 @@ import {
   isAgentRunnable
 } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
-import { safeParseJson, buildToolCallEntry, extractResultTexts, appendToolOutput, replaceToolOutput } from '../utils/toolCallUtils';
+import { safeParseJson, buildToolCallEntry, extractResultTexts, appendToolOutput, replaceToolOutput, extractToolCallDiffEntries } from '../utils/toolCallUtils';
 import { buildConversationHandoffPromptPrefix } from '../utils/conversationHandoff';
 import { buildReplayMessages } from '../utils/replay';
 
@@ -84,6 +84,7 @@ function isExecuteToolKind(kind?: string): boolean {
   return (kind || '').toLowerCase() === 'execute';
 }
 
+
 function normalizeDiffEntry(item: Record<string, any>) {
   const path = typeof item.path === 'string' ? item.path : '';
   const oldText = item.oldText ?? null;
@@ -108,8 +109,11 @@ function hasMeaningfulDiff(entries: Record<string, any>[]): boolean {
 }
 
 function createToolCallBlocks(entry: ToolCallEntry, isReplay: boolean): ToolCallBlock[] {
-  if (entry.kind !== 'edit' || !Array.isArray(entry.content)) {
+  if (entry.kind !== 'edit') {
     return [{ type: 'tool_call', entry, isReplay } as ToolCallBlock];
+  }
+  if (!Array.isArray(entry.content)) {
+    return [];
   }
 
   const diffs = entry.content
@@ -389,6 +393,11 @@ function buildBlocks(chunk: ContentChunk): RichContentBlock[] {
       } as any];
     case 'tool_call': {
       const entry = buildToolCallEntry(chunk);
+      const json = safeParseJson(chunk.toolRawJson);
+      const diffs = extractToolCallDiffEntries(json);
+      if (diffs.length > 0) {
+        entry.content = diffs;
+      }
       if (!isExploringChunk(chunk)) {
         return createToolCallBlocks(entry, chunk.isReplay);
       }
@@ -413,6 +422,11 @@ function closeStreamingExploring(blocks: RichContentBlock[]) {
 
 function handleToolCall(blocks: RichContentBlock[], lastBlock: RichContentBlock | null, chunk: ContentChunk) {
   const entry = buildToolCallEntry(chunk);
+  const json = safeParseJson(chunk.toolRawJson);
+  const diffs = extractToolCallDiffEntries(json);
+  if (diffs.length > 0) {
+    entry.content = diffs;
+  }
 
   if (!isExploringChunk(chunk)) {
     closeStreamingExploring(blocks);
@@ -470,7 +484,7 @@ function handleToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
   const nextTitle = chunk.toolTitle || json.title;
   const nextKind = chunk.toolKind || json.kind;
   const nextStatus = chunk.toolStatus || json.status;
-  const nextContent = json.content || json.diff;
+  let nextContent = json.content || json.diff;
 
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
@@ -479,12 +493,31 @@ function handleToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
       const matchingIndexes = blocks
         .map((block, index) => block.type === 'tool_call' && matchesToolCallId((block as ToolCallBlock).entry.toolCallId, tid) ? index : -1)
         .filter(index => index >= 0);
+
+      const initialJson = safeParseJson(b.entry.rawJson);
+      const diffEntries = extractToolCallDiffEntries(json, initialJson.rawInput);
+      if (diffEntries.length > 0) {
+        nextContent = diffEntries;
+      }
+
+      // Merge rawInput from initial tool_call into update json so command extraction still works
+      let mergedRawJson = chunk.toolRawJson || b.entry.rawJson;
+      if (chunk.toolRawJson && initialJson.rawInput && !json.rawInput) {
+        try {
+          const updateObj = JSON.parse(chunk.toolRawJson);
+          updateObj.rawInput = initialJson.rawInput;
+          mergedRawJson = JSON.stringify(updateObj);
+        } catch {
+          // keep as-is
+        }
+      }
+
       const updatedBaseEntry: ToolCallEntry = {
         ...buildToolCallEntry(chunk),
         status: nextStatus || b.entry.status,
         title: nextTitle || b.entry.title,
         kind: nextKind || b.entry.kind,
-        rawJson: chunk.toolRawJson || b.entry.rawJson,
+        rawJson: mergedRawJson,
         locations: json.locations || b.entry.locations,
         content: nextContent || b.entry.content
       };
@@ -522,7 +555,20 @@ function handleToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
         if (nextStatus) e.status = nextStatus;
         if (nextTitle) e.title = nextTitle;
         if (nextKind) e.kind = nextKind;
-        if (chunk.toolRawJson) e.rawJson = chunk.toolRawJson;
+        if (chunk.toolRawJson) {
+          const prevJson = safeParseJson(e.rawJson);
+          if (prevJson.rawInput && !json.rawInput) {
+            try {
+              const updateObj = JSON.parse(chunk.toolRawJson);
+              updateObj.rawInput = prevJson.rawInput;
+              e.rawJson = JSON.stringify(updateObj);
+            } catch {
+              e.rawJson = chunk.toolRawJson;
+            }
+          } else {
+            e.rawJson = chunk.toolRawJson;
+          }
+        }
         if (json.locations) e.locations = json.locations;
         if (nextContent) e.content = nextContent;
         const currentKind = nextKind || e.kind || json.kind;
@@ -545,10 +591,17 @@ function handleToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
   // This handles the case where the initial ToolCall event was not
   // delivered (e.g. it only arrived via requestPermissions, not session/update).
   const entry = buildToolCallEntry(chunk);
+  const diffEntries = extractToolCallDiffEntries(json);
+  if (diffEntries.length > 0) {
+    entry.content = diffEntries;
+  }
   const resultText = extractResultTexts(json);
   if (resultText) {
     const merged = replaceToolOutput(resultText, undefined, entry.kind || json.kind);
     entry.result = merged.text;
+  }
+  if (entry.kind === 'edit'&& (!Array.isArray(entry.content) || entry.content.length === 0) && !entry.result) {
+    return;
   }
   if (!isExploringChunk(chunk)) {
     closeStreamingExploring(blocks);
@@ -598,7 +651,8 @@ export function useChatSession(
   const [selectedAgentId, setSelectedAgentId] = useState<string>(initialAgentId || '');
   const [selectedModelByAgent, setSelectedModelByAgent] = useState<Record<string, string>>({});
   const [selectedModeByAgent, setSelectedModeByAgent] = useState<Record<string, string>>({});
-  const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+  const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([]);
+  const permissionRequest = permissionQueue[0] ?? null;
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [acpSessionId, setAcpSessionId] = useState<string>('');
   const [availableCommandsByAgent, setAvailableCommandsByAgent] = useState<Record<string, AvailableCommand[]>>({});
@@ -898,7 +952,7 @@ export function useChatSession(
     const unsubPermission = ACPBridge.onPermissionRequest((e) => {
       const req = e.detail.request as PermissionRequest;
       if (req.chatId && req.chatId !== conversationId) return;
-      setPermissionRequest(req);
+      setPermissionQueue((prev) => [...prev, req]);
     });
 
     return () => {
@@ -1152,7 +1206,7 @@ export function useChatSession(
     try {
       window.__sendPrompt(conversationId, JSON.stringify(outgoingBlocks));
       consumeHandoff();
-      setPermissionRequest(null);
+      setPermissionQueue([]);
     } catch (e) {
       console.warn('[useChatSession] Failed to send prompt:', e);
       setIsSending(false);
@@ -1163,7 +1217,7 @@ export function useChatSession(
     if (typeof window.__cancelPrompt === 'function') {
       pendingPromptRef.current = null;
       window.__cancelPrompt(conversationId);
-      setPermissionRequest(null);
+      setPermissionQueue([]);
     }
   };
 
@@ -1173,7 +1227,8 @@ export function useChatSession(
       if (window.__respondPermission) {
         window.__respondPermission(permissionRequest.requestId, decision);
       }
-      setPermissionRequest(null);
+      // Dequeue the answered request; if more are pending the next one becomes visible automatically.
+      setPermissionQueue((prev) => prev.slice(1));
     } catch (e) {
       console.warn('[useChatSession] Failed to respond to permission:', e);
     }

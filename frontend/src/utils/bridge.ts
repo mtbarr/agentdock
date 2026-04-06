@@ -22,6 +22,7 @@ import {
   FileChangeOperation,
   FileChangeStatsResultPayload,
 } from '../types/chat';
+import { extractToolCallDiffEntries } from './toolCallUtils';
 import { McpServerConfig } from '../types/mcp';
 import { PromptLibraryItem } from '../types/promptLibrary';
 import { SystemInstruction } from '../types/systemInstructions';
@@ -88,6 +89,7 @@ let audioTranscriptionCounter = 0;
 let fileChangeStatsCounter = 0;
 const availableCommandsByAdapter = new Map<string, AvailableCommand[]>();
 const pendingRpcMethodsById = new Map<string | number, string>();
+const toolCallRawInputById = new Map<string, Record<string, any>>();
 
 function nextSaveTranscriptRequestId(): string {
   saveTranscriptCounter += 1;
@@ -114,33 +116,38 @@ export const ACPBridge = {
       if (chunk.type === 'tool_call' || chunk.type === 'tool_call_update') {
         try {
           const raw = chunk.toolRawJson ? JSON.parse(chunk.toolRawJson) : {};
-          const diffs = Array.isArray(raw.content)
-            ? raw.content
-                .filter((c: any) => c.type === 'diff' || (c.path !== undefined && c.newText !== undefined))
-                .map((c: any) => ({ path: c.path, oldText: c.oldText ?? null, newText: c.newText ?? '' }))
-            : (Array.isArray(raw.diffs) ? raw.diffs : []);
+          const toolCallId = chunk.toolCallId || raw.toolCallId || '';
+          if (chunk.type === 'tool_call' && toolCallId && raw.rawInput && typeof raw.rawInput === 'object') {
+            toolCallRawInputById.set(toolCallId, raw.rawInput);
+          }
+          const diffs = extractToolCallDiffEntries(raw, toolCallId ? toolCallRawInputById.get(toolCallId) : undefined)
+            .map((diff) => ({ path: diff.path, oldText: diff.oldText, newText: diff.newText }));
+          const status = chunk.toolStatus || raw.status;
           if (diffs.length > 0) {
             const payload: ToolCallEvent = {
-              toolCallId: chunk.toolCallId || raw.toolCallId || '',
+              toolCallId,
               title: chunk.toolTitle || raw.title || '',
               kind: chunk.toolKind || raw.kind,
-              status: chunk.toolStatus || raw.status,
+              status,
               isReplay: chunk.isReplay,
               diffs,
               locations: raw.locations,
             };
             const eventName = chunk.type === 'tool_call' ? EVENT_NAMES.TOOL_CALL : EVENT_NAMES.TOOL_CALL_UPDATE;
             window.dispatchEvent(new CustomEvent(eventName, { detail: { chatId: chunk.chatId, payload } }));
-          } else if (chunk.type === 'tool_call_update' && (chunk.toolCallId || raw.toolCallId) && (chunk.toolStatus || raw.status)) {
+          } else if (chunk.type === 'tool_call_update' && toolCallId && status) {
             const payload: ToolCallEvent = {
-              toolCallId: chunk.toolCallId || raw.toolCallId || '',
+              toolCallId,
               title: chunk.toolTitle || raw.title || '',
               kind: chunk.toolKind || raw.kind,
-              status: chunk.toolStatus || raw.status,
+              status,
               isReplay: chunk.isReplay,
               diffs: [],
             };
             window.dispatchEvent(new CustomEvent(EVENT_NAMES.TOOL_CALL_UPDATE, { detail: { chatId: chunk.chatId, payload } }));
+          }
+          if (chunk.type === 'tool_call_update' && toolCallId && status && !['pending', 'running', 'in_progress', 'active'].includes(String(status).toLowerCase())) {
+            toolCallRawInputById.delete(toolCallId);
           }
         } catch (_) {
         }

@@ -71,14 +71,17 @@ internal fun AcpBridge.installServiceCallbacks() {
                 if (json.contains("\"kind\":\"other\"") && json.contains("\"patchText\":")) {
                     json = convertBrokenOtherPatchToolCallJson(json)
                 }
-                recordStoredEvent(
-                    chatId,
-                    sessionId,
-                    adapterName,
-                    buildStoredToolCallChunk(json),
-                    isReplay
-                )
-                if (!captureOnlyReplay) {
+                val isPermissionRequest = update.toolCallId.value.endsWith("-permission")
+                if (!isPermissionRequest) {
+                    recordStoredEvent(
+                        chatId,
+                        sessionId,
+                        adapterName,
+                        buildStoredToolCallChunk(json),
+                        isReplay
+                    )
+                }
+                if (!isPermissionRequest && !captureOnlyReplay) {
                     if (!isReplay) {
                         markLivePromptVisibleAssistantOutput(chatId)
                     }
@@ -91,14 +94,17 @@ internal fun AcpBridge.installServiceCallbacks() {
                 if (json.contains("\"kind\":\"other\"") && json.contains("\"patchText\":")) {
                     json = convertBrokenOtherPatchToolCallJson(json)
                 }
-                recordStoredEvent(
-                    chatId,
-                    sessionId,
-                    adapterName,
-                    buildStoredToolCallUpdateChunk(update.toolCallId.value, json),
-                    isReplay
-                )
-                if (!captureOnlyReplay) {
+                val isPermissionRequest = update.toolCallId.value.endsWith("-permission")
+                if (!isPermissionRequest) {
+                    recordStoredEvent(
+                        chatId,
+                        sessionId,
+                        adapterName,
+                        buildStoredToolCallUpdateChunk(update.toolCallId.value, json),
+                        isReplay
+                    )
+                }
+                if (!isPermissionRequest && !captureOnlyReplay) {
                     if (!isReplay) {
                         markLivePromptVisibleAssistantOutput(chatId)
                     }
