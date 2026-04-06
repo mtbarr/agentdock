@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { ToolCallBlock } from '../../../types/chat';
 import { ChevronRight } from 'lucide-react';
 import { MarkdownMessage } from '../MarkdownMessage';
@@ -25,17 +25,11 @@ export const SubAgentBlock: React.FC<Props> = ({ block }) => {
   const { isExpanded, toggle } = useAutoCollapse();
 
   const title = block.entry.title || block.entry.kind || 'Thinking...';
-
-  const promptText = useMemo(() => {
+  const promptText = (() => {
     const json = safeParseJson(block.entry.rawJson);
-    if (Array.isArray(json.content)) {
-      return json.content
-        .map((c: { text?: string; content?: { text?: string } }) => c.text || c.content?.text)
-        .filter(Boolean)
-        .join('\n\n') || null;
-    }
-    return null;
-  }, [block.entry.rawJson]);
+    const p = json?.rawInput?.prompt;
+    return typeof p === 'string' && p.trim() ? p.trim() : '';
+  })();
 
   return (
     <div className="my-2 border border-border rounded-md overflow-hidden shadow-sm">
@@ -69,21 +63,14 @@ export const SubAgentBlock: React.FC<Props> = ({ block }) => {
       >
         <div className="overflow-hidden">
           <div className="p-3 bg-editor-bg max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
-            {promptText && (
-              <div className="mb-4 pb-4 border-b border-border opacity-30">
-                <div className="tracking-wider opacity-40 mb-2 font-semibold">Subagent task</div>
-                <div className="leading-relaxed opacity-80 italic">
-                  <MarkdownMessage content={promptText} />
-                </div>
-              </div>
-            )}
 
             <div className="leading-relaxed">
+              {promptText && (<div className="mb-2"><b>Prompt: </b>{promptText}<hr /></div>)}
               {block.entry.result ? (
                 <MarkdownMessage content={block.entry.result} />
               ) : (
                 <span className="opacity-40 italic">
-                  {isFinished ? 'Subagent finished with no response.' : 'Waiting for response...'}
+                  {isFinished ? 'Subagent finished.' : 'Waiting for response...'}
                 </span>
               )}
             </div>

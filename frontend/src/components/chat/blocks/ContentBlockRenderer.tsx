@@ -1,11 +1,11 @@
 import React from 'react';
 import { RichContentBlock } from '../../../types/chat';
-import { Wrench } from 'lucide-react';
 import { ExploringBlock } from './ExploringBlock';
 import { ExecuteBlock } from './ExecuteBlock';
 import { SubAgentBlock } from './SubAgentBlock';
 import { SimpleActivityBlock } from './SimpleActivityBlock';
 import { EditBlock } from './EditBlock';
+import { OtherToolBlock } from './OtherToolBlock';
 import { PlanBlockComponent } from './PlanBlock';
 import { MarkdownMessage } from '../MarkdownMessage';
 
@@ -33,18 +33,7 @@ export const ContentBlockRenderer: React.FC<Props> = ({ block, isActivePrompt = 
       if (block.entry.kind === 'edit') {
         return <EditBlock block={block} />;
       }
-      return (
-        <div className="my-2 border border-border rounded-md overflow-hidden shadow-sm">
-          <div className="flex items-center gap-2 w-full px-3 py-2 bg-editor-bg">
-            <div className="flex-shrink-0 text-editor-fg opacity-70">
-              <Wrench size={14} />
-            </div>
-            <div className="flex-1 text-left font-mono truncate text-editor-fg opacity-90 pr-2">
-              {block.entry.title || block.entry.kind}
-            </div>
-          </div>
-        </div>
-      );
+      return <OtherToolBlock block={block} />;
     case 'plan':
       return <PlanBlockComponent block={block} />;
     case 'image':

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ToolCallEntry } from '../../../types/chat';
 import { Tooltip } from '../shared/Tooltip';
+import { safeParseJson } from '../../../utils/toolCallUtils';
 
 interface Props {
   entry: ToolCallEntry;
@@ -14,22 +15,29 @@ const SearchIcon = ({ size = 13 }: { size?: number }) => (
 );
 
 export const SearchActivity: React.FC<Props> = ({ entry }) => {
+  const parsed = safeParseJson(entry.rawJson);
+  const query = typeof parsed?.rawInput?.query === 'string' && parsed.rawInput.query.trim()
+    ? parsed.rawInput.query.trim()
+    : '';
+  const query2 = typeof parsed?.rawInput?.path === 'string' && typeof parsed?.rawInput?.pattern === 'string'
+      ? parsed.rawInput.path.trim() + ' | ' + parsed.rawInput.pattern.trim()
+      : '';
+  const pattern = parsed?.rawInput?.pattern;
   const cleanTitle = entry.title?.replace(/^"(.*)"$/, '$1') || entry.title;
+  const tooltipText = query || query2 || pattern || cleanTitle || entry.kind;
   const status = (entry.status || '').toLowerCase();
   const hasError = status === 'error' || status === 'failed';
 
   return (
-    <Tooltip content={<span>Search: {cleanTitle}</span>}>
+    <Tooltip content={<span>Search: {tooltipText}</span>}>
       <div className="flex items-center gap-1.5 ml-0.5 py-0.5 min-w-0 group/activity cursor-help pr-2">
         <div className="flex-shrink-0 mt-[-2px] opacity-70 group-hover/activity:opacity-100 transition-opacity">
           <SearchIcon size={13} />
         </div>
         <span className="text-foreground opacity-60 truncate min-w-0 flex-1 block">
-          {cleanTitle || entry.kind}
+          {cleanTitle || pattern || entry.kind}
         </span>
-        {hasError && (
-          <div className="w-1.5 h-1.5 rounded-full bg-error flex-shrink-0 ml-1" />
-        )}
+        {hasError && (<div className="w-1.5 h-1.5 rounded-full bg-error flex-shrink-0 ml-1" />)}
       </div>
     </Tooltip>
   );

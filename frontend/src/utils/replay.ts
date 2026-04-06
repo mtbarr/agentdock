@@ -325,8 +325,15 @@ function applyToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
         .filter((index) => index >= 0);
       const initialJson = safeParseJson(block.entry.rawJson);
       const diffEntries = extractToolCallDiffEntries(json, initialJson.rawInput);
+      const incomingKind = String(nextKind || block.entry.kind || initialJson.kind || json.kind || '').toLowerCase();
       if (diffEntries.length > 0) {
         nextContent = diffEntries;
+      } else if (incomingKind === 'edit') {
+        const hasIncomingDiffContent = Array.isArray(nextContent)
+          && nextContent.some((item: any) => item?.type === 'diff' || (item?.path !== undefined && item?.newText !== undefined));
+        if (!hasIncomingDiffContent) {
+          nextContent = block.entry.content;
+        }
       }
       const updatedBaseEntry: ToolCallEntry = {
         ...buildToolCallEntry(chunk),
@@ -336,6 +343,7 @@ function applyToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
         rawJson: chunk.toolRawJson || block.entry.rawJson,
         locations: json.locations || block.entry.locations,
         content: nextContent || block.entry.content,
+        result: block.entry.result,
       };
       const currentKind = updatedBaseEntry.kind || block.entry.kind || json.kind;
       const resultText = extractResultTexts(json);

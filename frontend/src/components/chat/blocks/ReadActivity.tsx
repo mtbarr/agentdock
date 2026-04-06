@@ -23,15 +23,16 @@ function getFileName(path: string): string {
 export const ReadActivity: React.FC<Props> = ({ entry, onOpenFile }) => {
   const parsed = safeParseJson(entry.rawJson);
 
-  const location = parsed?.locations?.[0];
+  const location = (entry.locations?.[0] ?? parsed?.locations?.[0]) as { path?: string; line?: number } | undefined;
   const rawInput = parsed?.rawInput;
-  const fileName = getFileName(location?.path);
+  const filePath = location?.path ?? rawInput?.filePath ?? rawInput?.path;
+  const fileName = getFileName(filePath);
 
   const status = (entry.status || '').toLowerCase();
   const hasError = status === 'error' || status === 'failed';
 
   const cleanTitle = entry.title?.replace(/^"(.*)"$/, '$1') || entry.title;
-  if (!location?.path || !fileName) {
+  if (!filePath || !fileName) {
     return (
       <div className="flex items-center gap-1.5 py-0.5 min-w-0 w-full">
         <span className=" flex-shrink-0">
@@ -47,27 +48,40 @@ export const ReadActivity: React.FC<Props> = ({ entry, onOpenFile }) => {
 
   const limit = rawInput?.limit;
   let startLine: number | null = null;
+  let endLine: number | null = null;
   if (typeof location?.line === 'number') {
     if (location.line !== 0 || (limit !== undefined && limit !== 0)) {
       startLine = location.line;
+      if (limit) endLine = startLine + limit;
     }
+  }
+  if (startLine === null && Array.isArray(rawInput?.view_range) && rawInput.view_range.length >= 1) {
+    startLine = rawInput.view_range[0] ?? null;
+    endLine = rawInput.view_range[1] ?? null;
+  }
+  if (startLine === null && typeof rawInput?.offset === 'number') {
+    startLine = rawInput.offset;
+    if (limit) endLine = startLine + limit;
   }
 
   const lineRange = startLine !== null
-    ? ` L${startLine}${limit ? `-${startLine + limit}` : ''}`
+    ? ` L${startLine}${endLine !== null ? `-${endLine}` : ''}`
     : '';
+  const pattern = typeof rawInput?.pattern === 'string' && rawInput.pattern.trim().length > 0
+    ? rawInput.pattern.trim()
+    : null;
 
   return (
-    <Tooltip content={<span>Read {location.path}{lineRange}</span>}>
+    <Tooltip content={<span>Read {filePath}{lineRange}</span>}>
       <div className="flex items-center gap-1.5 ml-0.5 py-0.5 min-w-0 group/activity cursor-help pr-2">
         <div className="flex-shrink-0 mt-[-2px] opacity-70 group-hover/activity:opacity-100 transition-opacity">
           <FileIcon size={13} />
         </div>
         <button
-          onClick={() => onOpenFile(location.path, startLine || undefined)}
+          onClick={() => onOpenFile(filePath, startLine || undefined)}
           className="text-[var(--ide-Link-foreground)] hover:underline text-left truncate min-w-0 flex-1"
         >
-          {fileName}{lineRange}
+          {fileName}{lineRange}{pattern ? ` | Pattern: ${pattern}` : ''}
         </button>
         {hasError && (
           <div className="w-1.5 h-1.5 rounded-full bg-error flex-shrink-0 ml-1" />

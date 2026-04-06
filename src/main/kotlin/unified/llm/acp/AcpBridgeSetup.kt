@@ -68,9 +68,7 @@ internal fun AcpBridge.installServiceCallbacks() {
             is SessionUpdate.ToolCall -> {
                 if (!isReplay) removeProcessedFilesForDiffs(chatId, update.content)
                 var json = try { Json.encodeToString(update) } catch (_: Exception) { update.toString() }
-                if (json.contains("\"kind\":\"other\"") && json.contains("\"patchText\":")) {
-                    json = convertBrokenOtherPatchToolCallJson(json)
-                }
+                json = convertBrokenOtherPatchToolCallJson(json)
                 val isPermissionRequest = update.toolCallId.value.endsWith("-permission")
                 if (!isPermissionRequest) {
                     recordStoredEvent(
@@ -91,9 +89,7 @@ internal fun AcpBridge.installServiceCallbacks() {
             is SessionUpdate.ToolCallUpdate -> {
                 if (!isReplay) removeProcessedFilesForDiffs(chatId, update.content)
                 var json = try { Json.encodeToString(update) } catch (_: Exception) { update.toString() }
-                if (json.contains("\"kind\":\"other\"") && json.contains("\"patchText\":")) {
-                    json = convertBrokenOtherPatchToolCallJson(json)
-                }
+                json = convertBrokenOtherPatchToolCallJson(json)
                 val isPermissionRequest = update.toolCallId.value.endsWith("-permission")
                 if (!isPermissionRequest) {
                     recordStoredEvent(
@@ -134,8 +130,13 @@ private data class PatchDiff(val path: String, val oldText: String?, val newText
 // OpenCode reports apply_patch edits as kind=other, so normalize that broken payload shape.
 private fun AcpBridge.convertBrokenOtherPatchToolCallJson(rawJson: String): String {
     val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { return rawJson }
-    if (parsed["kind"]?.jsonPrimitive?.contentOrNull != "other") return rawJson
-    val patchText = parsed["rawInput"]?.jsonObject?.get("patchText")?.jsonPrimitive?.contentOrNull ?: return rawJson
+    val kind = parsed["kind"]?.jsonPrimitive?.contentOrNull
+    val patchText = when (kind) {
+        "other" -> (parsed["rawInput"] as? JsonObject)?.get("patchText")?.jsonPrimitive?.contentOrNull
+        "edit" -> (parsed["rawInput"] as? JsonPrimitive)?.contentOrNull
+        else -> null
+    } ?: return rawJson
+    if (!patchText.contains("*** Begin Patch")) return rawJson
 
     data class PatchHunk(val oldText: String, val newText: String)
     data class PatchFile(val path: String, val mode: String, val hunks: MutableList<PatchHunk>)

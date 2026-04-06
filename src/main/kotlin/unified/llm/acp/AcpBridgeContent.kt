@@ -84,12 +84,19 @@ internal fun AcpBridge.pushToolCallChunk(chatId: String, rawJson: String, isRepl
 
 internal fun AcpBridge.pushToolCallUpdateChunk(chatId: String, toolCallId: String, rawJson: String, isReplay: Boolean = false) {
     val replaySeq = nextReplaySeq(chatId, isReplay)
+    val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { null }
+    val kind = parsed?.get("kind")?.jsonPrimitive?.contentOrNull ?: ""
+    val title = parsed?.get("title")?.jsonPrimitive?.contentOrNull ?: ""
+    val status = parsed?.get("status")?.jsonPrimitive?.contentOrNull ?: ""
     val parts = mutableListOf<String>()
     parts.add("\"chatId\":${escapeJsonString(chatId)}")
     parts.add("\"role\":\"assistant\"")
     parts.add("\"type\":\"tool_call_update\"")
     parts.add("\"isReplay\":$isReplay")
     parts.add("\"toolCallId\":${escapeJsonString(toolCallId)}")
+    parts.add("\"toolKind\":${escapeJsonString(kind)}")
+    parts.add("\"toolTitle\":${escapeJsonString(title)}")
+    parts.add("\"toolStatus\":${escapeJsonString(status)}")
     parts.add("\"toolRawJson\":${escapeJsonString(rawJson)}")
     if (replaySeq != null) parts.add("\"replaySeq\":$replaySeq")
     val json = "{${parts.joinToString(",")}}"

@@ -117,6 +117,8 @@ export function extractResultTexts(json: Record<string, any>): string | undefine
   if (texts.length === 0) {
     const msg = json.rawOutput?.message;
     if (typeof msg === 'string' && msg.trim()) return msg.trim();
+    const rawContent = json.rawOutput?.content;
+    if (typeof rawContent === 'string' && rawContent.trim()) return rawContent.trim();
     return undefined;
   }
   return texts.join('\n\n');

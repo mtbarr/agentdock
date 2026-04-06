@@ -113,7 +113,9 @@ function createToolCallBlocks(entry: ToolCallEntry, isReplay: boolean): ToolCall
     return [{ type: 'tool_call', entry, isReplay } as ToolCallBlock];
   }
   if (!Array.isArray(entry.content)) {
-    return [];
+    // Return a placeholder block so that subsequent tool_call_update chunks
+    // can locate it by toolCallId and fill in the diff content.
+    return [{ type: 'tool_call', entry, isReplay } as ToolCallBlock];
   }
 
   const diffs = entry.content
@@ -496,8 +498,15 @@ function handleToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
 
       const initialJson = safeParseJson(b.entry.rawJson);
       const diffEntries = extractToolCallDiffEntries(json, initialJson.rawInput);
+      const incomingKind = String(nextKind || b.entry.kind || initialJson.kind || json.kind || '').toLowerCase();
       if (diffEntries.length > 0) {
         nextContent = diffEntries;
+      } else if (incomingKind === 'edit') {
+        const hasIncomingDiffContent = Array.isArray(nextContent)
+          && nextContent.some((item: any) => item?.type === 'diff' || (item?.path !== undefined && item?.newText !== undefined));
+        if (!hasIncomingDiffContent) {
+          nextContent = b.entry.content;
+        }
       }
 
       // Merge rawInput from initial tool_call into update json so command extraction still works
@@ -519,7 +528,8 @@ function handleToolCallUpdate(blocks: RichContentBlock[], chunk: ContentChunk) {
         kind: nextKind || b.entry.kind,
         rawJson: mergedRawJson,
         locations: json.locations || b.entry.locations,
-        content: nextContent || b.entry.content
+        content: nextContent || b.entry.content,
+        result: b.entry.result
       };
       const currentKind = updatedBaseEntry.kind || b.entry.kind || json.kind;
       const resultText = extractResultTexts(json);

@@ -39,7 +39,7 @@ function extractUrl(title: string | undefined, rawInput: Record<string, any> | u
 export const FetchActivity: React.FC<Props> = ({ entry, onOpenUrl }) => {
   const parsed = safeParseJson(entry.rawJson);
   const rawInput = parsed?.rawInput;
-  const cleanTitle = entry.title?.replace(/^"(.*)"$/, '$1') || entry.title;
+  const cleanTitle = rawInput?.url || entry.title?.replace(/^"(.*)"$/, '$1') || entry.title;
   const url = extractUrl(entry.title, rawInput);
   const isSearch = !!rawInput?.query;
 

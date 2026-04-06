@@ -14,6 +14,8 @@ interface Props {
   isActivePrompt?: boolean;
 }
 
+const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
 function pickLastString(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) return value.trim();
   if (Array.isArray(value)) {
@@ -32,6 +34,12 @@ export const ExecuteBlock: React.FC<Props> = ({ block, isActivePrompt = false })
   const showPending = isPending && isActivePrompt;
   const showFinished = isFinished || !showPending;
   const { isExpanded, toggle } = useAutoCollapse();
+  const resultText = block.entry.result ? String(block.entry.result) : '';
+  const sanitizedResultText = useMemo(
+    () => resultText.replace(ANSI_ESCAPE_PATTERN, ''),
+    [resultText]
+  );
+  const isFencedCodeAtStart = sanitizedResultText.startsWith('```');
 
   const command = useMemo(() => {
     try {
@@ -93,7 +101,13 @@ export const ExecuteBlock: React.FC<Props> = ({ block, isActivePrompt = false })
               </div>
               {block.entry.result ? (
                 <div className="mt-2 opacity-90">
-                  <MarkdownMessage content={String(block.entry.result)} />
+                  {isFencedCodeAtStart ? (
+                    <MarkdownMessage content={sanitizedResultText} />
+                  ) : (
+                    <pre className="whitespace-pre-wrap break-words font-mono text-sm m-0">
+                      {sanitizedResultText}
+                    </pre>
+                  )}
                 </div>
               ) : !showFinished ? (
                 <span className="opacity-40 italic">Executing...</span>

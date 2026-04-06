@@ -31,7 +31,6 @@ interface MarkdownMessageProps {
 export const MarkdownMessage: React.FC<MarkdownMessageProps> = ({ content }) => {
   const html = useMemo(() => {
     try {
-      // Basic stream safety: close unclosed code blocks
       let processed = content;
       const codeBlockMatches = processed.match(/```/g);
       if (codeBlockMatches && codeBlockMatches.length % 2 !== 0) {
@@ -94,3 +93,4 @@ function parseLocalFileTarget(href: string): { path: string; line?: number } | n
 
   return null;
 }
+

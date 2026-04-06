@@ -21,6 +21,7 @@ private val replayIgnoredUserCommandRegexes = replayIgnoredUserCommandTags.map {
 }
 
 private const val MAX_STORED_EXECUTE_OUTPUT_LINES = 200
+private const val MAX_STORED_RAW_OUTPUT_CONTENT_CHARS = 256
 private const val STORED_EXECUTE_OUTPUT_OMITTED_NOTICE =
     "Command output omitted from stored history because it exceeded 200 lines."
 
@@ -285,7 +286,6 @@ private fun AcpBridge.mergeStoredToolEvent(events: List<JsonObject>, event: Json
         ?.let(::parseStoredToolRawJson)
 
     val mergedRaw = mergeJsonObjects(existingRaw, incomingRaw)
-    val mergedRawJson = storedToolRawJson(mergedRaw.toString())
 
     val mergedKind = event["toolKind"]?.jsonPrimitive?.contentOrNull
         ?: incomingRaw["kind"]?.jsonPrimitive?.contentOrNull
@@ -293,19 +293,25 @@ private fun AcpBridge.mergeStoredToolEvent(events: List<JsonObject>, event: Json
         ?: existingRaw?.get("kind")?.jsonPrimitive?.contentOrNull
         ?: mergedRaw["kind"]?.jsonPrimitive?.contentOrNull
         ?: ""
+    val mergedRawFinal = if (mergedKind == "edit") {
+        preserveEditDiffContent(existingRaw, incomingRaw, mergedRaw)
+    } else {
+        mergedRaw
+    }
+    val mergedRawJson = storedToolRawJson(mergedRawFinal.toString())
 
     val mergedTitle = event["toolTitle"]?.jsonPrimitive?.contentOrNull
         ?: incomingRaw["title"]?.jsonPrimitive?.contentOrNull
         ?: existing?.get("toolTitle")?.jsonPrimitive?.contentOrNull
         ?: existingRaw?.get("title")?.jsonPrimitive?.contentOrNull
-        ?: mergedRaw["title"]?.jsonPrimitive?.contentOrNull
+        ?: mergedRawFinal["title"]?.jsonPrimitive?.contentOrNull
         ?: ""
 
     val mergedStatus = event["toolStatus"]?.jsonPrimitive?.contentOrNull
         ?: incomingRaw["status"]?.jsonPrimitive?.contentOrNull
         ?: existing?.get("toolStatus")?.jsonPrimitive?.contentOrNull
         ?: existingRaw?.get("status")?.jsonPrimitive?.contentOrNull
-        ?: mergedRaw["status"]?.jsonPrimitive?.contentOrNull
+        ?: mergedRawFinal["status"]?.jsonPrimitive?.contentOrNull
         ?: ""
 
     return buildJsonObject {
@@ -316,6 +322,25 @@ private fun AcpBridge.mergeStoredToolEvent(events: List<JsonObject>, event: Json
         put("toolTitle", mergedTitle)
         put("toolStatus", mergedStatus)
         put("toolRawJson", mergedRawJson)
+    }
+}
+
+private fun preserveEditDiffContent(
+    existingRaw: JsonObject?,
+    incomingRaw: JsonObject,
+    mergedRaw: JsonObject
+): JsonObject {
+    val existingContent = existingRaw?.get("content") as? JsonArray ?: return mergedRaw
+    if (!existingContent.any(::isDiffLikePayload)) return mergedRaw
+
+    val incomingContent = incomingRaw["content"] as? JsonArray ?: return mergedRaw
+    if (incomingContent.any(::isDiffLikePayload)) return mergedRaw
+
+    return buildJsonObject {
+        mergedRaw.forEach { (key, value) ->
+            if (key != "content") put(key, value)
+        }
+        put("content", existingContent)
     }
 }
 
@@ -500,10 +525,12 @@ internal fun AcpBridge.storedToolRawJson(rawJson: String): String {
     if (parsed != null && parsed["kind"]?.jsonPrimitive?.contentOrNull == "execute") {
         return compactExecuteToolRawJsonForStorage(parsed).toString()
     }
-    return if (shouldPreserveToolRawJson(parsed)) {
-        HistoryDiffCompactor.compactStoredToolRawJson(rawJson, Json)
+    val compacted = parsed?.let(::compactNonExecuteRawOutputForStorage)
+    val compactedRawJson = compacted?.toString() ?: rawJson
+    return if (shouldPreserveToolRawJson(compacted)) {
+        HistoryDiffCompactor.compactStoredToolRawJson(compactedRawJson, Json)
     } else {
-        truncateStoredToolRawJson(rawJson)
+        truncateStoredToolRawJson(compactedRawJson)
     }
 }
 
@@ -526,6 +553,35 @@ private fun shouldPreserveToolRawJson(parsed: JsonObject?): Boolean {
     if (diffs != null && diffs.any(::isDiffLikePayload)) return true
 
     return false
+}
+
+private fun compactNonExecuteRawOutputForStorage(parsed: JsonObject): JsonObject {
+    val rawOutput = parsed["rawOutput"] as? JsonObject ?: return parsed
+
+    val compactedRawOutput = buildJsonObject {
+        rawOutput["message"]?.let { put("message", it) }
+        rawOutput["parsed_cmd"]?.let { put("parsed_cmd", it) }
+        rawOutput["content"]?.let { content ->
+            val contentText = (content as? JsonPrimitive)?.contentOrNull
+            if (contentText != null) {
+                put("content", truncateWithEllipsis(contentText, MAX_STORED_RAW_OUTPUT_CONTENT_CHARS))
+            }
+        }
+    }
+
+    return buildJsonObject {
+        parsed.forEach { (key, value) ->
+            if (key != "rawOutput") put(key, value)
+        }
+        if (compactedRawOutput.isNotEmpty()) {
+            put("rawOutput", compactedRawOutput)
+        }
+    }
+}
+
+private fun truncateWithEllipsis(text: String, maxChars: Int): String {
+    if (text.length <= maxChars) return text
+    return text.take(maxChars) + "..."
 }
 
 private fun compactExecuteToolRawJsonForStorage(parsed: JsonObject): JsonObject {
