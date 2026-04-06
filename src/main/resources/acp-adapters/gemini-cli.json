@@ -2,6 +2,7 @@
   "id": "gemini-cli",
   "name": "Gemini",
   "iconPath": "/icons/gemini.svg",
+  "supportsSessionList": false,
   "distribution": {
     "type": "npm",
     "packageName": "@google/gemini-cli",

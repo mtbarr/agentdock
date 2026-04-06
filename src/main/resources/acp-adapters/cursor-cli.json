@@ -2,6 +2,7 @@
   "id": "cursor-cli",
   "name": "Cursor",
   "iconPath": "/icons/cursor.svg",
+  "supportsSessionList": false,
   "distribution": {
     "type": "archive",
     "version": "2026.03.30-a5d3e17",

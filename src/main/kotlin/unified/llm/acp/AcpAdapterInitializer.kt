@@ -99,9 +99,32 @@ internal fun AcpClientService.initializeAdapterInBackground(adapterName: String)
         } finally {
             adapterInitializationJobs.remove(adapterInfo.id)
             adapterInitializationScopes.remove(adapterInfo.id)?.coroutineContext?.cancel()
+            triggerBackgroundHistorySyncIfInitializationsSettled()
         }
     }
     adapterInitializationJobs[adapterInfo.id] = job
+}
+
+private fun AcpClientService.triggerBackgroundHistorySyncIfInitializationsSettled() {
+    val projectPath = project.basePath?.takeIf { it.isNotBlank() } ?: return
+    val downloadedAdapters = AcpAdapterConfig.getAllAdapters().values
+        .filter { runCatching { AcpAdapterPaths.isDownloaded(it.id) }.getOrDefault(false) }
+    if (downloadedAdapters.isEmpty()) return
+
+    val hasPendingInitialization = downloadedAdapters.any { adapterInfo ->
+        adapterInitializationState[adapterInfo.id] == AcpClientService.AdapterInitializationStatus.Initializing ||
+            adapterInitializationJobs[adapterInfo.id]?.isActive == true
+    }
+    if (hasPendingInitialization) return
+    if (!historySyncAfterInitializationInFlight.compareAndSet(false, true)) return
+
+    scope.launch {
+        try {
+            UnifiedHistoryService.startBackgroundHistorySync(projectPath)
+        } finally {
+            historySyncAfterInitializationInFlight.set(false)
+        }
+    }
 }
 
 internal suspend fun AcpClientService.initializeAdapterIfEligible(adapterName: String) {
@@ -291,7 +314,6 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
             val metadataResult = fetchAdapterRuntimeMetadata(c, adapterInfo)
             adapterRuntimeMetadataMap[requestedAdapterName] = metadataResult.metadata
             UnifiedHistoryService.registerEphemeralSession(project.basePath, requestedAdapterName, metadataResult.sessionId)
-            UnifiedHistoryService.startBackgroundHistorySync(project.basePath)
         } catch (_: kotlinx.serialization.SerializationException) {
             // Protocol version mismatch between adapter binary and ACP SDK -
             // models/modes will fall back to config defaults in pushAdapters.

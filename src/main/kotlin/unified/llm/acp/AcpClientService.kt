@@ -155,6 +155,7 @@ class AcpClientService private constructor(val project: Project) {
     internal val availableCommandsByAdapter = ConcurrentHashMap<String, List<AvailableCommandPayload>>()
     internal val systemInstructionsInjectedSessionIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     internal val executionTargetRef = AtomicReference(AcpAdapterPaths.getExecutionTarget())
+    internal val historySyncAfterInitializationInFlight = AtomicBoolean(false)
 
     fun status(chatId: String): Status = sessions[chatId]?.statusRef?.get() ?: Status.NotStarted
     fun sessionId(chatId: String): String? = sessions[chatId]?.sessionIdRef?.get()

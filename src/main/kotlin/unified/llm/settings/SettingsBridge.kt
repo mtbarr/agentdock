@@ -388,7 +388,6 @@ class SettingsBridge(
         }.isSuccess
 
         if (switchSucceeded) {
-            UnifiedHistoryService.syncHistoryIndex(project.basePath)
             requestHistoryRefresh()
         }
 

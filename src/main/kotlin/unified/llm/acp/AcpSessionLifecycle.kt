@@ -216,6 +216,7 @@ internal suspend fun AcpClientService.loadSession(
                     keepLoadedSessionActive = true,
                     deliverReplay = deliverReplay
                 )
+                context.allowReplayDelivery = true
                 context.statusRef.set(AcpClientService.Status.Ready)
             } catch (e: Exception) {
                 context.stop()

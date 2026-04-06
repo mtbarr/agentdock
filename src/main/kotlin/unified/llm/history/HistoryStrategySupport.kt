@@ -65,21 +65,41 @@ internal fun parseSimpleYamlMap(file: File): Map<String, String> {
     return values
 }
 
+private fun stripWindowsExtendedPathPrefix(path: String): String {
+    val normalized = path.trim()
+    return when {
+        normalized.startsWith("\\\\?\\UNC\\", ignoreCase = true) -> "\\\\" + normalized.removePrefix("\\\\?\\UNC\\")
+        normalized.startsWith("//?/UNC/", ignoreCase = true) -> "//" + normalized.removePrefix("//?/UNC/")
+        normalized.startsWith("\\\\?\\", ignoreCase = true) -> normalized.removePrefix("\\\\?\\")
+        normalized.startsWith("//?/", ignoreCase = true) -> normalized.removePrefix("//?/")
+        else -> normalized
+    }
+}
+
+private fun isWindowsLikePath(path: String): Boolean {
+    return Regex("^[A-Za-z]:[\\\\/]").containsMatchIn(path) || path.startsWith("\\\\") || path.startsWith("//")
+}
+
 internal fun historyComparablePath(path: String?): String {
     val value = path?.trim().orEmpty()
     if (value.isEmpty()) return ""
-    val mountMatch = Regex("^/mnt/([A-Za-z])/(.*)$").matchEntire(value.replace("\\", "/"))
+    val withoutExtendedPrefix = stripWindowsExtendedPathPrefix(value)
+    val mountMatch = Regex("^/mnt/([A-Za-z])/(.*)$").matchEntire(withoutExtendedPrefix.replace("\\", "/"))
     val comparable = if (mountMatch != null) {
         val drive = mountMatch.groupValues[1].uppercase()
         val rest = mountMatch.groupValues[2].replace("/", "\\")
         "$drive:\\$rest"
     } else {
-        value
+        withoutExtendedPrefix
     }
-    val normalized = comparable.replace("/", File.separator).replace("\\", File.separator)
+    val normalized = if (isWindowsLikePath(comparable)) {
+        comparable.replace("/", "\\")
+    } else {
+        comparable.replace("\\", "/")
+    }
     val canonical = runCatching { File(normalized).canonicalPath }.getOrDefault(normalized)
-    val looksWindowsPath = canonical.length >= 2 && canonical[1] == ':'
-    return if (File.separatorChar == '\\' || looksWindowsPath) canonical.lowercase() else canonical
+    val looksWindowsPath = isWindowsLikePath(canonical)
+    return if (looksWindowsPath) canonical.lowercase() else canonical
 }
 
 internal fun readableHistorySourcePath(path: String?): String {

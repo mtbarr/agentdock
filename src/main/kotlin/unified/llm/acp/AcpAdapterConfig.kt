@@ -100,6 +100,7 @@ object AcpAdapterConfig {
         val id: String = "", // Filled after parsing
         val name: String,
         val iconPath: String? = null,
+        val supportsSessionList: Boolean = true,
         val distribution: Distribution,
         val launchPath: String = "",
         val launchBinary: PlatformBinary? = null,

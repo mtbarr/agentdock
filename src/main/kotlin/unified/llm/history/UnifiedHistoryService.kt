@@ -1,9 +1,12 @@
 package unified.llm.history
 
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -15,8 +18,10 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import unified.llm.acp.AcpAdapterConfig
 import unified.llm.acp.AcpAdapterPaths
+import unified.llm.acp.AcpClientService
 import unified.llm.acp.AcpExecutionMode
 import unified.llm.acp.AcpExecutionTarget
+import unified.llm.acp.listHistorySessions
 import java.io.File
 import java.nio.file.Files
 import java.time.Instant
@@ -144,6 +149,30 @@ object UnifiedHistoryService {
         explicitNulls = false
     }
     private const val CONVERSATION_REPLAY_STALE_TOLERANCE_MS = 60_000L
+
+    private fun findOpenProject(projectPath: String): Project? {
+        val cleanProjectPath = canonicalHistoryProjectPath(projectPath)
+        if (cleanProjectPath.isBlank()) return null
+        return ProjectManager.getInstance().openProjects.firstOrNull { project ->
+            canonicalHistoryProjectPath(project.basePath) == cleanProjectPath
+        }
+    }
+
+    private fun collectSessionListMeta(projectPath: String): List<SessionMeta> {
+        val project = findOpenProject(projectPath) ?: return emptyList()
+        val service = AcpClientService.getInstance(project)
+        val adapters = AcpAdapterConfig.getAllAdapters().values
+            .filter { it.supportsSessionList }
+            .filter { AcpAdapterPaths.isDownloaded(it.id) }
+
+        return runBlocking<List<SessionMeta>> {
+            adapters.flatMap { adapterInfo ->
+                runCatching {
+                    service.listHistorySessions(adapterInfo, projectPath)
+                }.getOrDefault(emptyList<SessionMeta>())
+            }
+        }
+    }
 
     private fun currentWslDistributionName(): String? {
         if (AcpAdapterPaths.getExecutionTarget() != AcpExecutionTarget.WSL) return null
@@ -365,10 +394,28 @@ object UnifiedHistoryService {
         }
     }
 
-    private fun findSessionSourceMeta(projectPath: String, sessionId: String, adapterName: String): SessionMeta? {
+    private fun findIndexedSessionEntry(projectPath: String, sessionId: String, adapterName: String): HistorySessionIndexEntry? {
         if (projectPath.isBlank() || sessionId.isBlank() || adapterName.isBlank()) return null
-        return collectAvailableSessionMeta(projectPath)
+        return readExistingProjectIndex(projectPath)
+            .asSequence()
+            .filter { matchesCurrentHistoryEnvironment(it) }
+            .flatMap { it.sessions.asSequence() }
             .firstOrNull { it.sessionId == sessionId && it.adapterName == adapterName }
+    }
+
+    private fun findSessionSourceMeta(projectPath: String, sessionId: String, adapterName: String): SessionMeta? {
+        val indexedSession = findIndexedSessionEntry(projectPath, sessionId, adapterName) ?: return null
+        val sourceFilePath = indexedSession.sourceFilePath?.takeIf { it.isNotBlank() }
+            ?: SessionListDeleteSupport.resolveSourceFilePath(projectPath, adapterName, sessionId)
+        return SessionMeta(
+            sessionId = sessionId,
+            adapterName = adapterName,
+            projectPath = projectPath,
+            title = "Untitled Session",
+            filePath = sourceFilePath,
+            createdAt = indexedSession.createdAt,
+            updatedAt = indexedSession.updatedAt
+        )
     }
 
     fun upsertRuntimeSessionMetadata(
@@ -839,9 +886,10 @@ object UnifiedHistoryService {
 
     private fun deleteSessionArtifacts(projectPath: String, session: HistorySessionIndexEntry): Boolean {
         val sourceMeta = findSessionSourceMeta(projectPath, session.sessionId, session.adapterName)
-        val sourceFilePath = session.sourceFilePath?.takeIf { it.isNotBlank() } ?: sourceMeta?.filePath.orEmpty()
-        val history = AdapterHistoryRegistry.get(session.adapterName) ?: return false
-        return history.deleteSession(projectPath, session.sessionId, sourceFilePath)
+        val sourceFilePath = session.sourceFilePath?.takeIf { it.isNotBlank() }
+            ?: sourceMeta?.filePath?.takeIf { it.isNotBlank() }
+            ?: SessionListDeleteSupport.resolveSourceFilePath(projectPath, session.adapterName, session.sessionId)
+        return SessionListDeleteSupport.deleteSession(projectPath, session.adapterName, session.sessionId, sourceFilePath)
     }
 
     private fun buildDeleteFailureMessage(remainingSessions: List<HistorySessionIndexEntry>): String {
@@ -858,12 +906,17 @@ object UnifiedHistoryService {
         }
     }
 
-    private fun collectAvailableSessionMeta(projectPath: String): List<SessionMeta> {
+    private fun collectSyncedAvailableSessionMeta(projectPath: String): List<SessionMeta> {
         val result = mutableListOf<SessionMeta>()
         val ephemeralKeys = readEphemeralSessions(projectPath)
             .associateBy { "${it.adapterName}:${it.sessionId}" }
 
+        result.addAll(collectSessionListMeta(projectPath))
+
         AdapterHistoryRegistry.all().forEach { history ->
+            if (runCatching { AcpAdapterConfig.getAdapterInfo(history.adapterId).supportsSessionList }.getOrDefault(true)) {
+                return@forEach
+            }
             if (!AcpAdapterPaths.isDownloaded(history.adapterId)) return@forEach
             result.addAll(runCatching { history.collectSessions(projectPath) }.getOrDefault(emptyList()))
         }
@@ -916,7 +969,7 @@ object UnifiedHistoryService {
         val currentWslDistributionName = currentWslDistributionName()
         val untouchedConversations = existing.filterNot { matchesCurrentHistoryEnvironment(it, currentWslDistributionName) }
         val targetConversations = existing.filter { matchesCurrentHistoryEnvironment(it, currentWslDistributionName) }
-        val availableSessions = collectAvailableSessionMeta(projectPath)
+        val availableSessions = collectSyncedAvailableSessionMeta(projectPath)
 
         val availableByKey = availableSessions.associateBy { "${it.adapterName}:${it.sessionId}" }
         val keptKeys = linkedSetOf<String>()
@@ -1074,24 +1127,18 @@ object UnifiedHistoryService {
             ?: return@withContext emptyList()
 
         val title = conversation.title.ifBlank { "Untitled" }
-        val availableMetaByKey = collectAvailableSessionMeta(cleanProjectPath)
-            .associateBy { "${it.adapterName}:${it.sessionId}" }
-
         conversation.sessions.map { session ->
-            val sessionMeta = availableMetaByKey["${session.adapterName}:${session.sessionId}"]
             SessionMeta(
                 sessionId = session.sessionId,
                 adapterName = session.adapterName,
                 conversationId = conversation.id,
                 sessionCount = conversation.sessions.size,
                 promptCount = conversation.promptCount,
-                modelId = sessionMeta?.modelId,
-                modeId = sessionMeta?.modeId,
                 projectPath = cleanProjectPath,
                 title = title,
-                filePath = sessionMeta?.filePath?.takeIf { it.isNotBlank() } ?: session.sourceFilePath.orEmpty(),
-                createdAt = sessionMeta?.createdAt ?: session.createdAt,
-                updatedAt = resolveSyncedUpdatedAt(session.updatedAt, sessionMeta?.updatedAt ?: 0L),
+                filePath = session.sourceFilePath.orEmpty(),
+                createdAt = session.createdAt,
+                updatedAt = session.updatedAt,
                 allAdapterNames = conversation.sessions.map { it.adapterName }.distinct()
             )
         }
@@ -1199,7 +1246,6 @@ object UnifiedHistoryService {
             writeProjectIndex(indexFile, rewritten)
         }
 
-        syncProjectIndex(cleanProjectPath)
         deletedArtifacts
     }
 

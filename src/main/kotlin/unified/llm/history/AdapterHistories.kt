@@ -10,13 +10,8 @@ internal interface AdapterHistory {
 
 internal object AdapterHistoryRegistry {
     private val histories: Map<String, AdapterHistory> = listOf(
-        ClaudeCodeHistory,
-        CodexHistory,
         CursorCliHistory,
-        GeminiCliHistory,
-        GithubCopilotCliHistory,
-        KiloHistory,
-        OpenCodeHistory
+        GeminiCliHistory
     ).associateBy { it.adapterId }
 
     fun get(adapterId: String): AdapterHistory? = histories[adapterId]
