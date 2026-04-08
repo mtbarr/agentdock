@@ -232,21 +232,8 @@ object AcpAuthService {
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         authConfig: AcpAdapterConfig.AuthConfig
     ): List<String>? {
-        val target = AcpAdapterPaths.getExecutionTarget()
         if (authConfig.command.isNotEmpty()) {
-            return authConfig.command.toMutableList().also { cmd ->
-                if (target == AcpExecutionTarget.LOCAL) {
-                    val first = cmd.firstOrNull().orEmpty()
-                    if (first.equals("npx", ignoreCase = true)) {
-                        cmd[0] = "npx.cmd"
-                    } else if (first.equals("npm", ignoreCase = true)) {
-                        cmd[0] = "npm.cmd"
-                    }
-                    if (cmd[0].endsWith(".cmd", true) || cmd[0].endsWith(".bat", true)) {
-                        cmd.addAll(0, listOf("cmd.exe", "/c"))
-                    }
-                }
-            }
+            return authConfig.command.toList()
         }
 
         val script = resolveScriptPath(adapterInfo, authConfig.authScript) ?: return null
@@ -369,5 +356,5 @@ object AcpAuthService {
         if (lower.contains("authenticated")) return true
         return null
     }
-
 }
+

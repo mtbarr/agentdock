@@ -17,7 +17,8 @@ internal class AcpBridgeCli(
     private val runOnEdt: (() -> Unit) -> Unit
 ) {
     fun openAgentCliInTerminal(adapterId: String) {
-        val (adapterInfo, command) = buildCliCommand(adapterId, emptyList()) ?: return
+        val shellFlavor = detectIdeTerminalShellFlavor()
+        val (adapterInfo, command) = buildCliCommand(adapterId, emptyList(), shellFlavor) ?: return
         if (command.isBlank()) return
         val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterId, AcpAdapterPaths.getExecutionTarget())
         openInIdeTerminal(resolveTerminalWorkingDir(adapterRoot), "${adapterInfo.name} CLI", command)
@@ -26,7 +27,8 @@ internal class AcpBridgeCli(
     fun openLoginInTerminal(adapterId: String): Boolean {
         val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterId) }.getOrNull() ?: return false
         val commandParts = AcpAuthService.buildLoginCommand(adapterId) ?: return false
-        val command = toShellCommand(commandParts)
+        val shellFlavor = detectIdeTerminalShellFlavor()
+        val command = toShellCommand(commandParts.map { normalizeInteractiveShellPart(it, shellFlavor) }, shellFlavor)
         if (command.isBlank()) return false
         val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterId, AcpAdapterPaths.getExecutionTarget())
         return openInIdeTerminal(resolveTerminalWorkingDir(adapterRoot), "${adapterInfo.name} Login", command)
@@ -56,7 +58,12 @@ internal class AcpBridgeCli(
             "projectPath" to projectPath,
             "adapterId" to latestSession.adapterName
         )
-        val (_, command) = buildCliCommand(latestSession.adapterName, applyCliPlaceholders(resumeArgs, placeholders)) ?: return
+        val shellFlavor = detectIdeTerminalShellFlavor()
+        val (_, command) = buildCliCommand(
+            latestSession.adapterName,
+            applyCliPlaceholders(resumeArgs, placeholders),
+            shellFlavor
+        ) ?: return
         if (command.isBlank()) return
 
         openInIdeTerminal(resolveTerminalWorkingDir(projectPath), "${adapterInfo.name} CLI", command)
@@ -69,13 +76,18 @@ internal class AcpBridgeCli(
         return loadIdeTerminalManagerClass() != null
     }
 
-    private fun buildCliCommand(adapterId: String, extraArgs: List<String>): Pair<AcpAdapterConfig.AdapterInfo, String>? {
+    private fun buildCliCommand(
+        adapterId: String,
+        extraArgs: List<String>,
+        shellFlavor: TerminalShellFlavor
+    ): Pair<AcpAdapterConfig.AdapterInfo, String>? {
         val (adapterInfo, commandParts) = buildAdapterCliCommandParts(adapterId, extraArgs) ?: return null
         val target = AcpAdapterPaths.getExecutionTarget()
+        val interactiveParts = commandParts.map { normalizeInteractiveShellPart(it, shellFlavor) }
 
         val command = when (target) {
-            AcpExecutionTarget.LOCAL -> toShellCommand(commandParts)
-            AcpExecutionTarget.WSL -> buildWslTerminalCommand(commandParts, project.basePath)
+            AcpExecutionTarget.LOCAL -> toShellCommand(interactiveParts, shellFlavor)
+            AcpExecutionTarget.WSL -> buildWslTerminalCommand(interactiveParts, project.basePath, shellFlavor)
         }
         return adapterInfo to command
     }
@@ -108,7 +120,52 @@ internal class AcpBridgeCli(
     }
 
     private fun loadIdeTerminalManagerClass(): Class<*>? {
-        val className = "org.jetbrains.plugins.terminal.TerminalToolWindowManager"
+        return loadTerminalClass("org.jetbrains.plugins.terminal.TerminalToolWindowManager")
+    }
+
+    private fun detectIdeTerminalShellFlavor(): TerminalShellFlavor {
+        val shellPath = resolveIdeTerminalShellPath()?.lowercase().orEmpty()
+        return when {
+            shellPath.contains("powershell") || shellPath.endsWith("pwsh.exe") -> TerminalShellFlavor.POWERSHELL
+            shellPath.endsWith("cmd.exe") -> TerminalShellFlavor.CMD
+            shellPath.isNotBlank() -> TerminalShellFlavor.POSIX
+            System.getProperty("os.name").lowercase().contains("win") -> TerminalShellFlavor.POWERSHELL
+            else -> TerminalShellFlavor.POSIX
+        }
+    }
+
+    private fun resolveIdeTerminalShellPath(): String? {
+        return resolveShellPathFromProvider("org.jetbrains.plugins.terminal.TerminalProjectOptionsProvider", project)
+            ?: resolveShellPathFromProvider("org.jetbrains.plugins.terminal.TerminalOptionsProvider", null)
+    }
+
+    private fun resolveShellPathFromProvider(className: String, projectArg: Project?): String? {
+        val providerClass = loadTerminalClass(className) ?: return null
+        val args = projectArg?.let { arrayOf<Any>(it) } ?: emptyArray()
+        val instance = runCatching {
+            providerClass.methods.firstOrNull { method ->
+                method.name == "getInstance" &&
+                    ((projectArg != null && method.parameterCount == 1 && method.parameterTypes[0] == Project::class.java) ||
+                        (projectArg == null && method.parameterCount == 0))
+            }?.invoke(null, *args)
+        }.getOrNull() ?: return null
+
+        return runCatching {
+            instance.javaClass.methods.firstOrNull { method ->
+                method.name == "getShellPath" && method.parameterCount == 0
+            }?.invoke(instance) as? String
+        }.getOrNull()
+    }
+
+    private fun loadTerminalClass(className: String): Class<*>? {
+        terminalClassLoaders().forEach { classLoader ->
+            val loaded = runCatching { Class.forName(className, false, classLoader) }.getOrNull()
+            if (loaded != null) return loaded
+        }
+        return null
+    }
+
+    private fun terminalClassLoaders(): List<ClassLoader> {
         val terminalPluginId = PluginId.getId("org.jetbrains.plugins.terminal")
         val pluginDescriptor = PluginManagerCore.getPlugin(terminalPluginId)
         val pluginClassLoader = runCatching {
@@ -119,23 +176,20 @@ internal class AcpBridgeCli(
                 ?.invoke(pluginDescriptor) as? ClassLoader
         }.getOrNull()
 
-        val classLoaders = listOfNotNull(
+        return listOfNotNull(
             pluginClassLoader,
             javaClass.classLoader,
             project.javaClass.classLoader,
             ApplicationManager::class.java.classLoader,
             Thread.currentThread().contextClassLoader
         ).distinct()
-
-        classLoaders.forEach { classLoader ->
-            val loaded = runCatching { Class.forName(className, false, classLoader) }.getOrNull()
-            if (loaded != null) {
-                return loaded
-            }
-        }
-
-        return null
     }
+}
+
+internal enum class TerminalShellFlavor {
+    POWERSHELL,
+    CMD,
+    POSIX
 }
 
 internal fun buildAdapterCliCommandParts(
@@ -181,42 +235,65 @@ internal fun resolveCliPath(adapterRoot: String, raw: String, target: AcpExecuti
             if (relative.exists()) relative.absolutePath else path
         }
         AcpExecutionTarget.WSL -> {
-            if (path.startsWith("/")) path else "${adapterRoot.trimEnd('/')}/${path.replace("\\", "/")}"
+            if (path.startsWith("/")) {
+                path
+            } else if (!path.contains("/") && !path.contains("\\")) {
+                path
+            } else {
+                "${adapterRoot.trimEnd('/')}/${path.replace("\\", "/")}"
+            }
         }
     }
 }
 
-internal fun toShellCommand(parts: List<String>): String {
+internal fun toShellCommand(parts: List<String>, shellFlavor: TerminalShellFlavor): String {
     val filtered = parts.filter { it.isNotBlank() }
     if (filtered.isEmpty()) return ""
 
-    val os = System.getProperty("os.name").lowercase()
-    return if (os.contains("win")) {
-        val executable = filtered.first()
-        val args = filtered.drop(1).joinToString(" ") { quoteShellArg(it) }
-        buildString {
-            append("& ")
-            append(quoteShellArg(executable))
-            if (args.isNotBlank()) {
-                append(" ")
-                append(args)
+    return when (shellFlavor) {
+        TerminalShellFlavor.POWERSHELL -> {
+            val executable = filtered.first()
+            val args = filtered.drop(1).joinToString(" ") { quotePowerShellArg(it) }
+            buildString {
+                append("& ")
+                append(quotePowerShellArg(executable))
+                if (args.isNotBlank()) {
+                    append(" ")
+                    append(args)
+                }
             }
         }
-    } else {
-        filtered.joinToString(" ") { quoteShellArg(it) }
+        TerminalShellFlavor.CMD -> filtered.joinToString(" ") { quoteCmdArg(it) }
+        TerminalShellFlavor.POSIX -> filtered.joinToString(" ") { quoteUnixShellArg(it) }
     }
 }
 
-internal fun quoteShellArg(value: String): String {
-    val os = System.getProperty("os.name").lowercase()
-    return if (os.contains("win")) {
-        "'" + value.replace("'", "''") + "'"
-    } else {
-        "'" + value.replace("'", "'\"'\"'") + "'"
+internal fun quotePowerShellArg(value: String): String = "'" + value.replace("'", "''") + "'"
+
+internal fun quoteCmdArg(value: String): String {
+    if (value.isEmpty()) return "\"\""
+    val needsQuotes = value.any { it.isWhitespace() || it in charArrayOf('"', '^', '&', '|', '<', '>', '(', ')') }
+    val escaped = value.replace("\"", "\"\"")
+    return if (needsQuotes) "\"$escaped\"" else escaped
+}
+
+internal fun normalizeInteractiveShellPart(value: String, shellFlavor: TerminalShellFlavor): String {
+    if (shellFlavor == TerminalShellFlavor.CMD) return value
+    val trimmed = value.trim()
+    if (trimmed.indexOfAny(charArrayOf('\\', '/', ':')) >= 0) return value
+
+    return when {
+        trimmed.endsWith(".cmd", ignoreCase = true) -> trimmed.dropLast(4)
+        trimmed.endsWith(".bat", ignoreCase = true) -> trimmed.dropLast(4)
+        else -> value
     }
 }
 
-internal fun buildWslTerminalCommand(parts: List<String>, projectPath: String?): String {
+internal fun buildWslTerminalCommand(
+    parts: List<String>,
+    projectPath: String?,
+    shellFlavor: TerminalShellFlavor
+): String {
     val filtered = parts.filter { it.isNotBlank() }
     if (filtered.isEmpty()) return ""
     val distro = AcpExecutionMode.selectedWslDistributionName().takeIf { it.isNotBlank() }
@@ -235,10 +312,22 @@ internal fun buildWslTerminalCommand(parts: List<String>, projectPath: String?):
         append("wsl.exe ")
         if (distro != null) {
             append("-d ")
-            append(quoteShellArg(distro))
+            append(
+                when (shellFlavor) {
+                    TerminalShellFlavor.POWERSHELL -> quotePowerShellArg(distro)
+                    TerminalShellFlavor.CMD -> quoteCmdArg(distro)
+                    TerminalShellFlavor.POSIX -> quoteUnixShellArg(distro)
+                }
+            )
             append(" ")
         }
         append("--exec bash -lic ")
-        append(quoteShellArg(script))
+        append(
+            when (shellFlavor) {
+                TerminalShellFlavor.POWERSHELL -> quotePowerShellArg(script)
+                TerminalShellFlavor.CMD -> quoteCmdArg(script)
+                TerminalShellFlavor.POSIX -> quoteUnixShellArg(script)
+            }
+        )
     }
 }
