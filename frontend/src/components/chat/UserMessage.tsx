@@ -142,6 +142,9 @@ export const UserMessage = memo(({ message, onImageClick }: UserMessageProps) =>
         <div
           className="user-message-bubble group max-w-[85%] bg-accent text-accent-foreground px-6 py-4 ml-auto
             shadow-sm rounded-lg relative transition-[max-height] duration-300 ease-in-out"
+          style={{
+            backgroundColor: 'var(--user-message-bg)',
+          }}
         >
           {isLargeContent && (
             <button
@@ -163,8 +166,10 @@ export const UserMessage = memo(({ message, onImageClick }: UserMessageProps) =>
           </div>
 
           {!isExpanded && isLargeContent && (
-            <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-accent to-transparent
-              pointer-events-none z-10" />
+            <div
+              className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10"
+              style={{ background: 'linear-gradient(to top, var(--user-message-bg), transparent)' }}
+            />
           )}
 
           {renderTrailingAttachments()}

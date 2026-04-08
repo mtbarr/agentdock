@@ -3,6 +3,7 @@ package unified.llm.acp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import unified.llm.settings.GlobalSettingsStore
 import java.io.BufferedInputStream
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
@@ -23,6 +24,9 @@ internal class AcpAudioPlayer(private val scope: CoroutineScope) {
 
     private fun playSound(resourcePath: String) {
         scope.launch(Dispatchers.IO) {
+            if (!GlobalSettingsStore.areAudioNotificationsEnabled()) {
+                return@launch
+            }
             try {
                 val resourceStream = AcpAudioPlayer::class.java.getResourceAsStream(resourcePath)
                 if (resourceStream == null) {

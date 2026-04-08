@@ -5,6 +5,7 @@ import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.colors.TextAttributesKey
+import unified.llm.settings.GlobalSettingsStore
 import java.awt.Color
 import javax.swing.UIManager
 
@@ -49,7 +50,13 @@ object IdeTheme {
         // 2. Base fonts only — UI and Code
         val baseFont = com.intellij.util.ui.JBFont.regular()
         sb.append("  --ide-font-family: '${baseFont.family}', sans-serif;\n")
-        sb.append("  --ide-font-size: ${baseFont.size2D + 1}px;\n")
+        sb.append("  --ide-font-size-base: ${baseFont.size2D + 1}px;\n")
+        val uiFontSizeOffsetPx = GlobalSettingsStore.uiFontSizeOffsetPx()
+        if (uiFontSizeOffsetPx == 0) {
+            sb.append("  --ide-font-size: var(--ide-font-size-base);\n")
+        } else {
+            sb.append("  --ide-font-size: calc(var(--ide-font-size-base) + ${uiFontSizeOffsetPx}px);\n")
+        }
 
         val scheme = EditorColorsManager.getInstance().globalScheme
         sb.append("  --ide-code-font-family: '${scheme.editorFontName}', monospace;\n")
@@ -122,6 +129,17 @@ object IdeTheme {
         // Scrollbar color based on border
         val scrollbarColor = adjustBrightness(borderColor, if (isDark) 1.15 else 0.90)
         sb.append("  --ide-scrollbar-color: ${toCssColor(scrollbarColor)};\n")
+
+        val userMessageStyle = GlobalSettingsStore.userMessageBackgroundStyle()
+        val userMessageBackgroundVar = when (userMessageStyle) {
+            "background-secondary" -> "--ide-background-secondary"
+            "primary" -> "--ide-Button-default-startBackground"
+            "secondary" -> "--ide-Button-startBackground"
+            "input" -> "--ide-TextField-background"
+            "editor-bg" -> "--ide-editor-bg"
+            else -> "--ide-List-selectionBackground"
+        }
+        sb.append("  --user-message-bg: var($userMessageBackgroundVar);\n")
 
         // 8. Layout and spacing
         val listIndent = UIManager.getInt("Tree.leftChildIndent").takeIf { it > 0 }

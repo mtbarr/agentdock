@@ -422,11 +422,15 @@ export interface HostSettingsInfo {
   hostOs: 'windows' | 'other';
   wslSupported: boolean;
   wslDistributions: { name: string }[];
+  uiFontSizeBasePx: number;
 }
 
 export interface GlobalSettings {
   useWslForAcpAdapters: boolean;
   wslDistributionName: string;
+  audioNotificationsEnabled: boolean;
+  uiFontSizeOffsetPx: number;
+  userMessageBackgroundStyle: 'background-secondary' | 'primary' | 'secondary' | 'accent' | 'input' | 'editor-bg';
   audioTranscription: AudioTranscriptionSettings;
   gitCommitGeneration: GitCommitGenerationSettings;
 }
