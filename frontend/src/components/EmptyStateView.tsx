@@ -290,7 +290,7 @@ export function EmptyStateView({
                       >
                         <div className="flex min-w-[42px] shrink-0 items-center justify-center">
                           {mainAgent?.iconPath ? (
-                            <img src={mainAgent.iconPath} alt={mainLabel} className="h-7 w-7 object-contain opacity-80" />
+                            <img src={mainAgent.iconPath} alt={mainLabel} className="h-6 w-6 object-contain opacity-80" />
                           ) : (
                             <div className="flex h-9 w-9 items-center justify-center rounded border border-border bg-background text-base font-bold uppercase">
                               {mainLabel.slice(0, 1)}

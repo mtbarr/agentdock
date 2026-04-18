@@ -83,7 +83,7 @@ export const PlanBlockComponent: React.FC<Props> = ({ block }) => {
   };
 
   return (
-    <div className="my-2 border border-border rounded-md overflow-hidden">
+    <div className="mb-2 border border-border rounded-md overflow-hidden">
       <button onClick={toggleExpanded} className={`flex items-center gap-2 w-full px-3 h-9 bg-editor-bg ${chatInsetFocusClassName}`}>
         <div className="flex-shrink-0 text-foreground-secondary">
           <ClipboardList size={14} />

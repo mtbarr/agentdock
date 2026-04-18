@@ -2,6 +2,8 @@
   "id": "kilo",
   "name": "Kilo",
   "iconPath": "/icons/kilo.svg",
+  "iconPathLight": "/icons/kilo-light.svg",
+  "iconPathDark": "/icons/kilo-dark.svg",
   "distribution": {
     "type": "npm",
     "packageName": "@kilocode/cli",

@@ -3,6 +3,7 @@ import { ACPBridge } from '../../../utils/bridge';
 import { useAdapterUsage } from '../../../hooks/useAdapterUsage';
 import { UsageIcon } from './UsageIcon';
 import { GeminiUsage } from '../GeminiUsage';
+import { hasDisplayableQuotaReset } from '../shared/formatResetAt';
 
 export function GeminiChatUsage({ modelId }: { modelId?: string }) {
   const data = useAdapterUsage('gemini-cli');
@@ -12,6 +13,13 @@ export function GeminiChatUsage({ modelId }: { modelId?: string }) {
   const modelRef = useRef<string | undefined>();
 
   const activeModelId = modelId || currentModelId;
+
+  const matchesActiveModel = (bucketModelId: string) => {
+    if (!activeModelId) return false;
+    const bucket = bucketModelId.toLowerCase();
+    const model = activeModelId.toLowerCase();
+    return bucket === model || bucket === model.replace('gemini-', '') || model === bucket.replace('gemini-', '');
+  };
 
   useEffect(() => {
     const disposeAdapters = ACPBridge.onAdapters((e) => {
@@ -31,40 +39,22 @@ export function GeminiChatUsage({ modelId }: { modelId?: string }) {
     };
   }, []);
 
-  let hasData = false;
-  
+  let displayPct: number | null = null;
+
   if (data) {
     try {
       const parsed = JSON.parse(data);
-      const buckets = parsed?.quota?.buckets ?? [];
-      const validBuckets = buckets.filter((b: any) => 
-        !disabledRefs.current?.some(d => d && b.modelId.includes(d))
+      const buckets: any[] = parsed?.quota?.buckets ?? [];
+      const displayBuckets = buckets.filter((b: any) =>
+        !disabledRefs.current?.some(d => d && b.modelId.includes(d)) &&
+        hasDisplayableQuotaReset(b.resetTime)
       );
-      hasData = validBuckets.length > 0;
-    } catch {
-      hasData = false;
-    }
-  }
 
-  let displayPct: number | null = null;
-  if (data) {
-    try {
-      const p = JSON.parse(data);
-      const buckets: any[] = p?.quota?.buckets ?? [];
-      
-      // Try to find the bucket for the currently selected model (robust matching)
-      const activeBucket = activeModelId ? buckets.find(b => {
-        const bid = b.modelId.toLowerCase();
-        const mid = activeModelId.toLowerCase();
-        return bid === mid || bid === mid.replace('gemini-', '') || mid === bid.replace('gemini-', '');
-      }) : null;
-      
+      const activeBucket = activeModelId ? displayBuckets.find(b => matchesActiveModel(b.modelId)) : null;
       if (activeBucket && typeof activeBucket.remainingFraction === 'number') {
         displayPct = (1 - activeBucket.remainingFraction) * 100;
-      } else {
-        // Fallback: max used pct of enabled models
-        const vals = buckets
-          .filter((b: any) => !disabledRefs.current?.some(d => d && b.modelId.includes(d)))
+      } else if (!activeModelId) {
+        const vals = displayBuckets
           .map((b: any) => b.remainingFraction)
           .filter((v: any) => typeof v === 'number')
           .map((v: number) => (1 - v) * 100);
@@ -73,11 +63,11 @@ export function GeminiChatUsage({ modelId }: { modelId?: string }) {
     } catch {}
   }
 
-  if (!hasData) return null;
+  if (displayPct === null) return null;
 
   return (
     <UsageIcon percent={displayPct}>
-      <GeminiUsage disabledModels={disabledModels} stacked />
+      <GeminiUsage disabledModels={disabledModels} modelId={activeModelId} stacked />
     </UsageIcon>
   );
 }

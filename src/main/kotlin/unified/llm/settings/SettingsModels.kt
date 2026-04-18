@@ -58,7 +58,7 @@ data class GlobalSettings(
     val wslDistributionName: String = "",
     val audioNotificationsEnabled: Boolean = true,
     val uiFontSizeOffsetPx: Int = 0,
-    val userMessageBackgroundStyle: String = "accent",
+    val userMessageBackgroundStyle: String = "default",
     val audioTranscription: AudioTranscriptionSettings = AudioTranscriptionSettings(),
     val gitCommitGeneration: GitCommitGenerationSettings = GitCommitGenerationSettings()
 )

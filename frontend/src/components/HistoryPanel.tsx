@@ -5,6 +5,7 @@ import ConfirmationModal from './ConfirmationModal';
 import { RefreshCw, Trash2, Funnel, Pencil, Check, X, Terminal } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Checkbox } from './ui/Checkbox';
+import { LoadingSpinner } from './ui/LoadingSpinner';
 import { Tooltip } from './chat/shared/Tooltip';
 
 interface HistoryPanelProps {
@@ -457,7 +458,7 @@ export default function HistoryPanel({ availableAgents, onOpenSession }: History
                   >
                     <div className="flex flex-col items-center shrink-0 gap-0.5 pt-0.5 mx-0.5 max-[350px]:hidden">
                       {mainAgent?.iconPath ? (
-                        <img src={mainAgent.iconPath} alt={mainLabel} className="h-8 w-8 object-contain opacity-80" />
+                        <img src={mainAgent.iconPath} alt={mainLabel} className="h-7 w-7 object-contain opacity-80" />
                       ) : (
                         <div className="flex items-center justify-center rounded bg-background border border-border font-bold uppercase shrink-0 h-8 w-8 text-base">
                           {mainLabel.slice(0, 1)}
@@ -471,11 +472,8 @@ export default function HistoryPanel({ availableAgents, onOpenSession }: History
                             const iconLabel = adapter?.name || agentId;
                             if (adapter?.iconPath) {
                               return (
-                                <img
-                                  key={idx}
-                                  src={adapter.iconPath}
-                                  alt={iconLabel}
-                                  className="h-4 w-4 object-contain opacity-70 group-hover:opacity-100 transition-opacity"
+                                <img key={idx} src={adapter.iconPath} alt={iconLabel}
+                                  className="h-4 w-4 object-contain opacity-80 group-hover:opacity-100 transition-opacity"
                                 />
                               );
                             }
@@ -609,14 +607,13 @@ export default function HistoryPanel({ availableAgents, onOpenSession }: History
         }}
       />
 
-      {(pendingDeleteIds.length > 0 || isDeleting) && (
-        <div className="absolute inset-0 z-[90] flex items-center justify-center bg-black/40 transition-all duration-200">
-          {isDeleting && (
-            <div className="flex flex-col items-center gap-3 bg-[#2b2d30] border border-[#3b3b3b] p-5 rounded-lg shadow-xl text-[#DFDFDF]">
-              <RefreshCw className="w-6 h-6 animate-spin text-[#3574F0]" />
-              <span className="text-sm font-medium leading-none mt-1">Deleting...</span>
-            </div>
-          )}
+      {isDeleting && (
+        <div className="absolute inset-0 z-[90] flex items-center justify-center transition-all duration-200">
+          <div className="absolute inset-0 bg-black opacity-50" />
+          <div className="relative flex flex-col items-center gap-3 bg-[var(--ide-Panel-background)] border border-border p-5 rounded text-foreground">
+            <LoadingSpinner className="w-6 h-6 text-foreground-secondary" />
+            <span className="text-ide-small font-medium leading-none mt-1">Deleting...</span>
+          </div>
         </div>
       )}
     </div>

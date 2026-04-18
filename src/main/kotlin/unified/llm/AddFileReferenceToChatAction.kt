@@ -16,15 +16,15 @@ class AddFileReferenceToChatAction : AnAction(), DumbAware {
     override fun update(e: @NotNull AnActionEvent) {
         val project = e.project
         val virtualFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
-        val isUsableFile = virtualFile != null && !virtualFile.isDirectory && FileDocumentManager.getInstance().getDocument(virtualFile) != null
-        e.presentation.isEnabledAndVisible = project != null && isUsableFile
+        val isUsableReference = virtualFile != null &&
+            (virtualFile.isDirectory || FileDocumentManager.getInstance().getDocument(virtualFile) != null)
+        e.presentation.isEnabledAndVisible = project != null && isUsableReference
     }
 
     override fun actionPerformed(e: @NotNull AnActionEvent) {
         val project = e.project ?: return
         val virtualFile = e.getData(CommonDataKeys.VIRTUAL_FILE) ?: return
-        if (virtualFile.isDirectory) return
-        if (FileDocumentManager.getInstance().getDocument(virtualFile) == null) return
+        if (!virtualFile.isDirectory && FileDocumentManager.getInstance().getDocument(virtualFile) == null) return
 
         val reference = ExternalCodeReference(
             path = toProjectRelativePath(project, virtualFile.path),

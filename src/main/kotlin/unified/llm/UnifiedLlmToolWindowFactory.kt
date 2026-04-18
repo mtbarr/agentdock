@@ -135,7 +135,7 @@ class UnifiedLlmToolWindowFactory : ToolWindowFactory, DumbAware {
                                 try {
                                     @Suppress("UNCHECKED_CAST")
                                     val files = dtde.transferable.getTransferData(DataFlavor.javaFileListFlavor) as List<File>
-                                    files.filter { it.isFile }.forEach { file ->
+                                    files.filter { it.isFile || it.isDirectory }.forEach { file ->
                                         val reference = ExternalCodeReference(
                                             path = toProjectRelativePath(project, file.path),
                                             fileName = file.name

@@ -149,7 +149,8 @@ function App() {
         const next = prev.map((tab) => {
           if (tab.type !== 'chat') return tab;
 
-          const historyItem = historyByConversationId.get(tab.historySession?.conversationId || tab.conversationId);
+          const conversationKey = tab.historySession?.conversationId || tab.conversationId;
+          const historyItem = historyByConversationId.get(conversationKey);
           const nextTitle = historyItem?.title?.trim();
           if (!nextTitle || nextTitle === tab.title) {
             if (!historyItem || !tab.historySession) return tab;
@@ -165,6 +166,13 @@ function App() {
           }
 
           changed = true;
+          if (!tab.historySession) {
+            return {
+              ...tab,
+              title: nextTitle,
+            };
+          }
+
           return {
             ...tab,
             title: nextTitle,
@@ -628,15 +636,3 @@ function App() {
 }
 
 export default App;
-
-
-
-
-
-
-
-
-
-
-
-

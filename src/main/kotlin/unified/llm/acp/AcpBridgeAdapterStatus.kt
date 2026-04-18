@@ -3,9 +3,39 @@ package unified.llm.acp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
+import unified.llm.IdeTheme
 import unified.llm.utils.escapeForJsString
 
 private fun downloadProbeKey(target: AcpExecutionTarget, adapterId: String) = "${target.name}:$adapterId"
+
+private fun AcpAdapterConfig.AdapterInfo.resolveIconPath(): String? {
+    val themePath = if (IdeTheme.isDarkTheme()) iconPathDark else iconPathLight
+    return themePath?.takeIf { it.isNotBlank() } ?: iconPath
+}
+
+private fun iconMimeType(path: String): String {
+    val normalized = path.lowercase()
+    return when {
+        normalized.endsWith(".png") -> "image/png"
+        normalized.endsWith(".webp") -> "image/webp"
+        normalized.endsWith(".jpg") || normalized.endsWith(".jpeg") -> "image/jpeg"
+        else -> "image/svg+xml"
+    }
+}
+
+private fun loadIconDataUrl(path: String?): String {
+    val resourcePath = path?.takeIf { it.isNotBlank() } ?: return ""
+    return try {
+        val stream = AcpAdapterConfig::class.java.getResourceAsStream(resourcePath)
+        if (stream != null) {
+            val bytes = stream.use { it.readBytes() }
+            val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
+            "data:${iconMimeType(resourcePath)};base64,$b64"
+        } else ""
+    } catch (_: Exception) {
+        ""
+    }
+}
 
 internal fun AcpBridge.setDownloadProbeState(
     adapterId: String,
@@ -102,18 +132,7 @@ private fun AcpBridge.buildAdapterPayload(
     }
     val readyKnown = isReady != null
 
-    val iconBase64 = info.iconPath?.let { path ->
-        try {
-            val stream = AcpAdapterConfig::class.java.getResourceAsStream(path)
-            if (stream != null) {
-                val bytes = stream.use { it.readBytes() }
-                val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
-                "data:image/svg+xml;base64,$b64"
-            } else ""
-        } catch (_: Exception) {
-            ""
-        }
-    } ?: ""
+    val iconBase64 = loadIconDataUrl(info.resolveIconPath())
 
     val savedPreference = AcpAgentPreferencesStore.preferenceFor(info.id)
     val rawRuntimeMetadata = service.adapterRuntimeMetadata(info.id)

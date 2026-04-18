@@ -158,19 +158,26 @@ object UnifiedHistoryService {
         }
     }
 
-    private fun collectSessionListMeta(projectPath: String): List<SessionMeta> {
-        val project = findOpenProject(projectPath) ?: return emptyList()
+    private fun collectSessionListMeta(projectPath: String): AvailableSessionMetaResult {
+        val project = findOpenProject(projectPath) ?: return AvailableSessionMetaResult(emptyList(), emptySet())
         val service = AcpClientService.getInstance(project)
         val adapters = AcpAdapterConfig.getAllAdapters().values
             .filter { it.supportsSessionList }
             .filter { AcpAdapterPaths.isDownloaded(it.id) }
 
-        return runBlocking<List<SessionMeta>> {
-            adapters.flatMap { adapterInfo ->
+        return runBlocking {
+            val sessions = mutableListOf<SessionMeta>()
+            val scannedAdapters = linkedSetOf<String>()
+            adapters.forEach { adapterInfo ->
+                if (!service.isAdapterReady(adapterInfo.id)) return@forEach
                 runCatching {
                     service.listHistorySessions(adapterInfo, projectPath)
-                }.getOrDefault(emptyList<SessionMeta>())
+                }.onSuccess { adapterSessions ->
+                    sessions.addAll(adapterSessions)
+                    scannedAdapters.add(adapterInfo.id)
+                }
             }
+            AvailableSessionMetaResult(sessions, scannedAdapters)
         }
     }
 
@@ -259,6 +266,10 @@ object UnifiedHistoryService {
     private fun writeEphemeralSessions(projectPath: String, entries: List<EphemeralSessionEntry>) {
         if (projectPath.isBlank()) return
         val file = ephemeralSessionsFile(projectPath)
+        if (entries.isEmpty()) {
+            deleteFileIfExists(file)
+            return
+        }
         val parent = file.parentFile
         if (!parent.exists()) parent.mkdirs()
         file.writeText(indexJson.encodeToString(entries))
@@ -353,6 +364,49 @@ object UnifiedHistoryService {
             session.copy(prompts = session.prompts.map(::normalizeReplayPrompt))
         }
         return data.copy(sessions = normalizedSessions)
+    }
+
+    private fun hasIndexedConversationSession(
+        projectPath: String,
+        conversationId: String,
+        sessionId: String,
+        adapterName: String
+    ): Boolean {
+        val currentWslDistributionName = currentWslDistributionName()
+        return readExistingProjectIndex(projectPath).any { conversation ->
+            conversation.id == conversationId &&
+                ((conversation.wslDistributionName ?: "") == (currentWslDistributionName ?: "")) &&
+                conversation.sessions.any { session ->
+                    session.sessionId == sessionId && session.adapterName == adapterName
+                }
+        }
+    }
+
+    private fun titleCandidateFromPromptBlocks(blocks: List<JsonObject>): String? {
+        val text = blocks.asSequence()
+            .mapNotNull { block ->
+                val type = (block["type"] as? JsonPrimitive)?.content
+                if (type != "text") return@mapNotNull null
+                (block["text"] as? JsonPrimitive)?.content
+            }
+            .joinToString("")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (text.isBlank()) return null
+        return if (text.length <= 64) text else "${text.take(64)}..."
+    }
+
+    private fun titleCandidateFromReplayData(data: ConversationReplayData): String? {
+        val firstPromptBlocks = data.sessions.asSequence()
+            .flatMap { session -> session.prompts.asSequence() }
+            .firstOrNull()
+            ?.blocks
+            ?: return null
+        return titleCandidateFromPromptBlocks(firstPromptBlocks)
+    }
+
+    private fun replayPromptCount(data: ConversationReplayData): Int {
+        return data.sessions.sumOf { session -> session.prompts.size }
     }
 
     private fun latestConversationSourceSessionFile(projectPath: String, conversationId: String): File? {
@@ -613,7 +667,20 @@ object UnifiedHistoryService {
             )
         }
 
-        writeConversationData(file, current.copy(sessions = updatedSessions))
+        val updatedData = current.copy(sessions = updatedSessions)
+        writeConversationData(file, updatedData)
+
+        if (!hasIndexedConversationSession(cleanProjectPath, cleanConversationId, cleanSessionId, cleanAdapterName)) {
+            upsertRuntimeSessionMetadata(
+                projectPath = cleanProjectPath,
+                conversationId = cleanConversationId,
+                sessionId = cleanSessionId,
+                adapterName = cleanAdapterName,
+                promptCount = replayPromptCount(updatedData),
+                titleCandidate = titleCandidateFromReplayData(updatedData),
+                touchUpdatedAt = true
+            )
+        }
         return true
     }
 
@@ -906,22 +973,48 @@ object UnifiedHistoryService {
         }
     }
 
-    private fun collectSyncedAvailableSessionMeta(projectPath: String): List<SessionMeta> {
+    private fun pruneStaleEphemeralSessions(
+        projectPath: String,
+        scannedAdapters: Set<String>,
+        availableKeys: Set<String>
+    ) {
+        if (scannedAdapters.isEmpty()) return
+        val existing = readEphemeralSessions(projectPath)
+        val remaining = existing.filter { entry ->
+            entry.adapterName !in scannedAdapters || "${entry.adapterName}:${entry.sessionId}" in availableKeys
+        }
+        if (remaining.size != existing.size) {
+            writeEphemeralSessions(projectPath, remaining)
+        }
+    }
+
+    private fun collectSyncedAvailableSessionMeta(projectPath: String): AvailableSessionMetaResult {
         val result = mutableListOf<SessionMeta>()
+        val scannedAdapters = linkedSetOf<String>()
         val ephemeralKeys = readEphemeralSessions(projectPath)
             .associateBy { "${it.adapterName}:${it.sessionId}" }
 
-        result.addAll(collectSessionListMeta(projectPath))
+        val acpSessions = collectSessionListMeta(projectPath)
+        result.addAll(acpSessions.sessions)
+        scannedAdapters.addAll(acpSessions.scannedAdapters)
 
         AdapterHistoryRegistry.all().forEach { history ->
             if (runCatching { AcpAdapterConfig.getAdapterInfo(history.adapterId).supportsSessionList }.getOrDefault(true)) {
                 return@forEach
             }
             if (!AcpAdapterPaths.isDownloaded(history.adapterId)) return@forEach
-            result.addAll(runCatching { history.collectSessions(projectPath) }.getOrDefault(emptyList()))
+            runCatching {
+                history.collectSessions(projectPath)
+            }.onSuccess { sessions ->
+                result.addAll(sessions)
+                scannedAdapters.add(history.adapterId)
+            }
         }
 
-        return result
+        val availableKeys = result.mapTo(hashSetOf()) { "${it.adapterName}:${it.sessionId}" }
+        pruneStaleEphemeralSessions(projectPath, scannedAdapters, availableKeys)
+
+        val visibleSessions = result
             .filterNot { meta ->
                 val key = "${meta.adapterName}:${meta.sessionId}"
                 if (ephemeralKeys[key] == null) return@filterNot false
@@ -930,6 +1023,8 @@ object UnifiedHistoryService {
             }
             .sortedByDescending { it.updatedAt }
             .distinctBy { "${it.adapterName}:${it.sessionId}" }
+
+        return AvailableSessionMetaResult(visibleSessions, scannedAdapters)
     }
 
     private fun scheduleEphemeralSessionDeletion(projectPath: String, session: SessionMeta) {
@@ -938,12 +1033,12 @@ object UnifiedHistoryService {
 
         backgroundScope.launch {
             try {
-                val history = AdapterHistoryRegistry.get(session.adapterName)
-                val deleted = history?.deleteSession(
+                val deleted = SessionListDeleteSupport.deleteSession(
                     projectPath = projectPath,
+                    adapterName = session.adapterName,
                     sessionId = session.sessionId,
                     sourceFilePath = session.filePath.takeIf { it.isNotBlank() }
-                ) == true
+                )
                 if (deleted) {
                     removeEphemeralSession(projectPath, session.adapterName, session.sessionId)
                 }
@@ -969,7 +1064,8 @@ object UnifiedHistoryService {
         val currentWslDistributionName = currentWslDistributionName()
         val untouchedConversations = existing.filterNot { matchesCurrentHistoryEnvironment(it, currentWslDistributionName) }
         val targetConversations = existing.filter { matchesCurrentHistoryEnvironment(it, currentWslDistributionName) }
-        val availableSessions = collectSyncedAvailableSessionMeta(projectPath)
+        val availableSessionResult = collectSyncedAvailableSessionMeta(projectPath)
+        val availableSessions = availableSessionResult.sessions
 
         val availableByKey = availableSessions.associateBy { "${it.adapterName}:${it.sessionId}" }
         val keptKeys = linkedSetOf<String>()

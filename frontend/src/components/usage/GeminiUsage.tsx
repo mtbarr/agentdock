@@ -1,7 +1,7 @@
 import { useAdapterUsage } from '../../hooks/useAdapterUsage';
 import { UsageMetricRow } from './shared/UsageMetricRow';
 import { clampPercent, formatUsagePercent } from './shared/quotaVisuals';
-import { formatResetAt } from './shared/formatResetAt';
+import { formatResetAt, hasDisplayableQuotaReset } from './shared/formatResetAt';
 
 const usageLinkClassName = 'text-link hover:underline focus:outline-none focus-visible:rounded-[3px] focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]';
 
@@ -17,7 +17,21 @@ interface GeminiUsageData {
 
 const AGENT_ID = 'gemini-cli';
 
-export function GeminiUsage({ disabledModels, stacked = false }: { disabledModels?: string[]; stacked?: boolean }) {
+function matchesModel(bucketModelId: string, modelId: string): boolean {
+  const bucket = bucketModelId.toLowerCase();
+  const model = modelId.toLowerCase();
+  return bucket === model || bucket === model.replace('gemini-', '') || model === bucket.replace('gemini-', '');
+}
+
+export function GeminiUsage({
+  disabledModels,
+  modelId,
+  stacked = false,
+}: {
+  disabledModels?: string[];
+  modelId?: string;
+  stacked?: boolean;
+}) {
   const data = useAdapterUsage(AGENT_ID);
 
   if (!data) return null;
@@ -30,7 +44,9 @@ export function GeminiUsage({ disabledModels, stacked = false }: { disabledModel
   }
 
   const buckets = (usage?.quota?.buckets ?? []).filter(b =>
-    !disabledModels?.some(d => d && b.modelId.includes(d))
+    !disabledModels?.some(d => d && b.modelId.includes(d)) &&
+    hasDisplayableQuotaReset(b.resetTime) &&
+    (!modelId || matchesModel(b.modelId, modelId))
   );
 
   if (buckets.length === 0) return (

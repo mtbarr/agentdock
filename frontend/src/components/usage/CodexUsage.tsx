@@ -1,7 +1,7 @@
 import { useAdapterUsage } from '../../hooks/useAdapterUsage';
 import { UsageMetricRow } from './shared/UsageMetricRow';
 import { clampPercent, formatUsagePercent } from './shared/quotaVisuals';
-import { formatResetAt } from './shared/formatResetAt';
+import { formatResetAt, hasDisplayableQuotaResetAfterSeconds } from './shared/formatResetAt';
 
 const usageLinkClassName = 'text-link hover:underline focus:outline-none focus-visible:rounded-[3px] focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]';
 
@@ -70,8 +70,14 @@ export function CodexUsage({ stacked = false }: { stacked?: boolean }) {
     return null;
   }
 
-  const primaryWindow = isCodexWindow(usage?.rate_limit?.primary_window) ? usage.rate_limit!.primary_window : null;
-  const secondaryWindow = isCodexWindow(usage?.rate_limit?.secondary_window) ? usage.rate_limit!.secondary_window : null;
+  const rawPrimaryWindow = usage?.rate_limit?.primary_window;
+  const rawSecondaryWindow = usage?.rate_limit?.secondary_window;
+  const primaryWindow = isCodexWindow(rawPrimaryWindow) && hasDisplayableQuotaResetAfterSeconds(rawPrimaryWindow.reset_after_seconds)
+    ? rawPrimaryWindow
+    : null;
+  const secondaryWindow = isCodexWindow(rawSecondaryWindow) && hasDisplayableQuotaResetAfterSeconds(rawSecondaryWindow.reset_after_seconds)
+    ? rawSecondaryWindow
+    : null;
   const { primaryLabel, secondaryLabel } = labelsForWindows(primaryWindow, secondaryWindow);
 
   if (!primaryWindow && !secondaryWindow) {

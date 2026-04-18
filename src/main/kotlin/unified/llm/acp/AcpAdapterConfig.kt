@@ -86,6 +86,8 @@ object AcpAdapterConfig {
         val id: String = "", // Filled after parsing
         val name: String,
         val iconPath: String? = null,
+        val iconPathLight: String? = null,
+        val iconPathDark: String? = null,
         val supportsSessionList: Boolean = true,
         val distribution: Distribution,
         val launchPath: String = "",

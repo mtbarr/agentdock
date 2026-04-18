@@ -101,9 +101,10 @@ export const ExploringBlock: React.FC<Props> = ({ block, isActivePrompt = false 
           return <SearchActivity key={entry.toolCallId || i} entry={entry} />;
         }
         if (entry.kind === 'execute') {
+          let type = block.entries.length > 1 ? 'exploring' : 'single-exploring';
           return (
             <div key={entry.toolCallId || i} className="py-1">
-              <ExecuteBlock block={{ type: 'tool_call', entry, isReplay: block.isReplay }} isActivePrompt={isActivePrompt} />
+              <ExecuteBlock type={type} block={{ type: 'tool_call', entry, isReplay: block.isReplay }} isActivePrompt={isActivePrompt} />
             </div>
           );
         }

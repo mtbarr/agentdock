@@ -432,7 +432,7 @@ export interface GlobalSettings {
   wslDistributionName: string;
   audioNotificationsEnabled: boolean;
   uiFontSizeOffsetPx: number;
-  userMessageBackgroundStyle: 'background-secondary' | 'primary' | 'secondary' | 'accent' | 'input' | 'editor-bg';
+  userMessageBackgroundStyle: 'default' | 'background-secondary' | 'primary' | 'secondary' | 'accent' | 'input' | 'editor-bg';
   audioTranscription: AudioTranscriptionSettings;
   gitCommitGeneration: GitCommitGenerationSettings;
 }

@@ -128,9 +128,10 @@ export const AssistantMessage = memo(({ message, onImageClick, showBorder, agent
   const hasMetaTooltip = tooltipRows.length > 0;
 
   const agentBadge = agentIconPath ? (
-    <img src={agentIconPath} alt={message.agentName || 'Agent'} className="w-5 h-5 opacity-90"/>
+    <img src={agentIconPath} alt={message.agentName || 'Agent'} className="w-4 h-4 opacity-80"/>
   ) : (
-    <div className="w-6 h-6 rounded-sm bg-background-secondary border border-border flex items-center justify-center text-[9px] font-semibold uppercase opacity-80">
+    <div className="w-4 h-4 rounded bg-background-secondary border border-border flex items-center justify-center
+      text-[9px] font-semibold uppercase opacity-80">
       {(message.agentName || '?').slice(0, 1)}
     </div>
   );

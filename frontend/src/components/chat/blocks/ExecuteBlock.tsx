@@ -10,6 +10,7 @@ const TerminalIcon = () => (<SquareTerminal size={16} className="text-primary" /
 
 interface Props {
   block: ToolCallBlock;
+  type?: string
   isActivePrompt?: boolean;
 }
 
@@ -28,7 +29,7 @@ function pickLastString(value: unknown): string | null {
   return null;
 }
 
-export const ExecuteBlock: React.FC<Props> = ({ block, isActivePrompt = false }) => {
+export const ExecuteBlock: React.FC<Props> = ({ block, isActivePrompt = false, type = null }) => {
   const { isPending, isError, isFinished } = parseToolStatus(block.entry.status);
   const showPending = isPending && isActivePrompt;
   const showFinished = isFinished || !showPending;
@@ -62,10 +63,11 @@ export const ExecuteBlock: React.FC<Props> = ({ block, isActivePrompt = false })
   }, [block.entry.rawJson, block.entry.title, block.entry.kind]);
 
   return (
-    <div className="border border-border rounded-[6px] overflow-hidden">
+    <div className={`border border-border rounded-[6px] overflow-hidden 
+      ${type === 'single-exploring' ? '-mt-2' : type === 'exploring' ? '' : 'mb-2'}`}>
       <button onClick={toggle} className={`flex items-center gap-2 w-full px-3 h-9 bg-editor-bg ${chatInsetFocusClassName}`}>
-        <div className="flex-shrink-0"><TerminalIcon /></div>
-        <div className="flex-1 text-left font-mono truncate pr-2">{command}</div>
+        <div className="flex-shrink-0 grayscale"><TerminalIcon /></div>
+        <div className="flex-1 text-left font-mono truncate pr-2 text-foreground">{command}</div>
         <div className="flex-shrink-0 flex items-center gap-2">
           {(showPending || isError) && (
             <div className={`w-2.5 h-2.5 rounded-full ${showPending ? 'bg-warning animate-pulse' : 'bg-error'}`}/>

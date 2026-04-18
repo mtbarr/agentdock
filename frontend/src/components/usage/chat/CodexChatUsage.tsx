@@ -1,6 +1,7 @@
 import { useAdapterUsage } from '../../../hooks/useAdapterUsage';
 import { UsageIcon } from './UsageIcon';
 import { CodexUsage } from '../CodexUsage';
+import { hasDisplayableQuotaResetAfterSeconds } from '../shared/formatResetAt';
 
 export function CodexChatUsage() {
   const data = useAdapterUsage('codex');
@@ -15,8 +16,14 @@ export function CodexChatUsage() {
         const primary = parsed.rate_limit.primary_window;
         const secondary = parsed.rate_limit.secondary_window;
 
-        const hasPrimary = primary && typeof primary.used_percent === 'number';
-        const hasSecondary = secondary && typeof secondary.used_percent === 'number';
+        const hasPrimary = primary &&
+          typeof primary.used_percent === 'number' &&
+          typeof primary.reset_after_seconds === 'number' &&
+          hasDisplayableQuotaResetAfterSeconds(primary.reset_after_seconds);
+        const hasSecondary = secondary &&
+          typeof secondary.used_percent === 'number' &&
+          typeof secondary.reset_after_seconds === 'number' &&
+          hasDisplayableQuotaResetAfterSeconds(secondary.reset_after_seconds);
         if (!hasPrimary && !hasSecondary) {
           hasData = false;
         } else {

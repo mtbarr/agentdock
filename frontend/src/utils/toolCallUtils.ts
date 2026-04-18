@@ -80,17 +80,6 @@ export function extractToolCallDiffEntries(
   }];
 }
 
-function stripExecuteMarkdown(text: string): string {
-  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const lines = normalized.split('\n');
-  const withoutFences = lines.filter((line, index) => {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('```')) return true;
-    return index !== 0 && index !== lines.length - 1;
-  }).join('\n');
-  return withoutFences.replace(/```+/g, '').replace(/`/g, '').trim();
-}
-
 function isExecutePermissionPayload(json: Record<string, any>): boolean {
   if ((json.kind || '').toLowerCase() !== 'execute') return false;
   const rawInput = json.rawInput;
@@ -124,36 +113,26 @@ export function extractResultTexts(json: Record<string, any>): string | undefine
   return texts.join('\n\n');
 }
 
-const MAX_TOOL_OUTPUT_LINES = 200;
+const MAX_TOOL_OUTPUT_LINES = 600;
+const MAX_TOOL_OUTPUT_CHARS = 10000;
+const TOOL_OUTPUT_REMOVED_NOTICE = '[Output removed]';
 
-export function truncateToolOutput(text: string, maxLines: number = MAX_TOOL_OUTPUT_LINES): { text: string; truncated: boolean; originalLength: number } {
-  const lines = text.split(/\r\n|\n|\r/);
-  const originalLength = lines.length;
-  if (originalLength <= maxLines) return { text, truncated: false, originalLength };
-  const head = lines.slice(0, maxLines).join('\n');
-  const omitted = originalLength - maxLines;
-  const suffix = `\n\n[Output truncated to ${maxLines} lines; ${omitted} lines omitted]`;
-  return { text: head + suffix, truncated: true, originalLength };
+export function truncateToolOutputForKind(text: string, kind?: string): { text: string; truncated: boolean; originalLength: number } {
+  const originalLength = text.split(/\r\n|\n|\r/).length;
+  if ((kind || '').toLowerCase() === 'edit') {
+    return { text, truncated: false, originalLength };
+  }
+  if (originalLength > MAX_TOOL_OUTPUT_LINES || text.length > MAX_TOOL_OUTPUT_CHARS) {
+    return { text: TOOL_OUTPUT_REMOVED_NOTICE, truncated: true, originalLength };
+  }
+  return { text, truncated: false, originalLength };
 }
 
-export function truncateToolOutputForKind(text: string, kind?: string, maxLines: number = MAX_TOOL_OUTPUT_LINES): { text: string; truncated: boolean; originalLength: number } {
-  if ((kind || '').toLowerCase() !== 'execute') {
-    return truncateToolOutput(text, maxLines);
-  }
-
-  const originalLines = text.split(/\r\n|\n|\r/);
-  if (originalLines.length <= maxLines) {
-    return { text, truncated: false, originalLength: originalLines.length };
-  }
-
-  return truncateToolOutput(stripExecuteMarkdown(text), maxLines);
-}
-
-export function appendToolOutput(prev: string | undefined, next: string, maxLines: number = MAX_TOOL_OUTPUT_LINES, kind?: string): { text: string; truncated: boolean; originalLength: number } {
+export function appendToolOutput(prev: string | undefined, next: string, _maxLines?: number, kind?: string): { text: string; truncated: boolean; originalLength: number } {
   const combined = prev ? `${prev}\n\n${next}` : next;
-  return truncateToolOutputForKind(combined, kind, maxLines);
+  return truncateToolOutputForKind(combined, kind);
 }
 
-export function replaceToolOutput(next: string, maxLines: number = MAX_TOOL_OUTPUT_LINES, kind?: string): { text: string; truncated: boolean; originalLength: number } {
-  return truncateToolOutputForKind(next, kind, maxLines);
+export function replaceToolOutput(next: string, _maxLines?: number, kind?: string): { text: string; truncated: boolean; originalLength: number } {
+  return truncateToolOutputForKind(next, kind);
 }

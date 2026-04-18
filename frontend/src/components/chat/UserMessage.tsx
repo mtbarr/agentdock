@@ -119,6 +119,9 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
                   startLine={codeRef.startLine}
                   endLine={codeRef.endLine}
                   onClick={() => handleOpenFile(codeRef.path, codeRef.startLine)}
+                  flushLeft={idx === 0}
+                  showTooltip={false}
+                  className="top-[-2px]"
                 />
               );
             }
@@ -163,25 +166,21 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
   return (
     <div className="flex flex-col mb-8 animate-in fade-in slide-in-from-bottom-2">
       <div className="flex justify-end relative">
-        <div className="user-message-bubble bg-accent rounded-[6px] group max-w-[85%] text-primary-foreground px-3 py-2"
+        <div className="user-message-bubble bg-accent rounded-[6px] group max-w-[85%] px-3 py-2 text-foreground"
           style={{backgroundColor: 'var(--user-message-bg)',}}
         >
-          <div className="opacity-90">
-            <div className="relative">
+          <div>
+            <div className="relative brightness-[120%]">
               <div ref={contentRef}
                 className={`break-words transition-[max-height] duration-500 ease-in-out overflow-hidden ${
-                  isLargeContent && !isExpanded ? 'max-h-[220px]' : 'max-h-[5000px]'
+                  isLargeContent && !isExpanded
+                    ? 'max-h-[220px] [mask-image:linear-gradient(to_bottom,black_calc(100%-64px),transparent)] [-webkit-mask-image:linear-gradient(to_bottom,black_calc(100%-64px),transparent)]'
+                    : 'max-h-[5000px]'
                 }`}
                 style={{ maxHeight: isLargeContent ? undefined : 'none' }}
               >
                 {renderContent()}
               </div>
-
-              {!isExpanded && isLargeContent && (
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t
-                  from-[var(--user-message-bg)] via-[color-mix(in_srgb,var(--user-message-bg),transparent_10%)]
-                  to-transparent" />
-              )}
             </div>
 
             {renderTrailingAttachments()}
@@ -190,7 +189,7 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
               <div className={`mt-1 flex items-center gap-3 ${showCollapseToggle ? 'justify-between' : 'justify-end'}`}>
                 {showCollapseToggle && (
                   <button type="button" onClick={() => setIsExpanded(!isExpanded)}
-                    className="inline-flex items-center gap-1 text-xs opacity-75 hover:underline
+                    className="inline-flex items-center gap-1 text-xs text-foreground hover:underline
                     focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
                   >
                     {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -198,7 +197,7 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
                   </button>
                 )}
 
-                <div className="flex items-center gap-1.5 text-xs opacity-75">
+                <div className="flex items-center gap-1.5 text-xs text-foreground">
                   {promptNumber !== undefined && <span>{`#${promptNumber}`}</span>}
                   {promptNumber !== undefined && formattedTime && <span aria-hidden="true">•</span>}
                   {formattedTime && <span>{formattedTime}</span>}

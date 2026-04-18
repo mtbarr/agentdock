@@ -16,7 +16,7 @@ const defaultGlobalSettings: GlobalSettingsPayload = {
     wslDistributionName: '',
     audioNotificationsEnabled: true,
     uiFontSizeOffsetPx: 0,
-    userMessageBackgroundStyle: 'accent',
+    userMessageBackgroundStyle: 'default',
     audioTranscription: { language: 'auto' },
     gitCommitGeneration: { enabled: false, adapterId: '', modelId: '', instructions: '' },
   },
@@ -55,7 +55,7 @@ function normalizeGlobalSettings(payload: Partial<GlobalSettingsPayload> | undef
       uiFontSizeOffsetPx,
       userMessageBackgroundStyle: userMessageBackgroundOptions.some((option) => option.id === payload?.settings?.userMessageBackgroundStyle)
         ? payload!.settings!.userMessageBackgroundStyle
-        : 'accent',
+        : 'default',
       audioTranscription: payload?.settings?.audioTranscription ?? { language: 'auto' },
       gitCommitGeneration: normalizeGitCommitGenerationSettings(payload?.settings?.gitCommitGeneration),
     },
@@ -81,6 +81,7 @@ const userMessageBackgroundOptions: Array<{
   background: string;
   toneClass: string;
 }> = [
+  { id: 'default', background: 'var(--ide-user-message-default-bg)', toneClass: 'bg-[var(--ide-user-message-default-bg)]' },
   { id: 'background-secondary', background: 'var(--ide-background-secondary)', toneClass: 'bg-background-secondary' },
   { id: 'primary', background: 'var(--ide-Button-default-startBackground)', toneClass: 'bg-primary' },
   { id: 'secondary', background: 'var(--ide-Button-startBackground)', toneClass: 'bg-secondary' },
@@ -110,7 +111,7 @@ const whisperLanguageOptions: DropdownOption[] = [
 ];
 
 function applyUserMessageTheme(styleId: GlobalSettingsPayload['settings']['userMessageBackgroundStyle']) {
-  const selected = userMessageBackgroundOptions.find((option) => option.id === styleId) ?? userMessageBackgroundOptions[3];
+  const selected = userMessageBackgroundOptions.find((option) => option.id === styleId) ?? userMessageBackgroundOptions[0];
   document.documentElement.style.setProperty('--user-message-bg', selected.background);
 }
 

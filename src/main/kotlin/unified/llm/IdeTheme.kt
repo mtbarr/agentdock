@@ -18,6 +18,8 @@ object IdeTheme {
         val colorProps: List<String> = emptyList()
     )
 
+    fun isDarkTheme(): Boolean = !JBColor.isBright()
+
     private val uiComponents = linkedMapOf(
         "Panel" to UiComponentDef(listOf("background", "foreground")),
         "Label" to UiComponentDef(listOf("background", "foreground", "disabledForeground", "infoForeground", "errorForeground", "warningForeground")),
@@ -107,7 +109,9 @@ object IdeTheme {
         }
 
         // 6. Dynamic background variations
-        val isDark = !JBColor.isBright()
+        val isDark = isDarkTheme()
+        sb.append("  --ide-theme-is-dark: ${if (isDark) "1" else "0"};\n")
+        val defaultUserMessageBackground = if (isDark) Color(0x25, 0x32, 0x4d) else Color(0xe1, 0xea, 0xfd)
 
         // Secondary: use editor background if different from panel, otherwise calculate
         val secondaryBackground = if (areColorsSimilar(baseBackground, editorBackground)) {
@@ -118,6 +122,7 @@ object IdeTheme {
             editorBackground
         }
         sb.append("  --ide-background-secondary: ${toCssColor(secondaryBackground)};\n")
+        sb.append("  --ide-user-message-default-bg: ${toCssColor(defaultUserMessageBackground)};\n")
         sb.append("  --ide-surface-hover-filter: ${if (isDark) "brightness(1.3)" else "brightness(0.98)"};\n")
         sb.append("  --ide-surface-active-filter: ${if (isDark) "brightness(1.3)" else "brightness(0.98)"};\n")
 
@@ -146,6 +151,7 @@ object IdeTheme {
 
         val userMessageStyle = GlobalSettingsStore.userMessageBackgroundStyle()
         val userMessageBackgroundVar = when (userMessageStyle) {
+            "default" -> "--ide-user-message-default-bg"
             "background-secondary" -> "--ide-background-secondary"
             "primary" -> "--ide-Button-default-startBackground"
             "secondary" -> "--ide-Button-startBackground"

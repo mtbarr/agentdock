@@ -1,8 +1,30 @@
-export function formatResetAt(value: string | number | null | undefined): string | null {
+const MAX_QUOTA_RESET_FUTURE_MS = 100 * 24 * 60 * 60 * 1000;
+const MAX_QUOTA_RESET_FUTURE_SECONDS = MAX_QUOTA_RESET_FUTURE_MS / 1000;
+
+function parseResetAtTime(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined) return null;
 
-  const date = typeof value === 'number' ? new Date(value) : new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+export function hasDisplayableQuotaReset(value: string | number | null | undefined, now = Date.now()): boolean {
+  const time = parseResetAtTime(value);
+  if (time === null) return false;
+
+  const delta = time - now;
+  return delta >= 0 && delta <= MAX_QUOTA_RESET_FUTURE_MS;
+}
+
+export function hasDisplayableQuotaResetAfterSeconds(seconds: number): boolean {
+  return seconds >= 0 && seconds <= MAX_QUOTA_RESET_FUTURE_SECONDS;
+}
+
+export function formatResetAt(value: string | number | null | undefined): string | null {
+  const time = parseResetAtTime(value);
+  if (time === null) return null;
+
+  const date = new Date(time);
 
   try {
     const parts = new Intl.DateTimeFormat(undefined, {

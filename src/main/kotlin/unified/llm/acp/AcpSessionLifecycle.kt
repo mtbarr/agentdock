@@ -155,6 +155,7 @@ internal suspend fun AcpClientService.startAgent(
                     try {
                         sess.setModel(ModelId(selectedModelId))
                         context.activeModelIdRef.set(selectedModelId)
+                        AcpAgentPreferencesStore.rememberModel(requestedAdapterName, selectedModelId)
                     } catch (e: Exception) {
                     }
                 }
@@ -166,6 +167,7 @@ internal suspend fun AcpClientService.startAgent(
                     try {
                         sess.setMode(SessionModeId(currentModeId))
                         context.activeModeIdRef.set(currentModeId)
+                        AcpAgentPreferencesStore.rememberMode(requestedAdapterName, currentModeId)
                     } catch (e: Exception) {
                     }
                 }
@@ -371,12 +373,13 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
 internal suspend fun AcpClientService.setModel(chatId: String, modelId: String): Boolean {
     val context = sessions[chatId] ?: return false
     val trimmedModelId = modelId.trim()
+    val adapterName = context.activeAdapterNameRef.get() ?: return false
     val currentModelId = context.activeModelIdRef.get()
     if (currentModelId == trimmedModelId) {
+        AcpAgentPreferencesStore.rememberModel(adapterName, trimmedModelId)
         return true
     }
 
-    val adapterName = context.activeAdapterNameRef.get() ?: return false
     val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
 
     return when (adapterInfo.modelChangeStrategy) {
@@ -415,7 +418,11 @@ internal suspend fun AcpClientService.setModel(chatId: String, modelId: String):
 internal suspend fun AcpClientService.setMode(chatId: String, modeId: String): Boolean {
     val context = sessions[chatId] ?: return false
     val trimmedModeId = modeId.trim()
+    val adapterName = context.activeAdapterNameRef.get()
     if (context.activeModeIdRef.get() == trimmedModeId) {
+        if (!adapterName.isNullOrBlank()) {
+            AcpAgentPreferencesStore.rememberMode(adapterName, trimmedModeId)
+        }
         return true
     }
 
@@ -425,7 +432,6 @@ internal suspend fun AcpClientService.setMode(chatId: String, modeId: String): B
             sess.setMode(SessionModeId(trimmedModeId))
         }
         context.activeModeIdRef.set(trimmedModeId)
-        val adapterName = context.activeAdapterNameRef.get()
         if (!adapterName.isNullOrBlank()) {
             AcpAgentPreferencesStore.rememberMode(adapterName, trimmedModeId)
             adapterRuntimeMetadataMap[adapterName]?.let { metadata ->

@@ -1,7 +1,7 @@
 import { useAdapterUsage } from '../../hooks/useAdapterUsage';
 import { UsageMetricRow } from './shared/UsageMetricRow';
 import { clampPercent } from './shared/quotaVisuals';
-import { formatResetAt } from './shared/formatResetAt';
+import { formatResetAt, hasDisplayableQuotaReset } from './shared/formatResetAt';
 
 const usageLinkClassName = 'text-link hover:underline focus:outline-none focus-visible:rounded-[3px] focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]';
 
@@ -57,12 +57,21 @@ export function CopilotUsage() {
     return null;
   }
 
+  const resetAt = usage?.quota_reset_date_utc ?? usage?.quota_reset_date;
+  if (!hasDisplayableQuotaReset(resetAt)) {
+    return (
+      <div className="text-foreground-secondary">
+        Usage quotas: <button type="button" onClick={() => window.__openUrl?.(BILLING_URL)} className={usageLinkClassName}>{BILLING_URL}</button>
+      </div>
+    );
+  }
+
   const entitlement = typeof premium.entitlement === 'number' ? premium.entitlement : null;
   const remaining = typeof premium.remaining === 'number' ? premium.remaining : null;
   const used = entitlement !== null && remaining !== null ? Math.max(0, entitlement - remaining) : null;
   const percentRemaining = typeof premium.percent_remaining === 'number' ? premium.percent_remaining : null;
   const percentUsed = percentRemaining !== null ? clampPercent(100 - percentRemaining) : null;
-  const resetLabel = formatResetAt(usage?.quota_reset_date_utc ?? usage?.quota_reset_date);
+  const resetLabel = formatResetAt(resetAt);
   const metaParts = [
     remaining !== null ? `${remaining} left` : null,
     resetLabel ? `Resets: ${resetLabel}` : null,

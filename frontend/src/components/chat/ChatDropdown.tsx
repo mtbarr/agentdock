@@ -229,12 +229,9 @@ export default function ChatDropdown({
   };
 
   return (
-    <div ref={rootRef} className={`text-ide-small relative inline-flex min-w-0 items-stretch h-full overflow-visible ${minWidthClass} ${className}`}>
-      <button
-        ref={triggerRef}
-        type="button"
-        disabled={disabled}
-        onClick={handleTriggerClick}
+    <div ref={rootRef} className={`text-ide-small relative inline-flex min-w-0 items-stretch h-full overflow-visible 
+      ${minWidthClass} ${className}`}>
+      <button ref={triggerRef} type="button" disabled={disabled} onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
         className={`inline-flex max-w-full appearance-none border-0 items-center 
           ${collapsed ? 'justify-center gap-0.5' : 'justify-start gap-1 min-w-0'} 
@@ -244,26 +241,12 @@ export default function ChatDropdown({
           focus-visible:text-foreground focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] 
           ${open ? 'bg-hover' : 'hover:text-foreground hover:bg-hover'}`}
       >
-        {customTrigger ? (
-          customTrigger
-        ) : (
+        {customTrigger ? (customTrigger) : (
           <>
-            {renderIcon(selectedOption, "w-4 h-4 shrink-0")}
-            {!collapsed && (
-              <span className="min-w-0 max-w-[120px] truncate">
-                {selectedText}
-              </span>
-            )}
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+            {renderIcon(selectedOption, "w-4 h-4 shrink-0 mr-0.5 opacity-80")}
+            {!collapsed && (<span className="min-w-0 max-w-[120px] truncate">{selectedText}</span>)}
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
               className="flex-shrink-0 opacity-50 group-hover:opacity-100 transition-opacity"
             >
               <polyline points="6 9 12 15 18 9"></polyline>
@@ -273,16 +256,10 @@ export default function ChatDropdown({
       </button>
 
       {open && !disabled && (
-        <div
-          ref={popupRef}
-          className={`absolute mb-[4px] z-[100] w-max rounded-md border border-border bg-background px-1 py-0.5 animate-in fade-in duration-75 ${
-            direction === 'up' ? 'bottom-full mb-2 left-0' : 'top-full mt-2 left-0'
-          }`}
+        <div ref={popupRef} className={`absolute mb-[4px] z-[100] w-max rounded-md border border-border bg-background px-1 py-0.5 
+          animate-in fade-in duration-75 ${direction === 'up' ? 'bottom-full mb-2 left-0' : 'top-full mt-2 left-0'}`}
         >
-          <div 
-            className="flex flex-col overflow-y-auto"
-            style={{ maxHeight: dynamicMaxHeight }}
-            onScroll={() => {
+          <div className="flex flex-col overflow-y-auto" style={{ maxHeight: dynamicMaxHeight }} onScroll={() => {
               if (hoveredOptionId && popupRef.current) {
                 const el = popupRef.current.querySelector(`[data-option-id="${hoveredOptionId}"]`);
                 if (el) {
@@ -292,10 +269,7 @@ export default function ChatDropdown({
             }}
           >
             {options.map((option, index) => (
-              <div 
-                key={option.id} 
-                data-option-id={option.id}
-                className="relative"
+              <div key={option.id} data-option-id={option.id} className="relative"
                 onMouseEnter={(e) => {
                   setHoveredOptionId(option.id);
                   if (option.subOptions && popupRef.current) {
@@ -324,8 +298,9 @@ export default function ChatDropdown({
                           setHoveredOptionId(null);
                         }
                       }}
-                      className={`flex items-center w-full my-0.5 px-2 min-h-8 text-left transition-colors rounded min-w-[70px]
-                        outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--ide-Button-default-focusColor)] 
+                      className={`flex items-center w-full my-0.5 px-2 min-h-8 text-left transition-colors 
+                        rounded min-w-[70px] outline-none 
+                        focus-visible:shadow-[inset_0_0_0_1px_var(--ide-Button-default-focusColor)] 
                         ${option.id === value && !subValue ? 'bg-accent text-accent-foreground' : 'text-foreground hover:bg-accent hover:text-accent-foreground'
                       }`}
                     >
@@ -347,32 +322,21 @@ export default function ChatDropdown({
                     <Tooltip variant="default" content={option.description} className="w-full flex" delay={300}>
                       {btn}
                     </Tooltip>
-                  ) : (
-                    <div className="w-full flex">
-                      {btn}
-                    </div>
-                  );
+                  ) : (<div className="w-full flex">{btn}</div>);
                 })()}
-
               </div>
             ))}
           </div>
 
           {hoveredOption?.subOptions && (
-            <div
-              className={`absolute mb-[4px] left-full z-[101] ml-1 w-max rounded-md border border-border bg-background px-1 py-0.5 animate-in fade-in slide-in-from-left-1 duration-75`}
-              style={{
-                [subMenuPosition.prop]: subMenuPosition.offset,
-              }}
+            <div className={`absolute mb-[4px] left-full z-[101] ml-1 w-max rounded-md border border-border 
+              bg-background px-1 py-0.5 animate-in fade-in slide-in-from-left-1 duration-75`}
+              style={{[subMenuPosition.prop]: subMenuPosition.offset}}
             >
-              <div 
-                className="overflow-y-auto"
-                style={{ maxHeight: subMenuPosition.maxHeight }}
-              >
+              <div className="overflow-y-auto" style={{ maxHeight: subMenuPosition.maxHeight }}>
                 {hoveredOption.subOptions.map((sub, index) => {
                   const btn = (
-                    <button
-                      ref={(element) => {
+                    <button ref={(element) => {
                         subOptionButtonRefs.current[index] = element;
                       }}
                       type="button"
@@ -399,9 +363,7 @@ export default function ChatDropdown({
                       {btn}
                     </Tooltip>
                   ) : (
-                    <div key={sub.id} className="w-full flex">
-                      {btn}
-                    </div>
+                    <div key={sub.id} className="w-full flex">{btn}</div>
                   );
                 })}
               </div>

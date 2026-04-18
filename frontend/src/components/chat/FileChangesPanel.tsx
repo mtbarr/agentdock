@@ -2,6 +2,7 @@ import { useState, memo } from 'react';
 import { Check, Undo2, FileDiff, ChevronRight } from 'lucide-react';
 import { FileChangeSummary } from '../../types/chat';
 import { Tooltip } from './shared/Tooltip';
+import { chatFocusClassName, chatInsetFocusClassName } from './shared/focusStyles';
 
 interface FileChangesPanelProps {
   hasPluginEdits: boolean;
@@ -40,9 +41,8 @@ const FileChangesPanel = memo(({
   return (
     <div className="mx-auto w-full max-w-[1200px] border-t border-border px-4 py-2">
       <div className="border border-border rounded-[6px] overflow-hidden bg-editor-bg">
-          
-          <div 
-            className="flex items-center h-9 w-full px-3 bg-editor-bg transition-colors cursor-pointer group/header"
+          <button type="button"
+            className={`flex items-center h-9 w-full px-3 bg-editor-bg transition-colors cursor-pointer group/header ${chatInsetFocusClassName}`}
             onClick={() => setExpanded(!expanded)}
           >
             <div className="flex items-center gap-2 flex-1 min-w-0 text-ide-small text-foreground-secondary">
@@ -62,14 +62,14 @@ const FileChangesPanel = memo(({
                   <span className="text-sm text-foreground-secondary mr-2 mt-1">Undo all?</span>
                   <button
                     type="button"
-                    className="text-xs px-2 py-0.5 bg-error text-white rounded mr-1"
+                    className={`text-xs px-2 py-0.5 bg-error text-white rounded mr-1 ${chatFocusClassName}`}
                     onClick={() => { onUndoAllFiles(); setConfirmUndoAll(false); }}
                   >
                     Yes
                   </button>
                   <button
                     type="button"
-                    className="text-xs px-2 py-0.5 bg-background text-foreground rounded border border-border"
+                    className={`text-xs px-2 py-0.5 bg-background text-foreground rounded border border-border ${chatFocusClassName}`}
                     onClick={() => setConfirmUndoAll(false)}
                   >
                     No
@@ -80,7 +80,7 @@ const FileChangesPanel = memo(({
                   <Tooltip variant="minimal" content="Accept all changes">
                     <button
                       type="button"
-                      className="p-1 text-foreground-secondary hover:text-added transition-colors"
+                      className={`p-1 text-foreground-secondary hover:text-added transition-colors ${chatFocusClassName}`}
                       onClick={onKeepAll}
                     >
                       <Check size={14} />
@@ -89,7 +89,7 @@ const FileChangesPanel = memo(({
                   <Tooltip variant="minimal" content="Undo all changes">
                     <button
                       type="button"
-                      className="p-1 text-foreground-secondary hover:text-deleted transition-colors"
+                      className={`p-1 text-foreground-secondary hover:text-deleted transition-colors ${chatFocusClassName}`}
                       onClick={() => setConfirmUndoAll(true)}
                     >
                       <Undo2 size={14} />
@@ -104,7 +104,7 @@ const FileChangesPanel = memo(({
                 <ChevronRight size={14} />
               </div>
             </div>
-          </div>
+          </button>
 
           <div
             className="grid transition-[grid-template-rows] duration-300 ease-in-out overflow-hidden"
@@ -124,9 +124,8 @@ const FileChangesPanel = memo(({
                         {fc.status}
                       </span>
                       <Tooltip variant="minimal" content={fc.filePath}>
-                        <button
-                          type="button"
-                          className="truncate text-left text-foreground hover:underline transition-colors min-w-0 font-mono"
+                        <button type="button"
+                          className={`truncate text-left text-foreground hover:underline transition-colors min-w-0 font-mono ${chatFocusClassName}`}
                           onClick={() => onOpenFile?.(fc.filePath)}
                         >
                           {getFileName(fc.filePath)}
@@ -141,9 +140,8 @@ const FileChangesPanel = memo(({
                     <div className="flex items-center gap-1 flex-shrink-0">
                       {onShowDiff && (
                         <Tooltip variant="minimal" content="View changes (diff)">
-                          <button
-                            type="button"
-                            className="p-1 text-foreground-secondary hover:text-foreground rounded transition-colors"
+                          <button type="button"
+                            className={`p-1 text-foreground-secondary hover:text-foreground rounded transition-colors ${chatFocusClassName}`}
                             onClick={() => onShowDiff(fc)}
                           >
                             <FileDiff size={14} />
@@ -152,9 +150,8 @@ const FileChangesPanel = memo(({
                       )}
                       {onKeepFile && (
                         <Tooltip variant="minimal" content="Accept changes">
-                          <button
-                            type="button"
-                            className="p-1 text-foreground-secondary hover:text-added rounded transition-colors"
+                          <button type="button"
+                            className={`p-1 text-foreground-secondary hover:text-added rounded transition-colors ${chatFocusClassName}`}
                             onClick={() => onKeepFile(fc.filePath)}
                           >
                             <Check size={14} />
@@ -162,9 +159,8 @@ const FileChangesPanel = memo(({
                         </Tooltip>
                       )}
                       <Tooltip variant="minimal" content="Undo changes">
-                        <button
-                          type="button"
-                          className="p-1 text-foreground-secondary hover:text-deleted rounded transition-colors"
+                        <button type="button"
+                          className={`p-1 text-foreground-secondary hover:text-deleted rounded transition-colors ${chatFocusClassName}`}
                           onClick={() => onUndoFile(fc.filePath)}
                         >
                           <Undo2 size={14} />

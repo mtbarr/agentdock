@@ -315,9 +315,7 @@ function MessageList({
 
         {visibleMessages.length === 0 && !isSending && !isHistoryReplaying && agentIconPath && (
           <div className="flex items-center justify-center min-h-[45vh]">
-            <img
-              src={agentIconPath}
-              alt=""
+            <img src={agentIconPath}
               className="w-14 h-14 opacity-60 select-none pointer-events-none"
             />
           </div>

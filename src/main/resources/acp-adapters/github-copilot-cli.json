@@ -2,6 +2,8 @@
   "id": "github-copilot-cli",
   "name": "GitHub Copilot",
   "iconPath": "/icons/copilot.svg",
+  "iconPathLight": "/icons/copilot-light.svg",
+  "iconPathDark": "/icons/copilot-dark.svg",
   "distribution": {
     "type": "npm",
     "version": "latest",

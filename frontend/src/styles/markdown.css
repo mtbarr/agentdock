@@ -121,7 +121,7 @@
     }
 
     & h2 {
-        @apply text-ide-h2 font-semibold my-6;
+        @apply text-ide-h2 font-semibold mt-6 mb-4;
     }
 
     & ul {

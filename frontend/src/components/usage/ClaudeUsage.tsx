@@ -1,7 +1,7 @@
 import { useAdapterUsage } from '../../hooks/useAdapterUsage';
 import { UsageMetricRow } from './shared/UsageMetricRow';
 import { clampPercent, formatUsagePercent } from './shared/quotaVisuals';
-import { formatResetAt } from './shared/formatResetAt';
+import { formatResetAt, hasDisplayableQuotaReset } from './shared/formatResetAt';
 
 const usageLinkClassName = 'text-link hover:underline focus:outline-none focus-visible:rounded-[3px] focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]';
 
@@ -48,7 +48,9 @@ export function ClaudeUsage({ stacked = false }: { stacked?: boolean }) {
   const usage = data ? parseData(data) : null;
   if (!usage) return null;
 
-  const hasUsageData = usage.five_hour || usage.seven_day || usage.extra_usage?.is_enabled;
+  const fiveHour = usage.five_hour && hasDisplayableQuotaReset(usage.five_hour.resets_at) ? usage.five_hour : null;
+  const sevenDay = usage.seven_day && hasDisplayableQuotaReset(usage.seven_day.resets_at) ? usage.seven_day : null;
+  const hasUsageData = fiveHour || sevenDay;
 
   if (!hasUsageData) {
     const url = usage.authType === 'api_key' ? 'https://platform.claude.com' : 'https://claude.ai/settings/usage';
@@ -63,11 +65,8 @@ export function ClaudeUsage({ stacked = false }: { stacked?: boolean }) {
     <div className="flex flex-col gap-y-2">
       <span className="whitespace-nowrap text-foreground-secondary">Usage quotas</span>
       <div className={stacked ? 'flex flex-col gap-y-1.5' : 'flex flex-wrap gap-x-8 gap-y-1.5'}>
-        {usage.five_hour && <WindowLine label="5 hour limit" window={usage.five_hour} />}
-        {usage.seven_day && <WindowLine label="7 day limit" window={usage.seven_day} />}
-        {usage.extra_usage?.is_enabled && usage.extra_usage.utilization !== null && (
-          <WindowLine label="Extra usage" window={{ utilization: usage.extra_usage.utilization, resets_at: null }} />
-        )}
+        {fiveHour && <WindowLine label="5 hour limit" window={fiveHour} />}
+        {sevenDay && <WindowLine label="7 day limit" window={sevenDay} />}
       </div>
     </div>
   );

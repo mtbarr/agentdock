@@ -2,6 +2,8 @@
   "id": "cursor-cli",
   "name": "Cursor",
   "iconPath": "/icons/cursor.svg",
+  "iconPathLight": "/icons/cursor-light.svg",
+  "iconPathDark": "/icons/cursor-dark.svg",
   "supportsSessionList": false,
   "distribution": {
     "type": "archive",

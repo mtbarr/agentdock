@@ -2,6 +2,7 @@ import { useContext } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import {
   $getNodeByKey,
+  $isTextNode,
   DecoratorNode,
   EditorConfig,
   LexicalEditor,
@@ -119,6 +120,22 @@ function CodeReferenceComponent({
   const [editor] = useLexicalComposerContext();
   const actions = useContext(ChatInputActionsContext);
   const reference = actions?.attachments.find((attachment) => attachment.id === id);
+  const isAtStart = editor.getEditorState().read(() => {
+    const node = $getNodeByKey(nodeKey);
+    if (!node) return false;
+
+    let previous = node.getPreviousSibling();
+    while (previous) {
+      if ($isTextNode(previous)) {
+        if (previous.getTextContent().trim().length > 0) return false;
+      } else {
+        return false;
+      }
+      previous = previous.getPreviousSibling();
+    }
+
+    return true;
+  });
 
   const onDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -140,6 +157,7 @@ function CodeReferenceComponent({
       endLine={endLine}
       onClick={onOpen}
       onRemove={onDelete}
+      flushLeft={isAtStart}
     />
   );
 }

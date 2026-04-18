@@ -9,11 +9,74 @@ import { CodexUsage } from './usage/CodexUsage';
 import { GeminiUsage } from './usage/GeminiUsage';
 import { CursorUsage } from './usage/CursorUsage';
 import { Button } from './ui/Button';
+import { LoadingSpinner } from './ui/LoadingSpinner';
 import { SplitButton } from './ui/SplitButton';
-import { useAdapterUsage } from '../hooks/useAdapterUsage';
+import { resetAdapterUsageCaches, useAdapterUsage } from '../hooks/useAdapterUsage';
 
-function AgentLoadingSpinner({ className = 'w-3.5 h-3.5' }: { className?: string }) {
-  return <div className={`${className} shrink-0 rounded-full border-2 border-current border-t-transparent animate-spin`} />;
+function mergeAgentSnapshot(previous: AgentOption | undefined, next: AgentOption): AgentOption {
+  if (!previous) return next;
+
+  const keepDownloadSnapshot = next.downloadedKnown !== true && previous.downloadedKnown === true;
+  const keepReadySnapshot = next.readyKnown !== true && previous.readyKnown === true;
+  const keepAuthSnapshot =
+    next.hasAuthentication === true &&
+    next.authUiMode !== 'manage_terminal' &&
+    next.authKnown !== true &&
+    previous.authKnown === true;
+  const keepUpdateSnapshot =
+    (keepDownloadSnapshot || next.updateSupported === true || previous.updateSupported === true) &&
+    next.updateKnown !== true &&
+    previous.updateKnown === true;
+  const keepTransientDownloadStatus =
+    !next.downloadStatus &&
+    !next.downloading &&
+    keepDownloadSnapshot &&
+    !!previous.downloadStatus;
+  const keepCliAvailability = keepDownloadSnapshot && previous.cliAvailable === true && next.cliAvailable !== true;
+  const keepUpdateSupport = keepDownloadSnapshot && previous.updateSupported === true && next.updateSupported !== true;
+  const keepInstalledVersion = (keepDownloadSnapshot || next.downloaded === true) && !next.installedVersion && !!previous.installedVersion;
+  const keepLatestVersion = (keepDownloadSnapshot || keepUpdateSnapshot) && !next.latestVersion && !!previous.latestVersion;
+  const keepDownloadPath = (keepDownloadSnapshot || next.downloaded === true) && !next.downloadPath && !!previous.downloadPath;
+
+  return {
+    ...previous,
+    ...next,
+    iconPath: next.iconPath || previous.iconPath,
+    name: next.name || previous.name,
+    downloadedKnown: keepDownloadSnapshot ? previous.downloadedKnown : next.downloadedKnown,
+    downloaded: keepDownloadSnapshot ? previous.downloaded : next.downloaded,
+    downloadPath: keepDownloadPath ? previous.downloadPath : next.downloadPath,
+    installedVersion: keepInstalledVersion ? previous.installedVersion : next.installedVersion,
+    readyKnown: keepReadySnapshot ? previous.readyKnown : next.readyKnown,
+    ready: keepReadySnapshot ? previous.ready : next.ready,
+    authKnown: keepAuthSnapshot ? previous.authKnown : next.authKnown,
+    authAuthenticated: keepAuthSnapshot ? previous.authAuthenticated : next.authAuthenticated,
+    updateSupported: keepUpdateSupport ? previous.updateSupported : next.updateSupported,
+    latestVersion: keepLatestVersion ? previous.latestVersion : next.latestVersion,
+    updateKnown: keepUpdateSnapshot ? previous.updateKnown : next.updateKnown,
+    updateAvailable: keepUpdateSnapshot ? previous.updateAvailable : next.updateAvailable,
+    downloadStatus: keepTransientDownloadStatus ? previous.downloadStatus : next.downloadStatus,
+    cliAvailable: keepCliAvailability ? previous.cliAvailable : next.cliAvailable,
+  };
+}
+
+function mergeAgentSnapshots(
+  previousSnapshots: Record<string, AgentOption>,
+  nextAgents: AgentOption[],
+): { mergedAgents: AgentOption[]; nextSnapshots: Record<string, AgentOption> } {
+  const nextSnapshots: Record<string, AgentOption> = {};
+  const mergedAgents = nextAgents.map((agent) => {
+    const merged = mergeAgentSnapshot(previousSnapshots[agent.id], agent);
+    nextSnapshots[agent.id] = merged;
+    return merged;
+  });
+  return { mergedAgents, nextSnapshots };
+}
+
+let serviceProviderAgentSnapshots: Record<string, AgentOption> = {};
+
+function resetServiceProviderAgentSnapshots() {
+  serviceProviderAgentSnapshots = {};
 }
 
 const linkButtonFocusClassName = [
@@ -54,7 +117,12 @@ export function AgentManagementView({
   initialAgents?: AgentOption[];
   isActive?: boolean;
 }) {
-  const [agents, setAgents] = useState<AgentOption[]>(initialAgents);
+  const [agents, setAgents] = useState<AgentOption[]>(() => {
+    if (Object.keys(serviceProviderAgentSnapshots).length > 0) {
+      return Object.values(serviceProviderAgentSnapshots);
+    }
+    return initialAgents;
+  });
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [installingIds, setInstallingIds] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -67,25 +135,36 @@ export function AgentManagementView({
   useEffect(() => {
     const dispose = ACPBridge.onAdapters((e) => {
       const safeAdapters = Array.isArray(e.detail.adapters) ? e.detail.adapters : [];
-      setAgents(safeAdapters);
-      setAuthIds(new Set(safeAdapters.filter(a => a.authenticating).map(a => a.id)));
+      const { mergedAgents, nextSnapshots } = mergeAgentSnapshots(serviceProviderAgentSnapshots, safeAdapters);
+      serviceProviderAgentSnapshots = nextSnapshots;
+      setAgents(mergedAgents);
+      setAuthIds(new Set(mergedAgents.filter(a => a.authenticating).map(a => a.id)));
       setDeletingIds(prev => {
         const next = new Set<string>();
         prev.forEach(id => {
-          if (safeAdapters.some(a => a.id === id && a.downloaded === true)) next.add(id);
+          if (mergedAgents.some(a => a.id === id && a.downloaded === true)) next.add(id);
         });
         return next;
       });
       setInstallingIds(prev => {
         const next = new Set<string>();
         prev.forEach(id => {
-          if (safeAdapters.some(a => a.id === id && a.downloaded === false && a.downloading)) next.add(id);
+          if (mergedAgents.some(a => a.id === id && a.downloaded === false && a.downloading)) next.add(id);
         });
         return next;
       });
     });
 
     ACPBridge.requestAdapters();
+
+    return dispose;
+  }, []);
+
+  useEffect(() => {
+    const dispose = ACPBridge.onExecutionTargetSwitched(() => {
+      resetServiceProviderAgentSnapshots();
+      setAgents([]);
+    });
 
     return dispose;
   }, []);
@@ -166,6 +245,9 @@ export function AgentManagementView({
   };
 
   const handleRefresh = () => {
+    resetServiceProviderAgentSnapshots();
+    resetAdapterUsageCaches();
+    setAgents([]);
     ACPBridge.requestAdapters();
     setRefreshKey(k => k + 1);
   };
@@ -222,23 +304,19 @@ export function AgentManagementView({
               <div key={agent.id} className={`flex group ${!isLast ? 'border-b border-border' : ''}`}>
                 <div className="flex items-start gap-3 w-full px-2 py-1">
                   <div className="flex flex-col items-center shrink-0 w-10 min-w-10 py-4">
-                    <img src={agent.iconPath} alt={agent.name} className="h-9 w-9 object-contain" />
+                    <img src={agent.iconPath} className="h-8 w-8 object-contain opacity-80" />
                   </div>
 
                   <div className="min-w-0 flex-1 self-center py-2 text-ide-small text-foreground-secondary">
-                    <div className="flex items-baseline gap-1.5">
+                    <div className="flex items-baseline gap-1.5 mb-1">
                       <div className="font-semibold text-ide-regular text-foreground">{agent.name}</div>
-                      {versionLabel && (
-                        <span className="text-foreground-secondary">
-                          {versionLabel}
-                        </span>
-                      )}
+                      {versionLabel && (<span className="text-foreground-secondary">{versionLabel}</span>)}
                     </div>
 
                     {!isInstalling && isDownloaded && (
                       <div className="flex items-center gap-1.5">
                         <span className="shrink-0">Status:</span>
-                        {isStatusUnknown ? (<AgentLoadingSpinner className="w-3 h-3" />) : (
+                        {isStatusUnknown ? (<LoadingSpinner className="w-3 h-3" />) : (
                           <span className={`${statusClass} font-semibold`}>{statusLabel}</span>
                         )}
                       </div>
@@ -247,7 +325,7 @@ export function AgentManagementView({
                     <div className="flex flex-col gap-1.5">
                       {isInstalling && agent.downloadStatus && (
                         <div className="flex items-center gap-3">
-                          <AgentLoadingSpinner />
+                          <LoadingSpinner />
                           <span>Installing...</span>
                           <span className="font-normal italic truncate">{agent.downloadStatus}</span>
                         </div>
@@ -294,7 +372,7 @@ export function AgentManagementView({
                               className={`text-link hover:underline disabled:opacity-50 transition-colors flex items-center gap-1 select-none whitespace-nowrap ${linkButtonFocusClassName}`}
                             >
                               {isAuthenticating && (
-                                <AgentLoadingSpinner className="w-3 h-3" />
+                                <LoadingSpinner className="w-3 h-3" />
                               )}
                               {agent.authAuthenticated === true ? 'Log out' : 'Log in'}
                             </button>
@@ -323,7 +401,7 @@ export function AgentManagementView({
                   <div className="flex items-center py-4 whitespace-nowrap">
                     {!isDownloadedKnown ? (
                       <div className="text-foreground-secondary">
-                        <AgentLoadingSpinner className="w-4 h-4" />
+                        <LoadingSpinner className="w-4 h-4" />
                       </div>
                     ) : !isDownloaded ? (
                       !isInstalling && (
@@ -345,7 +423,7 @@ export function AgentManagementView({
                               {
                                 label: (
                                   <span className="inline-flex items-center gap-2">
-                                    {isDeleting ? <AgentLoadingSpinner className="w-4 h-4" /> : null}
+                                    {isDeleting ? <LoadingSpinner className="w-4 h-4" /> : null}
                                     {isDeleting ? 'Uninstalling' : 'Uninstall'}
                                   </span>
                                 ),
@@ -358,7 +436,7 @@ export function AgentManagementView({
                             onClick={() => handleDelete(agent.id)}
                             disabled={isDeleting || isInstalling}
                             variant="accentOutline"
-                            leftIcon={isDeleting ? <AgentLoadingSpinner className="w-4 h-4" /> : undefined}
+                            leftIcon={isDeleting ? <LoadingSpinner className="w-4 h-4" /> : undefined}
                           >
                             {isDeleting ? 'Uninstalling' : 'Uninstall'}
                           </Button>

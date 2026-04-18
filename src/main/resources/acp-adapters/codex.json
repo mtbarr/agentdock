@@ -2,6 +2,8 @@
   "id": "codex",
   "name": "Codex",
   "iconPath": "/icons/codex.svg",
+  "iconPathLight": "/icons/codex-light.svg",
+  "iconPathDark": "/icons/codex-dark.svg",
   "distribution": {
     "type": "archive",
     "version": "latest",

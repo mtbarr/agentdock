@@ -14,6 +14,15 @@ const UsageLifecycleContext = createContext<UsageLifecycleContextValue>(null);
 const providerCache: Record<string, string | null> = {};
 const chatCache: Record<string, string | null> = {};
 
+export function resetAdapterUsageCaches() {
+  Object.keys(providerCache).forEach((key) => {
+    delete providerCache[key];
+  });
+  Object.keys(chatCache).forEach((key) => {
+    delete chatCache[key];
+  });
+}
+
 const RICH_USAGE_FIELDS = ['five_hour', 'seven_day', 'extra_usage', 'rate_limit', 'quota', 'usage', 'quota_snapshots'];
 
 function parseUsageJson(json: string | null | undefined): Record<string, unknown> | null {
@@ -67,12 +76,22 @@ export function useAdapterUsage(adapterId: string) {
     const dispose = ACPBridge.onUsageData((e) => {
       if (e.detail.adapterId !== adapterId) return;
       const nextData = normalize(e.detail.json);
+      if (nextData === null && !isChatMode) return;
       cache[adapterId] = nextData;
       setData(nextData);
     });
 
     return dispose;
-  }, [adapterId, cache, normalize]);
+  }, [adapterId, cache, isChatMode, normalize]);
+
+  useEffect(() => {
+    const dispose = ACPBridge.onExecutionTargetSwitched(() => {
+      resetAdapterUsageCaches();
+      setData(null);
+    });
+
+    return dispose;
+  }, []);
 
   useEffect(() => {
     const fetchUsage = () => {

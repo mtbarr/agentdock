@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bookmark, Bot, FileText, History, Network, Palette, SlidersHorizontal } from 'lucide-react';
+import { Bookmark, Bot, FileText, History, Network, Palette, SlidersHorizontal, X } from 'lucide-react';
 import { AgentOption, ChatTab, TabUiFlags, isAgentRunnable } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
 import { Tooltip } from './chat/shared/Tooltip';
@@ -101,32 +101,41 @@ interface TabItemProps {
   tab: ChatTab;
   agents: AgentOption[];
   isActive: boolean;
+  isKeyboardFocused: boolean;
   hasWarning: boolean;
   hasUnread: boolean;
   titleClassName: string;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
+  onFocusTab: (id: string) => void;
+  onBlurTab: (id: string) => void;
 }
 
 function TabItem({
   tab,
   agents,
   isActive,
+  isKeyboardFocused,
   hasWarning,
   hasUnread,
   titleClassName,
   onSelectTab,
-  onCloseTab
+  onCloseTab,
+  onFocusTab,
+  onBlurTab
 }: TabItemProps) {
   return (
     <div
-      className={`
-        text-foreground group relative flex h-full max-w-[180px] shrink items-center bg-background pl-3 pr-2 pb-0.5
+      className={`text-foreground group relative pl-1 pr-2 flex h-full max-w-[180px] shrink items-center rounded-[4px] bg-background
         ${isActive ? 'text-foreground before:absolute before:inset-0 before:bg-background before:[filter:var(--ide-surface-active-filter)] ' +
-          'after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[3px] after:bg-primary' :
+          'after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary' :
           ''}
       `}
     >
+      {isKeyboardFocused ? (<span aria-hidden="true"
+          className="pointer-events-none absolute inset-[1px] z-20 rounded-[3px] shadow-[inset_0_0_0_1px_var(--ide-Button-default-focusColor)]"
+        />
+      ) : null}
       <button
         type="button"
         role="tab"
@@ -138,9 +147,11 @@ function TabItem({
             onSelectTab(tab.id);
           }
         }}
-        className="relative z-10 flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-[4px] text-left cursor-default focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]"
+        onFocus={() => onFocusTab(tab.id)}
+        onBlur={() => onBlurTab(tab.id)}
+        className="w-full h-full px-1 pb-0.5 relative z-10 flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-[4px] text-left cursor-default focus:outline-none"
       >
-        <div className="flex shrink-0 items-center mt-[-2px]">
+        <div className="flex shrink-0 items-center relative left-[1px] opacity-80">
           {getTabIcon(tab, agents)}
         </div>
         <div className={`min-w-0 flex-1 overflow-hidden ${titleClassName}`}>
@@ -155,13 +166,11 @@ function TabItem({
         <span className="relative z-10 ml-2 -mt-0.5 h-2 w-2 flex-shrink-0 rounded-full bg-sky-500" />
       ) : null}
 
-      <button
-        onClick={(e) => {
+      <button onClick={(e) => {
           e.stopPropagation();
           onCloseTab(tab.id);
         }}
-        className={`
-          relative z-10 ml-2 mr-0.5 shrink-0 rounded-sm opacity-0 cursor-pointer
+        className={`relative z-10 ml-2 mr-0.5 shrink-0 rounded-sm opacity-0 cursor-pointer -mt-0.5
           focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]
           ${isActive ? 'opacity-100' : 'group-hover:opacity-100 group-focus-within:opacity-100'}
         `}
@@ -197,6 +206,7 @@ export default function TabBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [hamburgerMenuOpen, setHamburgerMenuOpen] = useState(false);
   const [tabFocusedControl, setTabFocusedControl] = useState<'new' | 'menu' | 'hamburger' | null>(null);
+  const [focusedTabId, setFocusedTabId] = useState<string | null>(null);
   const [tabsViewportWidth, setTabsViewportWidth] = useState(0);
   const tabsListRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -305,11 +315,14 @@ export default function TabBar({
               tab={tab}
               agents={agents}
               isActive={isActive}
+              isKeyboardFocused={focusedTabId === tab.id}
               hasWarning={hasWarning}
               hasUnread={hasUnread}
               titleClassName={titleClassName}
               onSelectTab={onSelectTab}
               onCloseTab={onCloseTab}
+              onFocusTab={(id) => setFocusedTabId(lastInteractionWasTabRef.current ? id : null)}
+              onBlurTab={(id) => setFocusedTabId((current) => current === id ? null : current)}
             />
           );
         })}
@@ -397,26 +410,45 @@ export default function TabBar({
                     const flags = tabUi[tab.id];
                     const hasWarning = !!flags?.warning;
                     const hasUnread = !!flags?.unread;
+                    const activeClassName = tab.id === activeTabId
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-foreground hover:bg-accent hover:text-accent-foreground';
                     return (
-                      <button
+                      <div
                         key={tab.id}
-                        onClick={() => {
-                           onSelectTab(tab.id);
-                           setMenuOpen(false);
-                        }}
-                        className={`mb-0.5 mx-2 flex w-[calc(100%-1rem)] items-center rounded-[4px] px-3 min-h-8 text-left transition-colors group focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] ${tab.id === activeTabId ? 'bg-accent text-accent-foreground' : 'text-foreground hover:bg-accent hover:text-accent-foreground'}`}
-                        role="menuitem"
+                        className={`mb-0.5 mx-2 flex w-[calc(100%-1rem)] items-stretch rounded-[4px] transition-colors ${activeClassName}`}
                       >
-                        <span className="mr-2 flex items-center justify-center">
-                          {getTabIcon(tab, agents)}
-                        </span>
-                        <span className="flex-1 truncate min-w-0">{tab.title}</span>
-                        {hasWarning ? (
-                          <span className="ml-2 w-2 h-2 rounded-full bg-warning flex-shrink-0" />
-                        ) : hasUnread ? (
-                          <span className="ml-2 w-2 h-2 rounded-full bg-sky-500 flex-shrink-0" />
-                        ) : null}
-                      </button>
+                        <button
+                          onClick={() => {
+                             onSelectTab(tab.id);
+                             setMenuOpen(false);
+                          }}
+                          className="flex min-h-8 min-w-0 flex-1 items-center rounded-l-[4px] px-3 text-left focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]"
+                          role="menuitem"
+                        >
+                          <span className="mr-2 flex items-center justify-center">
+                            {getTabIcon(tab, agents)}
+                          </span>
+                          <span className="flex-1 truncate min-w-0">{tab.title}</span>
+                          {hasWarning ? (
+                            <span className="ml-2 w-2 h-2 rounded-full bg-warning flex-shrink-0" />
+                          ) : hasUnread ? (
+                            <span className="ml-2 w-2 h-2 rounded-full bg-sky-500 flex-shrink-0" />
+                          ) : null}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onCloseTab(tab.id);
+                          }}
+                          className="flex min-h-8 w-8 flex-shrink-0 items-center justify-center rounded-r-[4px] text-foreground-secondary hover:bg-hover hover:text-foreground focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]"
+                          aria-label={`Close ${tab.title}`}
+                          role="menuitem"
+                        >
+                          <X size={14} aria-hidden="true" />
+                        </button>
+                      </div>
                     );
                   })}
                   <button
@@ -466,7 +498,7 @@ export default function TabBar({
                       </button>
                       {agent.cliAvailable ? (
                         <div className="ml-2 flex items-stretch self-stretch">
-                          <Tooltip variant="minimal" content={`Open ${agent.name} in  terminal`} className="flex self-stretch">
+                          <Tooltip variant="minimal" content={`Open ${agent.name} in terminal`} className="flex self-stretch">
                             <button
                               type="button"
                               onClick={() => {

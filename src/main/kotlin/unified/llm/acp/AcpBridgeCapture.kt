@@ -20,10 +20,9 @@ private val replayIgnoredUserCommandRegexes = replayIgnoredUserCommandTags.map {
     Regex("<$tag>.*?</$tag>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
 }
 
-private const val MAX_STORED_EXECUTE_OUTPUT_LINES = 200
-private const val MAX_STORED_RAW_OUTPUT_CONTENT_CHARS = 256
-private const val STORED_EXECUTE_OUTPUT_OMITTED_NOTICE =
-    "Command output omitted from stored history because it exceeded 200 lines."
+private const val MAX_TOOL_OUTPUT_LINES = 300
+private const val MAX_TOOL_OUTPUT_CHARS = 5000
+private const val TOOL_OUTPUT_REMOVED_NOTICE = "[Output removed]"
 
 
 internal fun AcpBridge.beginLivePromptCapture(chatId: String, blocks: List<JsonObject>): String? {
@@ -522,23 +521,18 @@ internal fun AcpBridge.buildStoredToolCallUpdateChunk(toolCallId: String, rawJso
 
 internal fun AcpBridge.storedToolRawJson(rawJson: String): String {
     val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { null }
-    if (parsed != null && parsed["kind"]?.jsonPrimitive?.contentOrNull == "execute") {
-        return compactExecuteToolRawJsonForStorage(parsed).toString()
-    }
-    val compacted = parsed?.let(::compactNonExecuteRawOutputForStorage)
-    val compactedRawJson = compacted?.toString() ?: rawJson
+    val compacted = parsed?.let(::compactToolRawJson) ?: return rawJson
+    val compactedRawJson = compacted.toString()
     return if (shouldPreserveToolRawJson(compacted)) {
         HistoryDiffCompactor.compactStoredToolRawJson(compactedRawJson, Json)
     } else {
-        truncateStoredToolRawJson(compactedRawJson)
+        compactedRawJson
     }
 }
 
-internal fun AcpBridge.truncateStoredToolRawJson(rawJson: String, maxLines: Int = 200): String {
-    val lines = rawJson.split(Regex("\\r\\n|\\n|\\r"))
-    if (lines.size <= maxLines) return rawJson
-    val omitted = lines.size - maxLines
-    return lines.take(maxLines).joinToString("\n") + "\n\n[Stored history truncated; $omitted lines omitted]"
+internal fun compactToolRawJsonForDisplay(rawJson: String): String {
+    val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { null }
+    return parsed?.let(::compactToolRawJson)?.toString() ?: rawJson
 }
 
 private fun shouldPreserveToolRawJson(parsed: JsonObject?): Boolean {
@@ -555,54 +549,25 @@ private fun shouldPreserveToolRawJson(parsed: JsonObject?): Boolean {
     return false
 }
 
-private fun compactNonExecuteRawOutputForStorage(parsed: JsonObject): JsonObject {
-    val rawOutput = parsed["rawOutput"] as? JsonObject ?: return parsed
-
-    val compactedRawOutput = buildJsonObject {
-        rawOutput["message"]?.let { put("message", it) }
-        rawOutput["parsed_cmd"]?.let { put("parsed_cmd", it) }
-        rawOutput["content"]?.let { content ->
-            val contentText = (content as? JsonPrimitive)?.contentOrNull
-            if (contentText != null) {
-                put("content", truncateWithEllipsis(contentText, MAX_STORED_RAW_OUTPUT_CONTENT_CHARS))
-            }
-        }
-    }
-
-    return buildJsonObject {
-        parsed.forEach { (key, value) ->
-            if (key != "rawOutput") put(key, value)
-        }
-        if (compactedRawOutput.isNotEmpty()) {
-            put("rawOutput", compactedRawOutput)
-        }
-    }
-}
-
-private fun truncateWithEllipsis(text: String, maxChars: Int): String {
-    if (text.length <= maxChars) return text
-    return text.take(maxChars) + "..."
-}
-
-private fun compactExecuteToolRawJsonForStorage(parsed: JsonObject): JsonObject {
-    val exceedsLimit = executeOutputExceedsLimit(parsed)
-    if (!exceedsLimit) return parsed
+private fun compactToolRawJson(parsed: JsonObject): JsonObject {
+    if (parsed["kind"]?.jsonPrimitive?.contentOrNull == "edit") return parsed
+    if (!toolOutputExceedsLimit(parsed)) return parsed
 
     return buildJsonObject {
         parsed.forEach { (key, value) ->
             when (key) {
-                "content" -> put(key, buildStoredExecuteNoticeContent())
-                "rawOutput" -> put(key, replaceExecuteRawOutputWithNotice(value as? JsonObject))
+                "content" -> put(key, buildToolOutputRemovedContent())
+                "rawOutput" -> put(key, buildToolOutputRemovedRawOutput(value as? JsonObject))
                 else -> put(key, value)
             }
         }
         if (parsed["content"] == null) {
-            put("content", buildStoredExecuteNoticeContent())
+            put("content", buildToolOutputRemovedContent())
         }
     }
 }
 
-private fun buildStoredExecuteNoticeContent(): JsonArray = buildJsonArray {
+private fun buildToolOutputRemovedContent(): JsonArray = buildJsonArray {
     add(
         buildJsonObject {
             put("type", "content")
@@ -610,58 +575,51 @@ private fun buildStoredExecuteNoticeContent(): JsonArray = buildJsonArray {
                 "content",
                 buildJsonObject {
                     put("type", "text")
-                    put("text", STORED_EXECUTE_OUTPUT_OMITTED_NOTICE)
+                    put("text", TOOL_OUTPUT_REMOVED_NOTICE)
                 }
             )
         }
     )
 }
 
-private fun replaceExecuteRawOutputWithNotice(rawOutput: JsonObject?): JsonObject {
-    if (rawOutput == null) {
-        return buildJsonObject {
-            put("formatted_output", STORED_EXECUTE_OUTPUT_OMITTED_NOTICE)
-            put("aggregated_output", STORED_EXECUTE_OUTPUT_OMITTED_NOTICE)
-            put("stdout", "")
-            put("stderr", "")
-        }
-    }
-
-    return buildJsonObject {
-        rawOutput.forEach { (key, value) ->
-            when (key) {
-                "formatted_output", "aggregated_output" -> put(key, STORED_EXECUTE_OUTPUT_OMITTED_NOTICE)
-                "stdout", "stderr" -> put(key, "")
-                else -> put(key, value)
-            }
-        }
-        if (rawOutput["formatted_output"] == null) put("formatted_output", STORED_EXECUTE_OUTPUT_OMITTED_NOTICE)
-        if (rawOutput["aggregated_output"] == null) put("aggregated_output", STORED_EXECUTE_OUTPUT_OMITTED_NOTICE)
-    }
+private fun buildToolOutputRemovedRawOutput(rawOutput: JsonObject?): JsonObject = buildJsonObject {
+    rawOutput?.get("parsed_cmd")?.let { put("parsed_cmd", it) }
+    put("formatted_output", TOOL_OUTPUT_REMOVED_NOTICE)
+    put("aggregated_output", TOOL_OUTPUT_REMOVED_NOTICE)
+    put("message", TOOL_OUTPUT_REMOVED_NOTICE)
+    put("content", TOOL_OUTPUT_REMOVED_NOTICE)
+    put("stdout", "")
+    put("stderr", "")
 }
 
-private fun executeOutputExceedsLimit(parsed: JsonObject): Boolean {
-    val content = parsed["content"]?.jsonArray
+private fun toolOutputExceedsLimit(parsed: JsonObject): Boolean {
+    val content = parsed["content"] as? JsonArray
     if (content != null) {
         content.forEach { item ->
             val text = (item as? JsonObject)
                 ?.get("content")
                 ?.let { it as? JsonObject }
                 ?.get("text")
-                ?.jsonPrimitive
+                ?.let { it as? JsonPrimitive }
                 ?.contentOrNull
-                ?: (item as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull
-            if (text != null && countLines(text) > MAX_STORED_EXECUTE_OUTPUT_LINES) {
+                ?: (item as? JsonObject)?.get("text")?.let { it as? JsonPrimitive }?.contentOrNull
+            if (text != null && toolOutputTextExceedsLimit(text)) {
                 return true
             }
         }
     }
 
+    val text = (parsed["text"] as? JsonPrimitive)?.contentOrNull
+    if (text != null && toolOutputTextExceedsLimit(text)) return true
+
     val rawOutput = parsed["rawOutput"] as? JsonObject
-    val outputTexts = listOf("formatted_output", "aggregated_output", "stdout", "stderr")
-        .mapNotNull { key -> rawOutput?.get(key)?.jsonPrimitive?.contentOrNull }
-    return outputTexts.any { text -> countLines(text) > MAX_STORED_EXECUTE_OUTPUT_LINES }
+    val outputTexts = listOf("formatted_output", "aggregated_output", "stdout", "stderr", "message", "content")
+        .mapNotNull { key -> (rawOutput?.get(key) as? JsonPrimitive)?.contentOrNull }
+    return outputTexts.any(::toolOutputTextExceedsLimit)
 }
+
+private fun toolOutputTextExceedsLimit(text: String): Boolean =
+    countLines(text) > MAX_TOOL_OUTPUT_LINES || text.length > MAX_TOOL_OUTPUT_CHARS
 
 private fun countLines(text: String): Int = text.split(Regex("\\r\\n|\\n|\\r")).size
 

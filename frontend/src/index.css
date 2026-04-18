@@ -16,7 +16,7 @@
   }
 
   :root {
-    --user-message-bg: var(--ide-background-secondary);
+    --user-message-bg: var(--ide-user-message-default-bg, #25324d);
     --ui-font-size-offset: 0px;
   }
 
@@ -102,7 +102,6 @@
     list-style-position: outside;
     margin-left: 1rem;
     padding-left: var(--ide-list-indent);
-    margin-top: var(--ide-paragraph-spacing);
     margin-bottom: var(--ide-paragraph-spacing);
   }
 

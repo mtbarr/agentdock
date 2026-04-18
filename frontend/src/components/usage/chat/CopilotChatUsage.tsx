@@ -1,6 +1,7 @@
 import { useAdapterUsage } from '../../../hooks/useAdapterUsage';
 import { UsageIcon } from './UsageIcon';
 import { CopilotUsage } from '../CopilotUsage';
+import { hasDisplayableQuotaReset } from '../shared/formatResetAt';
 
 export function CopilotChatUsage() {
   const data = useAdapterUsage('github-copilot-cli');
@@ -13,7 +14,8 @@ export function CopilotChatUsage() {
       const parsed = JSON.parse(data);
       const premium = parsed?.quota_snapshots?.premium_interactions;
       if (premium) {
-        if (premium.unlimited === true) {
+        const resetAt = parsed?.quota_reset_date_utc ?? parsed?.quota_reset_date;
+        if (premium.unlimited === true || !hasDisplayableQuotaReset(resetAt)) {
           hasData = false;
         } else {
           hasData = true;
