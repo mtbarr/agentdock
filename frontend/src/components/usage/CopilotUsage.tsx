@@ -21,7 +21,7 @@ interface CopilotUsageData {
 }
 
 const AGENT_ID = 'github-copilot-cli';
-const BILLING_URL = 'https://github.com/settings/billing';
+const BILLING_URL = 'https://github.com/settings/billing/premium_requests_usage';
 
 export function CopilotUsage() {
   const data = useAdapterUsage(AGENT_ID);
