@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import unified.ai.gui.utils.atomicWriteText
 import java.io.File
 
 internal object SessionListDeleteSupport {
@@ -77,7 +78,7 @@ internal object SessionListDeleteSupport {
                 }
                 if (!root.containsKey("entries")) put("entries", filtered)
             }
-            indexFile.writeText(historyJson.encodeToString(JsonObject.serializer(), updatedRoot))
+            indexFile.atomicWriteText(historyJson.encodeToString(JsonObject.serializer(), updatedRoot))
             true
         }.getOrDefault(true)
     }

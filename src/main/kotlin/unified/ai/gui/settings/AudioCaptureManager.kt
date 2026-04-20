@@ -53,7 +53,8 @@ object AudioCaptureManager {
             schedule(object : java.util.TimerTask() {
                 override fun run() {
                     if (recording.get()) {
-                        try { stopRecording() } catch (_: Exception) {}
+                        runCatching { stopRecording() }
+                            .onFailure { forceStopRecording() }
                     }
                 }
             }, MAX_RECORDING_DURATION_MS)
@@ -89,5 +90,20 @@ object AudioCaptureManager {
         }
 
         return outputFile
+    }
+
+    @Synchronized
+    private fun forceStopRecording() {
+        autoStopTimer?.cancel()
+        autoStopTimer = null
+
+        runCatching { line?.stop() }
+        runCatching { line?.close() }
+        runCatching { writerThread?.join(1_000) }
+
+        line = null
+        recordingFile = null
+        writerThread = null
+        recording.set(false)
     }
 }

@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import unified.ai.gui.acp.AcpAdapterPaths
+import unified.ai.gui.utils.atomicWriteText
 import java.io.File
 
 @Serializable
@@ -32,6 +33,6 @@ object PromptLibraryStore {
 
     fun save(prompts: List<PromptLibraryItem>) {
         configFile.parentFile?.mkdirs()
-        configFile.writeText(json.encodeToString(ListSerializer(PromptLibraryItem.serializer()), prompts))
+        configFile.atomicWriteText(json.encodeToString(ListSerializer(PromptLibraryItem.serializer()), prompts))
     }
 }

@@ -233,7 +233,28 @@ object AcpAuthService {
         authConfig: AcpAdapterConfig.AuthConfig
     ): List<String>? {
         if (authConfig.command.isNotEmpty()) {
-            return authConfig.command.toList()
+            val isWindows = System.getProperty("os.name").lowercase().contains("win")
+            return if (isWindows) {
+                authConfig.command.mapIndexed { i, s ->
+                    if (i == 0 && (s == "npx" || s == "npm" || s == "node")) "$s.cmd" else s
+                }
+            } else {
+                authConfig.command.toList()
+            }
+        }
+
+        val authNpmPackage = authConfig.authNpmPackage
+        if (!authNpmPackage.isNullOrBlank()) {
+            val binaryName = authNpmPackage.substringAfterLast('/')
+            val downloadPath = AcpAdapterPaths.getDownloadPath(adapterInfo.id)
+            if (downloadPath.isEmpty()) return null
+            val isWindows = System.getProperty("os.name").lowercase().contains("win")
+            val binPath = if (isWindows) {
+                "$downloadPath${File.separator}node_modules${File.separator}.bin${File.separator}$binaryName.cmd"
+            } else {
+                "$downloadPath/node_modules/.bin/$binaryName"
+            }
+            return listOf(binPath)
         }
 
         val script = resolveScriptPath(adapterInfo, authConfig.authScript) ?: return null

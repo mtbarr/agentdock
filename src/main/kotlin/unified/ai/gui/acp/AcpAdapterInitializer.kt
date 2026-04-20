@@ -230,13 +230,12 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
             target = target
         )
 
-        val pb = ProcessBuilder(command)
-            .directory(resolveAdapterProcessWorkingDirectory(File(adapterRoot)))
-            .redirectErrorStream(false)
-        val env = pb.environment()
-        env.putAll(System.getenv())
+        val commandLine = com.intellij.execution.configurations.GeneralCommandLine(command)
+            .withWorkDirectory(resolveAdapterProcessWorkingDirectory(File(adapterRoot)))
+            .withEnvironment(System.getenv())
+            .withRedirectErrorStream(false)
 
-        val proc = withContext(Dispatchers.IO) { pb.start() }
+        val proc = withContext(Dispatchers.IO) { commandLine.createProcess() }
         sharedProc.process = proc
         val startupOutput = Collections.synchronizedList(mutableListOf<String>())
 
@@ -473,7 +472,15 @@ internal fun AcpClientService.ensureAsyncSessionUpdates(sharedProc: AcpClientSer
         }
         handlers.value = handlers.value.put(methodName, wrapped)
         sharedProc.sessionUpdateWrapped = true
-    } catch (_: Exception) {}
+    } catch (_: Exception) {
+        sharedProc.sessionUpdateQueue?.close()
+        sharedProc.sessionUpdateQueue = null
+        sharedProc.sessionUpdateWorker?.cancel()
+        sharedProc.sessionUpdateWorker = null
+        sharedProc.sessionUpdateScope?.coroutineContext?.cancel()
+        sharedProc.sessionUpdateScope = null
+        sharedProc.sessionUpdateWrapped = false
+    }
 }
 
 internal fun AcpClientService.extractAvailableCommands(params: kotlinx.serialization.json.JsonElement?): List<AvailableCommandPayload>? {

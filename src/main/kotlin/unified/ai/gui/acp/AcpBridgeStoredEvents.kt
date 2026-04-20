@@ -2,11 +2,9 @@ package unified.ai.gui.acp
 
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.SessionUpdate
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import unified.ai.gui.history.ConversationAssistantMetadata
 import unified.ai.gui.history.HistoryDiffCompactor
-import unified.ai.gui.history.UnifiedHistoryService
 
 private val replayIgnoredUserCommandTags = listOf(
     "command-name",
@@ -22,179 +20,6 @@ private val replayIgnoredUserCommandRegexes = replayIgnoredUserCommandTags.map {
 
 private const val MAX_TOOL_OUTPUT_LINES = 300
 private const val MAX_TOOL_OUTPUT_CHARS = 5000
-
-
-internal fun AcpBridge.beginLivePromptCapture(chatId: String, blocks: List<JsonObject>): String? {
-    val projectPath = service.project.basePath.orEmpty()
-    val sessionId = service.sessionId(chatId).orEmpty()
-    val adapterName = service.activeAdapterName(chatId).orEmpty()
-    if (projectPath.isBlank() || sessionId.isBlank() || adapterName.isBlank()) return null
-    val captureId = "prompt-${System.nanoTime()}"
-    val capture = LivePromptCapture(
-        captureId = captureId,
-        projectPath = projectPath,
-        conversationId = chatId,
-        sessionId = sessionId,
-        adapterName = adapterName,
-        blocks = blocks,
-        startedAtMillis = System.currentTimeMillis(),
-        assistantMeta = buildAssistantMetadata(
-            adapterName = adapterName,
-            modelId = service.activeModelId(chatId),
-            modeId = service.activeModeId(chatId)
-        )
-    )
-    livePromptCaptures.put(chatId, capture)?.let { previous ->
-        synchronized(previous) {
-            previous.closed = true
-        }
-    }
-    return captureId
-}
-
-internal fun AcpBridge.appendLivePromptTextEvent(chatId: String, text: String, expectedCaptureId: String? = null) {
-    val capture = livePromptCaptures[chatId] ?: return
-    if (expectedCaptureId != null && capture.captureId != expectedCaptureId) return
-    synchronized(capture) {
-        if (capture.closed) return
-        capture.events.add(buildStoredContentChunk("assistant", "text", text = text))
-    }
-}
-
-internal fun AcpBridge.markLivePromptVisibleAssistantOutput(chatId: String, expectedCaptureId: String? = null) {
-    val capture = livePromptCaptures[chatId] ?: return
-    if (expectedCaptureId != null && capture.captureId != expectedCaptureId) return
-    synchronized(capture) {
-        if (capture.closed) return
-        capture.hasVisibleAssistantOutput = true
-    }
-}
-
-internal fun AcpBridge.ensureLivePromptNoResponseFallback(
-    chatId: String,
-    fallbackText: String,
-    expectedCaptureId: String? = null
-): Boolean {
-    val capture = livePromptCaptures[chatId] ?: return false
-    if (expectedCaptureId != null && capture.captureId != expectedCaptureId) return false
-    return synchronized(capture) {
-        if (capture.closed) return false
-        if (capture.hasVisibleAssistantOutput) return false
-        capture.events.add(buildStoredContentChunk("assistant", "text", text = fallbackText))
-        capture.hasVisibleAssistantOutput = true
-        true
-    }
-}
-
-internal fun AcpBridge.flushLivePromptCapture(chatId: String, expectedCaptureId: String? = null): ConversationAssistantMetadata? {
-    val capture = livePromptCaptures[chatId] ?: return null
-    if (expectedCaptureId != null && capture.captureId != expectedCaptureId) return null
-    val snapshot = synchronized(capture) {
-        if (capture.closed) return null
-        capture.closed = true
-        LivePromptCaptureSnapshot(
-            projectPath = capture.projectPath,
-            conversationId = capture.conversationId,
-            sessionId = capture.sessionId,
-            adapterName = capture.adapterName,
-            blocks = capture.blocks,
-            events = capture.events.toList(),
-            startedAtMillis = capture.startedAtMillis,
-            assistantMeta = capture.assistantMeta,
-            contextTokensUsed = capture.contextTokensUsed,
-            contextWindowSize = capture.contextWindowSize
-        )
-    }
-    livePromptCaptures.remove(chatId, capture)
-    if (snapshot.blocks.isEmpty() && snapshot.events.isEmpty()) return null
-    val durationSeconds = ((System.currentTimeMillis() - snapshot.startedAtMillis).coerceAtLeast(0L)) / 1000.0
-    val assistantMeta = snapshot.assistantMeta?.copy(
-        promptStartedAtMillis = snapshot.startedAtMillis,
-        durationSeconds = durationSeconds,
-        contextTokensUsed = snapshot.contextTokensUsed,
-        contextWindowSize = snapshot.contextWindowSize
-    ) ?: buildAssistantMetadata(
-        adapterName = snapshot.adapterName,
-        promptStartedAtMillis = snapshot.startedAtMillis,
-        durationSeconds = durationSeconds,
-        contextTokensUsed = snapshot.contextTokensUsed,
-        contextWindowSize = snapshot.contextWindowSize
-    )
-    UnifiedHistoryService.appendConversationPrompt(
-        projectPath = snapshot.projectPath,
-        conversationId = snapshot.conversationId,
-        sessionId = snapshot.sessionId,
-        adapterName = snapshot.adapterName,
-        blocks = snapshot.blocks,
-        events = snapshot.events,
-        assistantMeta = assistantMeta
-    )
-    return assistantMeta
-}
-
-internal fun AcpBridge.startHistoryReplayCapture(
-    chatId: String,
-    projectPath: String,
-    conversationId: String
-) {
-    if (projectPath.isBlank() || conversationId.isBlank()) return
-    historyReplayCaptures[chatId] = HistoryReplayCapture(
-        projectPath = projectPath,
-        conversationId = conversationId
-    )
-}
-
-internal fun AcpBridge.beginImportedReplaySession(
-    chatId: String,
-    sessionId: String,
-    adapterName: String,
-    modelId: String?,
-    modeId: String?
-) {
-    val capture = historyReplayCaptures[chatId] ?: return
-    capture.currentSessionId = sessionId.takeIf { it.isNotBlank() }
-    capture.currentAdapterName = adapterName.takeIf { it.isNotBlank() }
-    capture.currentModelId = modelId?.takeIf { it.isNotBlank() }
-    capture.currentModeId = modeId?.takeIf { it.isNotBlank() }
-}
-
-internal fun AcpBridge.discardHistoryReplayCapture(chatId: String) {
-    historyReplayCaptures.remove(chatId)
-}
-
-internal fun AcpBridge.flushHistoryReplayCapture(chatId: String) {
-    val capture = historyReplayCaptures.remove(chatId) ?: return
-    val sessions = capture.sessions
-        .filter { it.prompts.isNotEmpty() }
-        .map { session ->
-            unified.ai.gui.history.ConversationSessionReplayEntry(
-                sessionId = session.sessionId,
-                adapterName = session.adapterName,
-                prompts = session.prompts.map { prompt ->
-                    unified.ai.gui.history.ConversationPromptReplayEntry(
-                        blocks = prompt.blocks,
-                        events = prompt.events,
-                        assistantMeta = prompt.assistantMeta
-                    )
-                }
-            )
-        }
-    if (sessions.isEmpty()) return
-    UnifiedHistoryService.saveConversationReplay(
-        projectPath = capture.projectPath,
-        conversationId = capture.conversationId,
-        data = unified.ai.gui.history.ConversationReplayData(sessions = sessions)
-    )
-}
-
-internal fun AcpBridge.recordReplayUserBlock(chatId: String, sessionId: String, adapterName: String, content: ContentBlock) {
-    val capture = historyReplayCaptures[chatId] ?: return
-    if (sessionId.isBlank() || adapterName.isBlank()) return
-    val block = storedReplayPromptBlockFromContentBlock(content) ?: return
-    val session = getOrCreateReplaySession(capture, sessionId, adapterName)
-    val prompt = getOrCreateReplayPrompt(session, startNewIfNeeded = true)
-    prompt.blocks.add(block)
-}
 
 internal fun AcpBridge.recordContentBlock(
     chatId: String,
@@ -284,7 +109,6 @@ private fun AcpBridge.mergeStoredToolEvent(events: List<JsonObject>, event: Json
         ?.let(::parseStoredToolRawJson)
 
     val mergedRaw = mergeJsonObjects(existingRaw, incomingRaw)
-
     val mergedKind = event["toolKind"]?.jsonPrimitive?.contentOrNull
         ?: incomingRaw["kind"]?.jsonPrimitive?.contentOrNull
         ?: existing?.get("toolKind")?.jsonPrimitive?.contentOrNull
@@ -343,11 +167,7 @@ private fun preserveEditDiffContent(
 }
 
 private fun parseStoredToolRawJson(rawJson: String): JsonObject? =
-    try {
-        Json.parseToJsonElement(rawJson).jsonObject
-    } catch (_: Exception) {
-        null
-    }
+    runCatching { Json.parseToJsonElement(rawJson).jsonObject }.getOrNull()
 
 private fun mergeJsonObjects(base: JsonObject?, patch: JsonObject): JsonObject {
     if (base == null) return patch
@@ -360,40 +180,12 @@ private fun mergeJsonObjects(base: JsonObject?, patch: JsonObject): JsonObject {
             val baseValue = base[key]
             val patchValue = patch[key]
             when {
-                patchValue == null -> put(key, baseValue!!)
+                patchValue == null -> baseValue?.let { put(key, it) }
                 baseValue is JsonObject && patchValue is JsonObject -> put(key, mergeJsonObjects(baseValue, patchValue))
                 else -> put(key, patchValue)
             }
         }
     }
-}
-
-internal fun AcpBridge.getOrCreateReplaySession(
-    capture: HistoryReplayCapture,
-    sessionId: String,
-    adapterName: String
-): ReplaySessionCapture {
-    val existing = capture.sessions.firstOrNull {
-        it.sessionId == sessionId && it.adapterName == adapterName
-    }
-    if (existing != null) return existing
-    return ReplaySessionCapture(sessionId = sessionId, adapterName = adapterName).also {
-        capture.sessions.add(it)
-    }
-}
-
-internal fun AcpBridge.getOrCreateReplayPrompt(
-    session: ReplaySessionCapture,
-    startNewIfNeeded: Boolean
-): ReplayPromptCapture {
-    val current = session.prompts.lastOrNull()
-    if (current == null) {
-        return ReplayPromptCapture().also { session.prompts.add(it) }
-    }
-    if (startNewIfNeeded && (current.events.isNotEmpty() || current.blocks.isNotEmpty())) {
-        return ReplayPromptCapture().also { session.prompts.add(it) }
-    }
-    return current
 }
 
 internal fun AcpBridge.storedReplayPromptBlockFromContentBlock(content: ContentBlock): JsonObject? {
@@ -497,7 +289,7 @@ internal fun AcpBridge.buildAssistantMetadata(
 }
 
 internal fun AcpBridge.buildStoredToolCallChunk(rawJson: String): JsonObject {
-    val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { null }
+    val parsed = runCatching { Json.parseToJsonElement(rawJson).jsonObject }.getOrNull()
     return buildJsonObject {
         put("role", "assistant")
         put("type", "tool_call")
@@ -519,7 +311,7 @@ internal fun AcpBridge.buildStoredToolCallUpdateChunk(toolCallId: String, rawJso
 }
 
 internal fun AcpBridge.storedToolRawJson(rawJson: String): String {
-    val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { null }
+    val parsed = runCatching { Json.parseToJsonElement(rawJson).jsonObject }.getOrNull()
     val compacted = parsed?.let(::compactToolRawJson) ?: return rawJson
     val compactedRawJson = compacted.toString()
     return if (shouldPreserveToolRawJson(compacted)) {
@@ -530,7 +322,7 @@ internal fun AcpBridge.storedToolRawJson(rawJson: String): String {
 }
 
 internal fun compactToolRawJsonForDisplay(rawJson: String): String {
-    val parsed = try { Json.parseToJsonElement(rawJson).jsonObject } catch (_: Exception) { null }
+    val parsed = runCatching { Json.parseToJsonElement(rawJson).jsonObject }.getOrNull()
     return parsed?.let(::compactToolRawJson)?.toString() ?: rawJson
 }
 
@@ -637,19 +429,6 @@ private fun isDiffLikePayload(element: JsonElement): Boolean {
     return obj["path"] != null && obj["newText"] != null
 }
 
-private data class LivePromptCaptureSnapshot(
-    val projectPath: String,
-    val conversationId: String,
-    val sessionId: String,
-    val adapterName: String,
-    val blocks: List<JsonObject>,
-    val events: List<JsonObject>,
-    val startedAtMillis: Long,
-    val assistantMeta: ConversationAssistantMetadata?,
-    val contextTokensUsed: Long?,
-    val contextWindowSize: Long?
-)
-
 internal fun AcpBridge.buildStoredPlanChunk(plan: SessionUpdate, meta: JsonElement?): JsonObject? {
     val entries = extractPlanEntries(plan, meta) ?: return null
     if (entries.isEmpty()) return null
@@ -658,57 +437,4 @@ internal fun AcpBridge.buildStoredPlanChunk(plan: SessionUpdate, meta: JsonEleme
         put("type", "plan")
         put("planEntries", entries)
     }
-}
-
-internal fun AcpBridge.replayStoredConversation(chatId: String, data: unified.ai.gui.history.ConversationReplayData) {
-    data.sessions.forEach { session ->
-        session.prompts.forEach { prompt ->
-            prompt.blocks.forEach { block ->
-                dispatchStoredPromptBlock(chatId, block)
-            }
-            prompt.events.forEach { event ->
-                dispatchStoredContentChunk(chatId, event)
-            }
-            prompt.assistantMeta?.let { meta ->
-                pushPromptDoneChunk(chatId, meta, outcome = "success", isReplay = true)
-            }
-        }
-    }
-}
-
-internal fun AcpBridge.dispatchStoredPromptBlock(chatId: String, block: JsonObject) {
-    val type = block["type"]?.jsonPrimitive?.contentOrNull ?: "text"
-    when (type) {
-        "image", "audio", "video", "file" -> {
-            dispatchStoredContentChunk(
-                chatId,
-                buildJsonObject {
-                    put("role", "user")
-                    put("type", type)
-                    block["data"]?.let { put("data", it) }
-                    block["text"]?.let { put("text", it) }
-                    block["mimeType"]?.let { put("mimeType", it) }
-                }
-            )
-        }
-        "code_ref" -> {
-            val text = codeRefBlockToText(block).text
-            dispatchStoredContentChunk(chatId, buildStoredContentChunk("user", "text", text = text))
-        }
-        else -> {
-            val text = block["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            dispatchStoredContentChunk(chatId, buildStoredContentChunk("user", "text", text = text))
-        }
-    }
-}
-
-internal fun AcpBridge.dispatchStoredContentChunk(chatId: String, stored: JsonObject) {
-    val replaySeq = nextReplaySeq(chatId, true)
-    val payload = buildJsonObject {
-        put("chatId", chatId)
-        stored.forEach { (key, value) -> put(key, value) }
-        put("isReplay", true)
-        if (replaySeq != null) put("replaySeq", replaySeq)
-    }
-    dispatchContentChunkJson(payload.toString())
 }

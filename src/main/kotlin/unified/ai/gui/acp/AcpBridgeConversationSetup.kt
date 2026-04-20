@@ -7,6 +7,108 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import unified.ai.gui.history.UnifiedHistoryService
 
+private data class PermissionDecisionPayload(
+    val requestId: String,
+    val decision: String
+)
+
+private data class SessionMetadataUpdatePayload(
+    val conversationId: String,
+    val sessionId: String,
+    val adapterName: String,
+    val promptCount: Int,
+    val title: String?,
+    val touchUpdatedAt: Boolean
+)
+
+private data class ContinueConversationPayload(
+    val previousSessionId: String,
+    val previousAdapterName: String,
+    val sessionId: String,
+    val adapterName: String,
+    val title: String?
+)
+
+private fun AcpBridge.pushConversationError(chatId: String, error: Throwable) {
+    pushContentChunk(chatId, "assistant", "text", text = "[Error: ${formatAcpError(error)}]", isReplay = false)
+}
+
+private fun AcpBridge.pushConversationError(chatId: String, message: String) {
+    pushContentChunk(chatId, "assistant", "text", text = "[Error: $message]", isReplay = false)
+}
+
+private suspend fun AcpBridge.handleScopedConfigChange(
+    chatId: String?,
+    adapterId: String?,
+    valueId: String?,
+    kind: String,
+    applyChange: suspend (String, String) -> Boolean
+) {
+    if (chatId == null || adapterId == null || valueId == null) return
+    if (service.activeAdapterName(chatId) != adapterId) return
+
+    pushStatus(chatId, "initializing")
+    try {
+        val ok = applyChange(chatId, valueId)
+        if (!ok) {
+            pushConversationError(chatId, "Failed to set $kind '$valueId'")
+        } else {
+            pushAdapters()
+        }
+    } catch (e: Exception) {
+        pushConversationError(chatId, e)
+    } finally {
+        pushStatus(chatId, service.status(chatId).name.lowercase())
+    }
+}
+
+private fun parsePermissionDecisionPayload(payload: String?): PermissionDecisionPayload? {
+    return runCatching {
+        val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+        val requestId = obj["requestId"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val decision = obj["decision"]?.jsonPrimitive?.content?.trim().orEmpty()
+        if (requestId.isBlank()) null else PermissionDecisionPayload(requestId, decision)
+    }.getOrNull()
+}
+
+private fun parseSessionMetadataUpdatePayload(payload: String?): SessionMetadataUpdatePayload? {
+    return runCatching {
+        val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+        val conversationId = obj["conversationId"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val sessionId = obj["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val adapterName = obj["adapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
+        if (conversationId.isBlank() || sessionId.isBlank() || adapterName.isBlank()) return@runCatching null
+        SessionMetadataUpdatePayload(
+            conversationId = conversationId,
+            sessionId = sessionId,
+            adapterName = adapterName,
+            promptCount = obj["promptCount"]?.jsonPrimitive?.intOrNull ?: 0,
+            title = obj["title"]?.jsonPrimitive?.contentOrNull,
+            touchUpdatedAt = obj["touchUpdatedAt"]?.jsonPrimitive?.booleanOrNull ?: false
+        )
+    }.getOrNull()
+}
+
+private fun parseContinueConversationPayload(payload: String?): ContinueConversationPayload? {
+    return runCatching {
+        val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
+        val previousSessionId = obj["previousSessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val previousAdapterName = obj["previousAdapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val sessionId = obj["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val adapterName = obj["adapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
+        if (previousSessionId.isBlank() || previousAdapterName.isBlank() || sessionId.isBlank() || adapterName.isBlank()) {
+            return@runCatching null
+        }
+        ContinueConversationPayload(
+            previousSessionId = previousSessionId,
+            previousAdapterName = previousAdapterName,
+            sessionId = sessionId,
+            adapterName = adapterName,
+            title = obj["title"]?.jsonPrimitive?.contentOrNull
+        )
+    }.getOrNull()
+}
+
 private fun AcpBridge.refreshDownloadedAdapterInitialization() {
     val target = AcpAdapterPaths.getExecutionTarget()
     AcpAdapterConfig.getAllAdapters().values.forEach { info ->
@@ -47,21 +149,7 @@ internal fun AcpBridge.installConversationQueries() {
         addHandler { payload ->
             val (chatId, adapterId, modelId) = parseScopedIdPayload(payload, "modelId")
             scope.launch(Dispatchers.Default) {
-                if (chatId == null || adapterId == null || modelId == null) return@launch
-                if (service.activeAdapterName(chatId) != adapterId) return@launch
-                pushStatus(chatId, "initializing")
-                try {
-                    val ok = service.setModel(chatId, modelId)
-                    if (!ok) {
-                        pushContentChunk(chatId, "assistant", "text", text = "[Error: Failed to set model '$modelId']", isReplay = false)
-                    } else {
-                        pushAdapters()
-                    }
-                } catch (e: Exception) {
-                    pushContentChunk(chatId, "assistant", "text", text = "[Error: ${formatAcpError(e)}]", isReplay = false)
-                } finally {
-                    pushStatus(chatId, service.status(chatId).name.lowercase())
-                }
+                handleScopedConfigChange(chatId, adapterId, modelId, "model", service::setModel)
             }
             JBCefJSQuery.Response("ok")
         }
@@ -71,21 +159,7 @@ internal fun AcpBridge.installConversationQueries() {
         addHandler { payload ->
             val (chatId, adapterId, modeId) = parseScopedIdPayload(payload, "modeId")
             scope.launch(Dispatchers.Default) {
-                if (chatId == null || adapterId == null || modeId == null) return@launch
-                if (service.activeAdapterName(chatId) != adapterId) return@launch
-                pushStatus(chatId, "initializing")
-                try {
-                    val ok = service.setMode(chatId, modeId)
-                    if (!ok) {
-                        pushContentChunk(chatId, "assistant", "text", text = "[Error: Failed to set mode '$modeId']", isReplay = false)
-                    } else {
-                        pushAdapters()
-                    }
-                } catch (e: Exception) {
-                    pushContentChunk(chatId, "assistant", "text", text = "[Error: ${formatAcpError(e)}]", isReplay = false)
-                } finally {
-                    pushStatus(chatId, service.status(chatId).name.lowercase())
-                }
+                handleScopedConfigChange(chatId, adapterId, modeId, "mode", service::setMode)
             }
             JBCefJSQuery.Response("ok")
         }
@@ -141,8 +215,9 @@ internal fun AcpBridge.installConversationQueries() {
                         pushStatus(chatId, "ready")
                         throw e
                     } catch (e: Exception) {
-                        pushContentChunk(chatId, "assistant", "text", text = "[Error: ${formatAcpError(e)}]", isReplay = false)
-                        appendLivePromptTextEvent(chatId, "[Error: ${formatAcpError(e)}]", captureId)
+                        val message = "[Error: ${formatAcpError(e)}]"
+                        pushContentChunk(chatId, "assistant", "text", text = message, isReplay = false)
+                        appendLivePromptTextEvent(chatId, message, captureId)
                         flushLivePromptCapture(chatId, captureId)?.let {
                             pushPromptDoneChunk(chatId, it, outcome = "error")
                         }
@@ -190,16 +265,10 @@ internal fun AcpBridge.installConversationQueries() {
 
     respondPermissionQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
-                 val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
-                 val requestId = obj["requestId"]?.jsonPrimitive?.content ?: ""
-                 val decision = obj["decision"]?.jsonPrimitive?.content ?: ""
-                 if (requestId.isNotEmpty()) {
-                    scope.launch(Dispatchers.Default) {
-                        service.respondToPermissionRequest(requestId, decision)
-                    }
-                 }
-            } catch (e: Exception) {
+            parsePermissionDecisionPayload(payload)?.let { request ->
+                scope.launch(Dispatchers.Default) {
+                    service.respondToPermissionRequest(request.requestId, request.decision)
+                }
             }
             JBCefJSQuery.Response("ok")
         }
@@ -241,7 +310,7 @@ internal fun AcpBridge.installConversationQueries() {
                                     pushMode(chatId, service.activeModeId(chatId))
                                 } catch (e: Exception) {
                                     pushStatus(chatId, "error")
-                                    pushContentChunk(chatId, "assistant", "text", text = "[Error: ${formatAcpError(e)}]", isReplay = false)
+                                    pushConversationError(chatId, e)
                                 }
                             }
                         } else {
@@ -279,7 +348,7 @@ internal fun AcpBridge.installConversationQueries() {
                         discardHistoryReplayCapture(chatId)
                         replaySeqByChatId.remove(chatId)
                         pushStatus(chatId, "error")
-                        pushContentChunk(chatId, "assistant", "text", text = "[Error: ${formatAcpError(e)}]", isReplay = false)
+                        pushConversationError(chatId, e)
                     }
                 }
             }
@@ -291,26 +360,16 @@ internal fun AcpBridge.installConversationQueries() {
     updateSessionMetadataQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
             scope.launch(Dispatchers.IO) {
-                try {
-                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
-                    val sessionId = obj["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
-                    val adapterName = obj["adapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
-                    val promptCount = obj["promptCount"]?.jsonPrimitive?.intOrNull ?: 0
-                    val title = obj["title"]?.jsonPrimitive?.contentOrNull
-                    val touchUpdatedAt = obj["touchUpdatedAt"]?.jsonPrimitive?.booleanOrNull ?: false
-                    val conversationId = obj["conversationId"]?.jsonPrimitive?.content?.trim().orEmpty()
-                    if (conversationId.isNotEmpty() && sessionId.isNotEmpty() && adapterName.isNotEmpty()) {
-                        UnifiedHistoryService.upsertRuntimeSessionMetadata(
-                            projectPath = service.project.basePath,
-                            conversationId = conversationId,
-                            sessionId = sessionId,
-                            adapterName = adapterName,
-                            promptCount = promptCount,
-                            titleCandidate = title,
-                            touchUpdatedAt = touchUpdatedAt
-                        )
-                    }
-                } catch (_: Exception) {
+                parseSessionMetadataUpdatePayload(payload)?.let { request ->
+                    UnifiedHistoryService.upsertRuntimeSessionMetadata(
+                        projectPath = service.project.basePath,
+                        conversationId = request.conversationId,
+                        sessionId = request.sessionId,
+                        adapterName = request.adapterName,
+                        promptCount = request.promptCount,
+                        titleCandidate = request.title,
+                        touchUpdatedAt = request.touchUpdatedAt
+                    )
                 }
             }
             JBCefJSQuery.Response("ok")
@@ -320,29 +379,15 @@ internal fun AcpBridge.installConversationQueries() {
     continueConversationQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
             scope.launch(Dispatchers.IO) {
-                try {
-                    val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
-                    val previousSessionId = obj["previousSessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
-                    val previousAdapterName = obj["previousAdapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
-                    val sessionId = obj["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
-                    val adapterName = obj["adapterName"]?.jsonPrimitive?.content?.trim().orEmpty()
-                    val title = obj["title"]?.jsonPrimitive?.contentOrNull
-                    if (
-                        previousSessionId.isNotEmpty() &&
-                        previousAdapterName.isNotEmpty() &&
-                        sessionId.isNotEmpty() &&
-                        adapterName.isNotEmpty()
-                    ) {
-                        UnifiedHistoryService.appendSessionToConversation(
-                            projectPath = service.project.basePath,
-                            previousSessionId = previousSessionId,
-                            previousAdapterName = previousAdapterName,
-                            sessionId = sessionId,
-                            adapterName = adapterName,
-                            titleCandidate = title
-                        )
-                    }
-                } catch (_: Exception) {
+                parseContinueConversationPayload(payload)?.let { request ->
+                    UnifiedHistoryService.appendSessionToConversation(
+                        projectPath = service.project.basePath,
+                        previousSessionId = request.previousSessionId,
+                        previousAdapterName = request.previousAdapterName,
+                        sessionId = request.sessionId,
+                        adapterName = request.adapterName,
+                        titleCandidate = request.title
+                    )
                 }
             }
             JBCefJSQuery.Response("ok")

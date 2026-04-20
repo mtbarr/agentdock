@@ -34,11 +34,13 @@ class McpBridge(
             addHandler { payload ->
                 if (!payload.isNullOrBlank()) {
                     scope.launch(Dispatchers.IO) {
-                        try {
-                            val servers = json.decodeFromString<List<McpServerConfig>>(payload)
+                        val servers = runCatching {
+                            json.decodeFromString<List<McpServerConfig>>(payload)
+                        }.getOrNull()
+                        if (servers != null) {
                             McpConfigStore.save(servers)
                             push(servers)
-                        } catch (_: Exception) {}
+                        }
                     }
                 }
                 JBCefJSQuery.Response("ok")

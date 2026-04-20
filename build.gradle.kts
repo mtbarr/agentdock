@@ -25,6 +25,7 @@ dependencies {
 
 kotlin {
     jvmToolchain(21)
+    sourceSets["main"].kotlin.srcDir(layout.buildDirectory.dir("generated/buildConfig"))
 }
 
 intellijPlatform {
@@ -39,12 +40,29 @@ intellijPlatform {
     }
 }
 
+val devMode = providers.gradleProperty("devMode").map { it.toBoolean() }.getOrElse(false)
+
+val generateBuildConfig by tasks.registering {
+    val outputDir = layout.buildDirectory.dir("generated/buildConfig")
+    val isDev = devMode
+    outputs.dir(outputDir)
+    doLast {
+        val file = outputDir.get().asFile.resolve("unified/ai/gui/BuildConfig.kt")
+        file.parentFile.mkdirs()
+        file.writeText("package unified.ai.gui\n\ninternal object BuildConfig {\n    const val IS_DEV: Boolean = $isDev\n}\n")
+    }
+}
+
 tasks {
     val npm = if (org.gradle.internal.os.OperatingSystem.current().isWindows) "npm.cmd" else "npm"
 
     val npmBuild by registering(Exec::class) {
         workingDir = file("frontend")
         commandLine(npm, "run", "build")
+    }
+
+    compileKotlin {
+        dependsOn(generateBuildConfig)
     }
 
     processResources {

@@ -1,6 +1,7 @@
 package unified.ai.gui.acp
 
 import org.cef.browser.CefBrowser
+import unified.ai.gui.BuildConfig
 import unified.ai.gui.utils.escapeForJsString
 
 
@@ -45,6 +46,7 @@ internal fun AcpBridge.injectDebugApi(cefBrowser: CefBrowser) {
 
     val script = """
         (function() {
+            window.__IS_DEV = ${BuildConfig.IS_DEV};
             window.__requestAdapters = function() {
                 try { $listAdaptersInject } catch (e) { }
             };
@@ -207,6 +209,7 @@ internal fun AcpBridge.injectReadySignal(cefBrowser: CefBrowser) {
 }
 
 internal fun AcpBridge.pushLogEntry(entry: AcpLogEntry) {
+    if (!BuildConfig.IS_DEV) return
     val payload = """{"direction":"${entry.direction}","category":"${entry.category}","json":${escapeJsonString(entry.json)},"timestamp":${entry.timestampMillis}}"""
     val escaped = payload.escapeForJsString()
     runOnEdt {

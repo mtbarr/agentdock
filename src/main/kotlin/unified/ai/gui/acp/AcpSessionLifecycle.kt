@@ -2,54 +2,15 @@ package unified.ai.gui.acp
 
 import com.agentclientprotocol.client.ClientOperationsFactory
 import com.agentclientprotocol.common.ClientSessionOperations
-import com.agentclientprotocol.common.Event
-import com.agentclientprotocol.model.*
 import com.agentclientprotocol.common.SessionCreationParameters
-import kotlinx.coroutines.CompletableDeferred
+import com.agentclientprotocol.model.AcpCreatedSessionResponse
+import com.agentclientprotocol.model.ModelId
+import com.agentclientprotocol.model.SessionId
+import com.agentclientprotocol.model.SessionModeId
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import unified.ai.gui.history.SessionMeta
-import unified.ai.gui.mcp.McpConfigStore
-import unified.ai.gui.mcp.McpServerConfig
-import unified.ai.gui.systeminstructions.SystemInstructionsStore
-
-private fun buildMcpServers(): List<McpServer> =
-    McpConfigStore.loadEnabled().mapNotNull { it.toSdkMcpServer() }
-
-private fun McpServerConfig.toSdkMcpServer(): McpServer? = when (transport) {
-    "stdio" -> {
-        val cmd = command?.takeIf { it.isNotBlank() } ?: return null
-        McpServer.Stdio(
-            name = name,
-            command = cmd,
-            args = args ?: emptyList(),
-            env = env?.map { EnvVariable(it.name, it.value) } ?: emptyList()
-        )
-    }
-    "http" -> {
-        val u = url?.takeIf { it.isNotBlank() } ?: return null
-        McpServer.Http(
-            name = name,
-            url = u,
-            headers = headers?.map { HttpHeader(it.name, it.value) } ?: emptyList()
-        )
-    }
-    "sse" -> {
-        val u = url?.takeIf { it.isNotBlank() } ?: return null
-        McpServer.Sse(
-            name = name,
-            url = u,
-            headers = headers?.map { HttpHeader(it.name, it.value) } ?: emptyList()
-        )
-    }
-    else -> null
-}
 
 internal fun AcpClientService.processKey(adapterName: String): String {
     return "${AcpAdapterPaths.getExecutionTarget().name.lowercase()}:$adapterName"
@@ -58,10 +19,7 @@ internal fun AcpClientService.processKey(adapterName: String): String {
 internal fun AcpClientService.ensureExecutionTargetCurrent() {
     val currentTarget = AcpAdapterPaths.getExecutionTarget()
     val previousTarget = executionTargetRef.getAndSet(currentTarget)
-    if (previousTarget == currentTarget) {
-        return
-    }
-
+    if (previousTarget == currentTarget) return
     resetExecutionEnvironment(previousTarget, clearSessions = false, restartDownloadedAdapters = false)
 }
 
@@ -89,7 +47,12 @@ internal suspend fun AcpClientService.startAgent(
             val requestedAdapterName = adapterInfo.id
             val currentStatus = context.statusRef.get()
 
-            if (currentStatus == AcpClientService.Status.Ready && context.activeAdapterNameRef.get() == requestedAdapterName && resumeSessionId == null && !forceRestart) {
+            if (
+                currentStatus == AcpClientService.Status.Ready &&
+                context.activeAdapterNameRef.get() == requestedAdapterName &&
+                resumeSessionId == null &&
+                !forceRestart
+            ) {
                 return@withLock
             }
 
@@ -98,23 +61,25 @@ internal suspend fun AcpClientService.startAgent(
             }
 
             if (!AcpAdapterPaths.isDownloaded(requestedAdapterName)) {
-                val msg = "Agent '$requestedAdapterName' is not downloaded"
                 context.statusRef.set(AcpClientService.Status.Error)
-                throw IllegalStateException(msg)
+                throw IllegalStateException("Agent '$requestedAdapterName' is not downloaded")
             }
 
             context.statusRef.set(AcpClientService.Status.Initializing)
 
             try {
-                val sharedProc = activeProcesses.computeIfAbsent(processKey(requestedAdapterName)) { createSharedProcess(requestedAdapterName) }
+                val sharedProc = activeProcesses.computeIfAbsent(processKey(requestedAdapterName)) {
+                    createSharedProcess(requestedAdapterName)
+                }
                 context.sharedProcess = sharedProc
 
                 ensureSharedProcessStarted(sharedProc, adapterInfo, forceRestart)
                 ensureAsyncSessionUpdates(sharedProc)
+
                 val runtimeMetadata = adapterRuntimeMetadataMap[requestedAdapterName]
                 val savedPreference = AcpAgentPreferencesStore.preferenceFor(requestedAdapterName)
-
-                val client = sharedProc.client!!
+                val client = sharedProc.client
+                    ?: throw IllegalStateException("ACP client was not initialized for adapter '$requestedAdapterName'")
                 val cwd = resolveSessionCwd(project.basePath ?: System.getProperty("user.dir"))
 
                 val factory = object : ClientOperationsFactory {
@@ -129,52 +94,26 @@ internal suspend fun AcpClientService.startAgent(
                 }
 
                 val params = SessionCreationParameters(cwd = cwd, mcpServers = buildMcpServers())
-                val sess = if (resumeSessionId != null) {
-                    try {
-                        client.resumeSession(SessionId(resumeSessionId), params, factory)
-                    } catch (e: Exception) {
-                        client.newSession(params, factory)
-                    }
-                } else {
-                    client.newSession(params, factory)
+                val session = createOrResumeSession(client, params, factory, resumeSessionId)
+
+                context.session = session
+                context.sessionIdRef.set(session.sessionId.value)
+                bindLiveSessionOwner(chatId, session.sessionId.value)
+                if (resumeSessionId != null && session.sessionId.value == resumeSessionId) {
+                    systemInstructionsInjectedSessionIds.add(session.sessionId.value)
                 }
 
-                context.session = sess
-                context.sessionIdRef.set(sess.sessionId.value)
-                bindLiveSessionOwner(chatId, sess.sessionId.value)
-                if (resumeSessionId != null && sess.sessionId.value == resumeSessionId) {
-                    systemInstructionsInjectedSessionIds.add(sess.sessionId.value)
-                }
-
-                val selectedModelId = resolveModelToApply(
-                    preferredModelId ?: savedPreference?.modelId,
-                    runtimeMetadata?.availableModels ?: emptyList(),
-                    runtimeMetadata?.currentModelId ?: savedPreference?.modelId
+                applyRequestedSessionPreferences(
+                    session = session,
+                    adapterName = requestedAdapterName,
+                    preferredModelId = preferredModelId ?: savedPreference?.modelId,
+                    preferredModeId = savedPreference?.modeId,
+                    runtimeMetadata = runtimeMetadata,
+                    context = context
                 )
-                if (selectedModelId != null) {
-                    try {
-                        sess.setModel(ModelId(selectedModelId))
-                        context.activeModelIdRef.set(selectedModelId)
-                        AcpAgentPreferencesStore.rememberModel(requestedAdapterName, selectedModelId)
-                    } catch (e: Exception) {
-                    }
-                }
-
-                val currentModeId = savedPreference?.modeId
-                    ?.takeIf { preferred -> runtimeMetadata?.availableModes?.any { it.id == preferred } != false }
-                    ?: runtimeMetadata?.currentModeId
-                if (currentModeId != null) {
-                    try {
-                        sess.setMode(SessionModeId(currentModeId))
-                        context.activeModeIdRef.set(currentModeId)
-                        AcpAgentPreferencesStore.rememberMode(requestedAdapterName, currentModeId)
-                    } catch (e: Exception) {
-                    }
-                }
 
                 context.activeAdapterNameRef.set(requestedAdapterName)
                 context.statusRef.set(AcpClientService.Status.Ready)
-
             } catch (e: Exception) {
                 context.stop()
                 context.statusRef.set(AcpClientService.Status.Error)
@@ -198,11 +137,8 @@ internal suspend fun AcpClientService.loadSession(
 
     withContext(Dispatchers.IO) {
         context.lifecycleMutex.withLock {
-            val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
-            val requestedAdapterName = adapterInfo.id
-            val currentStatus = context.statusRef.get()
-
-            if (currentStatus != AcpClientService.Status.NotStarted) {
+            val requestedAdapterName = AcpAdapterPaths.getAdapterInfo(adapterName).id
+            if (context.statusRef.get() != AcpClientService.Status.NotStarted) {
                 context.stop()
             }
 
@@ -246,8 +182,7 @@ internal suspend fun AcpClientService.loadConversation(chatId: String, sessionsC
 
     withContext(Dispatchers.IO) {
         context.lifecycleMutex.withLock {
-            val currentStatus = context.statusRef.get()
-            if (currentStatus != AcpClientService.Status.NotStarted) {
+            if (context.statusRef.get() != AcpClientService.Status.NotStarted) {
                 context.stop()
             }
 
@@ -259,14 +194,13 @@ internal suspend fun AcpClientService.loadConversation(chatId: String, sessionsC
 
             try {
                 sessionsChain.forEachIndexed { index, session ->
-                    val keepActive = index == sessionsChain.lastIndex
                     loadSessionIntoContext(
                         context = context,
                         adapterName = session.adapterName,
                         sessionId = session.sessionId,
                         preferredModelId = session.modelId,
                         preferredModeId = session.modeId,
-                        keepLoadedSessionActive = keepActive
+                        keepLoadedSessionActive = index == sessionsChain.lastIndex
                     )
                 }
 
@@ -298,18 +232,17 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
         replayOwnerBySessionId[sessionId] = context.chatId
     }
 
-    val sharedProc = activeProcesses.computeIfAbsent(processKey(requestedAdapterName)) { createSharedProcess(requestedAdapterName) }
+    val sharedProc = activeProcesses.computeIfAbsent(processKey(requestedAdapterName)) {
+        createSharedProcess(requestedAdapterName)
+    }
     context.sharedProcess = sharedProc
 
     ensureSharedProcessStarted(sharedProc, adapterInfo)
     ensureAsyncSessionUpdates(sharedProc)
-
-    // Set sessionIdRef BEFORE client.loadSession() so that the async
-    // notification worker can match this context for the very first
-    // replay notification.
     context.sessionIdRef.set(sessionId)
 
-    val client = sharedProc.client!!
+    val client = sharedProc.client
+        ?: throw IllegalStateException("ACP client was not initialized for adapter '$requestedAdapterName'")
     val cwd = resolveSessionCwd(project.basePath ?: System.getProperty("user.dir"))
 
     val factory = object : ClientOperationsFactory {
@@ -329,29 +262,29 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
     }
 
     val params = SessionCreationParameters(cwd = cwd, mcpServers = buildMcpServers())
-    val sess = client.loadSession(SessionId(sessionId), params, factory)
+    val session = client.loadSession(SessionId(sessionId), params, factory)
 
-    context.sessionIdRef.set(sess.sessionId.value)
+    context.sessionIdRef.set(session.sessionId.value)
     if (keepLoadedSessionActive) {
-        bindLiveSessionOwner(context.chatId, sess.sessionId.value)
+        bindLiveSessionOwner(context.chatId, session.sessionId.value)
     }
     if (deliverReplay) {
-        replayOwnerBySessionId[sess.sessionId.value] = context.chatId
+        replayOwnerBySessionId[session.sessionId.value] = context.chatId
     }
-    systemInstructionsInjectedSessionIds.add(sess.sessionId.value)
+    systemInstructionsInjectedSessionIds.add(session.sessionId.value)
 
     if (keepLoadedSessionActive) {
-        context.session = sess
+        context.session = session
         context.activeAdapterNameRef.set(requestedAdapterName)
 
-        if (sess.modesSupported) {
-            context.activeModeIdRef.set(sess.currentMode.value.value)
+        if (session.modesSupported) {
+            context.activeModeIdRef.set(session.currentMode.value.value)
         } else if (!preferredModeId.isNullOrBlank()) {
             context.activeModeIdRef.set(preferredModeId.trim())
         }
         @OptIn(com.agentclientprotocol.annotations.UnstableApi::class)
-        if (sess.modelsSupported) {
-            context.activeModelIdRef.set(sess.currentModel.value.value)
+        if (session.modelsSupported) {
+            context.activeModelIdRef.set(session.currentModel.value.value)
         } else if (!preferredModelId.isNullOrBlank()) {
             context.activeModelIdRef.set(preferredModelId.trim())
         }
@@ -359,280 +292,67 @@ internal suspend fun AcpClientService.loadSessionIntoContext(
         context.session = null
     }
 
-    // Drain the async notification queue BEFORE proceeding to the next replay step.
     try {
         awaitPendingSessionUpdates(requestedAdapterName)
     } finally {
         if (deliverReplay) {
-            replayOwnerBySessionId.remove(sess.sessionId.value, context.chatId)
+            replayOwnerBySessionId.remove(session.sessionId.value, context.chatId)
         }
     }
 }
 
 @Suppress("OPT_IN_USAGE")
-internal suspend fun AcpClientService.setModel(chatId: String, modelId: String): Boolean {
-    val context = sessions[chatId] ?: return false
-    val trimmedModelId = modelId.trim()
-    val adapterName = context.activeAdapterNameRef.get() ?: return false
-    val currentModelId = context.activeModelIdRef.get()
-    if (currentModelId == trimmedModelId) {
-        AcpAgentPreferencesStore.rememberModel(adapterName, trimmedModelId)
-        return true
-    }
-
-    val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterName)
-
-    return when (adapterInfo.modelChangeStrategy) {
-        "restart-resume" -> {
-            try {
-                startAgent(chatId, adapterName, trimmedModelId, context.sessionIdRef.get())
-                AcpAgentPreferencesStore.rememberModel(adapterName, trimmedModelId)
-                adapterRuntimeMetadataMap[adapterName]?.let { metadata ->
-                    adapterRuntimeMetadataMap[adapterName] = metadata.copy(currentModelId = trimmedModelId)
-                }
-                true
-            } catch (e: Exception) {
-                false
-            }
-        }
-        else -> {
-            val sess = context.session ?: return false
-            try {
-                withContext(Dispatchers.IO) {
-                    sess.setModel(ModelId(trimmedModelId))
-                }
-                context.activeModelIdRef.set(trimmedModelId)
-                AcpAgentPreferencesStore.rememberModel(adapterName, trimmedModelId)
-                adapterRuntimeMetadataMap[adapterName]?.let { metadata ->
-                    adapterRuntimeMetadataMap[adapterName] = metadata.copy(currentModelId = trimmedModelId)
-                }
-                true
-            } catch (e: Exception) {
-                false
-            }
-        }
-    }
-}
-
-@Suppress("OPT_IN_USAGE")
-internal suspend fun AcpClientService.setMode(chatId: String, modeId: String): Boolean {
-    val context = sessions[chatId] ?: return false
-    val trimmedModeId = modeId.trim()
-    val adapterName = context.activeAdapterNameRef.get()
-    if (context.activeModeIdRef.get() == trimmedModeId) {
-        if (!adapterName.isNullOrBlank()) {
-            AcpAgentPreferencesStore.rememberMode(adapterName, trimmedModeId)
-        }
-        return true
-    }
-
-    val sess = context.session ?: return false
-    return try {
-        withContext(Dispatchers.IO) {
-            sess.setMode(SessionModeId(trimmedModeId))
-        }
-        context.activeModeIdRef.set(trimmedModeId)
-        if (!adapterName.isNullOrBlank()) {
-            AcpAgentPreferencesStore.rememberMode(adapterName, trimmedModeId)
-            adapterRuntimeMetadataMap[adapterName]?.let { metadata ->
-                adapterRuntimeMetadataMap[adapterName] = metadata.copy(currentModeId = trimmedModeId)
-            }
-        }
-        true
-    } catch (e: Exception) {
-        false
-    }
-}
-
-internal fun AcpClientService.respondToPermissionRequest(requestId: String, decision: String) {
-    for (ctx in sessions.values) {
-        val deferred = ctx.pendingRequests.remove(requestId)
-        if (deferred != null) {
-            val response = if (decision == "deny") {
-                RequestPermissionResponse(RequestPermissionOutcome.Cancelled)
-            } else {
-                RequestPermissionResponse(RequestPermissionOutcome.Selected(PermissionOptionId(decision)))
-            }
-            deferred.complete(response)
-            return
-        }
-    }
-}
-
-internal fun AcpClientService.prompt(chatId: String, blocks: List<ContentBlock>): Flow<AcpEvent> = flow {
-    val context = sessions[chatId]
-    if (context == null) {
-        emit(AcpEvent.Error("No session for $chatId"))
-        return@flow
-    }
-
-    // Wait for any ongoing initialization/restart to finish
-    val sess = context.lifecycleMutex.withLock {
-        val s = context.session
-        if (s == null) {
-            emit(AcpEvent.Error("No active agent session."))
-            return@flow
-        }
-
-        s
-    }
-
-    context.statusRef.set(AcpClientService.Status.Prompting)
-    context.ignoreUpdatesUntilPrompt = false
-    var stopReason: String? = null
-    val activeAdapterName = context.activeAdapterNameRef.get()
-    if (!activeAdapterName.isNullOrBlank()) {
-        AcpAgentPreferencesStore.rememberAgent(activeAdapterName)
-    }
-    val sessionId = context.sessionIdRef.get()
-    val isFirstPrompt = !sessionId.isNullOrBlank() && systemInstructionsInjectedSessionIds.add(sessionId)
-    val promptBlocks = if (isFirstPrompt) {
-        val injectedBlock = SystemInstructionsStore.buildInitialPromptBlock()
-        if (injectedBlock != null) {
-            listOf(injectedBlock) + blocks
-        } else {
-            systemInstructionsInjectedSessionIds.remove(sessionId)
-            blocks
+private suspend fun AcpClientService.createOrResumeSession(
+    client: com.agentclientprotocol.client.Client,
+    params: SessionCreationParameters,
+    factory: ClientOperationsFactory,
+    resumeSessionId: String?
+): com.agentclientprotocol.client.ClientSession {
+    return if (resumeSessionId != null) {
+        try {
+            client.resumeSession(SessionId(resumeSessionId), params, factory)
+        } catch (_: Exception) {
+            client.newSession(params, factory)
         }
     } else {
-        blocks
-    }
-    try {
-        sess.prompt(promptBlocks).collect { event ->
-            when (event) {
-                is Event.SessionUpdateEvent -> {
-                    sessionUpdateHandler?.invoke(chatId, event.update, false, null)
-                }
-                is Event.PromptResponseEvent -> {
-                    stopReason = event.response.stopReason.toString()
-                }
-            }
-        }
-        if (!activeAdapterName.isNullOrBlank()) {
-            awaitPendingSessionUpdates(activeAdapterName)
-        }
-        stopReason?.let { emit(AcpEvent.PromptDone(it)) }
-
-    } catch (e: Exception) {
-        if (e is kotlinx.coroutines.CancellationException) throw e
-        emit(AcpEvent.Error(formatAcpError(e)))
-    } finally {
-        if (context.statusRef.get() == AcpClientService.Status.Prompting) {
-            context.statusRef.set(AcpClientService.Status.Ready)
-        }
+        client.newSession(params, factory)
     }
 }
 
-internal suspend fun AcpClientService.cancel(chatId: String) {
-    val context = sessions[chatId] ?: return
-    cancelWithContext(context)
-    context.pendingRequests.values.forEach {
-        it.complete(RequestPermissionResponse(RequestPermissionOutcome.Cancelled))
-    }
-    context.pendingRequests.clear()
-}
-
-internal suspend fun AcpClientService.cancelWithContext(context: AcpClientService.AgentContext) {
-    val sess = context.lifecycleMutex.withLock { context.session } ?: return
-    try {
-        sess.cancel()
-    } catch (e: Exception) {
-    }
-}
-
-internal suspend fun AcpClientService.stopAgent(chatId: String) {
-    val context = sessions[chatId] ?: return
-    cancel(chatId)
-    sessions.remove(chatId)
-    context.stop()
-}
-
-internal fun AcpClientService.stopSharedProcess(adapterName: String) {
-    ensureExecutionTargetCurrent()
-    adapterInitializationJobs.remove(adapterName)?.cancel()
-    adapterInitializationScopes.remove(adapterName)?.coroutineContext?.cancel()
-    val shared = activeProcesses.remove(processKey(adapterName))
-    teardownAdapterProcess(adapterName, shared)
-    updateAdapterInitializationState(adapterName, AcpClientService.AdapterInitializationStatus.NotStarted)
-    adapterInitialization.remove(adapterName)
-    adapterRuntimeMetadataMap.remove(adapterName)
-    availableCommandsByAdapter.remove(adapterName)
-    // Also stop any contexts using this process
-    sessions.values.filter { it.sharedProcess == shared }.forEach { it.stop() }
-}
-
-internal fun AcpClientService.replaceSharedProcess(adapterName: String): AcpClientService.SharedProcess {
-    ensureExecutionTargetCurrent()
-    val previous = activeProcesses.remove(processKey(adapterName))
-    teardownAdapterProcess(adapterName, previous)
-    return createSharedProcess(adapterName).also { activeProcesses[processKey(adapterName)] = it }
-}
-
-internal fun AcpClientService.teardownAdapterProcess(
+@Suppress("OPT_IN_USAGE")
+private suspend fun AcpClientService.applyRequestedSessionPreferences(
+    session: com.agentclientprotocol.client.ClientSession,
     adapterName: String,
-    shared: AcpClientService.SharedProcess?,
-    target: AcpExecutionTarget = executionTargetRef.get()
+    preferredModelId: String?,
+    preferredModeId: String?,
+    runtimeMetadata: AcpClientService.AdapterRuntimeMetadata?,
+    context: AcpClientService.AgentContext
 ) {
-    runCatching { shared?.stop() }
-    runCatching { AcpProcessUtils.stopProcessesUsingAdapterRoot(adapterName, target) }
-}
-
-internal fun AcpClientService.resetExecutionEnvironment(
-    teardownTarget: AcpExecutionTarget,
-    clearSessions: Boolean,
-    restartDownloadedAdapters: Boolean
-) {
-    adapterInitializationJobs.values.forEach { it.cancel() }
-    adapterInitializationJobs.clear()
-    adapterInitializationScopes.values.forEach { it.coroutineContext.cancel() }
-    adapterInitializationScopes.clear()
-    adapterInitialization.clear()
-    adapterInitializationState.clear()
-    adapterInitializationErrors.clear()
-    adapterRuntimeMetadataMap.clear()
-    availableCommandsByAdapter.clear()
-    systemInstructionsInjectedSessionIds.clear()
-    replayOwnerBySessionId.clear()
-
-    sessions.values.forEach { it.stop() }
-    if (clearSessions) {
-        sessions.clear()
-    }
-
-    val processes = activeProcesses.values.toList()
-    activeProcesses.clear()
-    processes.forEach { shared ->
-        runCatching { teardownAdapterProcess(shared.adapterName, shared, teardownTarget) }
-    }
-
-    startupInitializationStarted.set(false)
-    if (restartDownloadedAdapters) {
-        initializeDownloadedAdaptersInBackground()
-    }
-}
-
-internal fun AcpClientService.switchExecutionTarget(previousTarget: AcpExecutionTarget) {
-    executionTargetRef.set(AcpAdapterPaths.getExecutionTarget())
-    resetExecutionEnvironment(
-        teardownTarget = previousTarget,
-        clearSessions = true,
-        restartDownloadedAdapters = true
+    val selectedModelId = resolveModelToApply(
+        preferredModelId,
+        runtimeMetadata?.availableModels ?: emptyList(),
+        runtimeMetadata?.currentModelId ?: preferredModelId
     )
-}
+    if (selectedModelId != null) {
+        runCatching {
+            session.setModel(ModelId(selectedModelId))
+            context.activeModelIdRef.set(selectedModelId)
+            AcpAgentPreferencesStore.rememberModel(adapterName, selectedModelId)
+        }.onFailure {
+            context.activeModelIdRef.set(runtimeMetadata?.currentModelId)
+        }
+    }
 
-internal fun AcpClientService.shutdown() {
-    scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
-    resetExecutionEnvironment(
-        teardownTarget = executionTargetRef.get(),
-        clearSessions = true,
-        restartDownloadedAdapters = false
-    )
-}
-
-internal suspend fun AcpClientService.awaitPendingSessionUpdates(adapterName: String) {
-    val sharedProc = activeProcesses[processKey(adapterName)] ?: return
-    val queue = sharedProc.sessionUpdateQueue ?: return
-    val completed = CompletableDeferred<Unit>()
-    queue.send(QueuedSessionUpdate.Barrier(completed))
-    completed.await()
+    val currentModeId = preferredModeId
+        ?.takeIf { preferred -> runtimeMetadata?.availableModes?.any { it.id == preferred } != false }
+        ?: runtimeMetadata?.currentModeId
+    if (currentModeId != null) {
+        runCatching {
+            session.setMode(SessionModeId(currentModeId))
+            context.activeModeIdRef.set(currentModeId)
+            AcpAgentPreferencesStore.rememberMode(adapterName, currentModeId)
+        }.onFailure {
+            context.activeModeIdRef.set(runtimeMetadata?.currentModeId)
+        }
+    }
 }

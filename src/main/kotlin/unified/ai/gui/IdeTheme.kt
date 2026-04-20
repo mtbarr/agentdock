@@ -67,11 +67,11 @@ object IdeTheme {
         // 2. Base fonts only — UI and Code
         val baseFont = com.intellij.util.ui.JBFont.regular()
         sb.append("  --ide-font-family: '${baseFont.family}', sans-serif;\n")
-        sb.append("  --ide-font-size: ${baseFont.size2D}px;\n")
+        sb.append("  --ide-font-size: ${baseFont.size2D + 2}px;\n")
         sb.append("  --ui-font-size-offset: ${GlobalSettingsStore.uiFontSizeOffsetPx()}px;\n")
 
         sb.append("  --ide-code-font-family: '${scheme.editorFontName}', monospace;\n")
-        sb.append("  --ide-code-font-size: ${scheme.editorFontSize}px;\n")
+        sb.append("  --ide-code-font-size: ${scheme.editorFontSize + 1}px;\n")
 
         // 3. Editor colors
         sb.append("  --ide-editor-bg: ${toCssColor(scheme.defaultBackground)};\n")

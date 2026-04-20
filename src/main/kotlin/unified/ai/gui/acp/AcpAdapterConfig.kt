@@ -32,6 +32,7 @@ object AcpAdapterConfig {
         val uiMode: String = "login_logout",
         val loginMode: String = "background",
         val command: List<String> = emptyList(),
+        val authNpmPackage: String? = null,
         val statusArgs: List<String> = emptyList(),
         val loginArgs: List<String> = emptyList(),
         val logoutArgs: List<String> = emptyList()

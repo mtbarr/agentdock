@@ -21,27 +21,33 @@ import java.io.File
 internal fun AcpBridge.installFileChangeQueries() {
     undoFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            val request = runCatching {
                 val raw = payload ?: "{}"
                 val obj = Json.parseToJsonElement(raw).jsonObject
-                val chatId = obj["chatId"]?.jsonPrimitive?.content ?: ""
-                val filePath = obj["filePath"]?.jsonPrimitive?.content ?: ""
-                val status = obj["status"]?.jsonPrimitive?.content ?: "M"
-                val ops = obj["operations"]?.jsonArray?.map { opEl ->
-                    val opObj = opEl.jsonObject
-                    UndoOperation(
-                        opObj["oldText"]?.jsonPrimitive?.content ?: "",
-                        opObj["newText"]?.jsonPrimitive?.content ?: ""
-                    )
-                } ?: emptyList()
+                UndoSingleFileRequest(
+                    chatId = obj["chatId"]?.jsonPrimitive?.content ?: "",
+                    filePath = obj["filePath"]?.jsonPrimitive?.content ?: "",
+                    status = obj["status"]?.jsonPrimitive?.content ?: "M",
+                    operations = obj["operations"]?.jsonArray?.map { opEl ->
+                        val opObj = opEl.jsonObject
+                        UndoOperation(
+                            opObj["oldText"]?.jsonPrimitive?.content ?: "",
+                            opObj["newText"]?.jsonPrimitive?.content ?: ""
+                        )
+                    } ?: emptyList()
+                )
+            }.getOrNull()
 
-                if (chatId.isNotEmpty() && filePath.isNotEmpty()) {
-                    runOnEdt {
-                        val result = UndoFileHandler.undoSingleFile(service.project, filePath, status, ops)
-                        pushUndoResult(chatId, result)
-                    }
+            if (request != null && request.chatId.isNotEmpty() && request.filePath.isNotEmpty()) {
+                runOnEdt {
+                    val result = UndoFileHandler.undoSingleFile(
+                        service.project,
+                        request.filePath,
+                        request.status,
+                        request.operations
+                    )
+                    pushUndoResult(request.chatId, result)
                 }
-            } catch (e: Exception) {
             }
             JBCefJSQuery.Response("ok")
         }
@@ -49,30 +55,32 @@ internal fun AcpBridge.installFileChangeQueries() {
 
     undoAllFilesQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            val request = runCatching {
                 val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
-                val chatId = obj["chatId"]?.jsonPrimitive?.content ?: ""
-                val filesArr = obj["files"]?.jsonArray ?: return@addHandler JBCefJSQuery.Response("ok")
-                val files = filesArr.map { fEl ->
-                    val fObj = fEl.jsonObject
-                    val path = fObj["filePath"]?.jsonPrimitive?.content ?: ""
-                    val st = fObj["status"]?.jsonPrimitive?.content ?: "M"
-                    val ops = fObj["operations"]?.jsonArray?.map { opEl ->
-                        val opObj = opEl.jsonObject
-                        UndoOperation(
-                            opObj["oldText"]?.jsonPrimitive?.content ?: "",
-                            opObj["newText"]?.jsonPrimitive?.content ?: ""
-                        )
-                    } ?: emptyList()
-                    Triple(path, st, ops)
-                }
-                if (chatId.isNotEmpty()) {
-                    runOnEdt {
-                        val result = UndoFileHandler.undoAllFiles(service.project, files)
-                        pushUndoResult(chatId, result)
+                val filesArr = obj["files"]?.jsonArray ?: return@runCatching null
+                UndoAllFilesRequest(
+                    chatId = obj["chatId"]?.jsonPrimitive?.content ?: "",
+                    files = filesArr.map { fEl ->
+                        val fObj = fEl.jsonObject
+                        val path = fObj["filePath"]?.jsonPrimitive?.content ?: ""
+                        val status = fObj["status"]?.jsonPrimitive?.content ?: "M"
+                        val operations = fObj["operations"]?.jsonArray?.map { opEl ->
+                            val opObj = opEl.jsonObject
+                            UndoOperation(
+                                opObj["oldText"]?.jsonPrimitive?.content ?: "",
+                                opObj["newText"]?.jsonPrimitive?.content ?: ""
+                            )
+                        } ?: emptyList()
+                        Triple(path, status, operations)
                     }
+                )
+            }.getOrNull()
+
+            if (request != null && request.chatId.isNotEmpty()) {
+                runOnEdt {
+                    val result = UndoFileHandler.undoAllFiles(service.project, request.files)
+                    pushUndoResult(request.chatId, result)
                 }
-            } catch (e: Exception) {
             }
             JBCefJSQuery.Response("ok")
         }
@@ -80,7 +88,7 @@ internal fun AcpBridge.installFileChangeQueries() {
 
     processFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            runCatching {
                 val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
                 val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
                 val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
@@ -95,7 +103,6 @@ internal fun AcpBridge.installFileChangeQueries() {
                         toolCallIndex
                     )
                 }
-            } catch (e: Exception) {
             }
             JBCefJSQuery.Response("ok")
         }
@@ -103,7 +110,7 @@ internal fun AcpBridge.installFileChangeQueries() {
 
     keepAllQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            runCatching {
                 val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
                 val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
                 val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
@@ -111,7 +118,6 @@ internal fun AcpBridge.installFileChangeQueries() {
                 if (sessionId.isNotEmpty() && adapterName.isNotEmpty()) {
                     ChangesStateService.setBaseIndex(service.project.basePath.orEmpty(), sessionId, adapterName, toolCallIndex)
                 }
-            } catch (e: Exception) {
             }
             JBCefJSQuery.Response("ok")
         }
@@ -119,7 +125,7 @@ internal fun AcpBridge.installFileChangeQueries() {
 
     removeProcessedFilesQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            runCatching {
                 val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
                 val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
                 val adapterName = obj["adapterName"]?.jsonPrimitive?.content ?: ""
@@ -127,7 +133,6 @@ internal fun AcpBridge.installFileChangeQueries() {
                 if (sessionId.isNotEmpty() && adapterName.isNotEmpty() && filePaths.isNotEmpty()) {
                     ChangesStateService.removeProcessedFiles(service.project.basePath.orEmpty(), sessionId, adapterName, filePaths)
                 }
-            } catch (e: Exception) {
             }
             JBCefJSQuery.Response("ok")
         }
@@ -135,7 +140,7 @@ internal fun AcpBridge.installFileChangeQueries() {
 
     getChangesStateQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            runCatching {
                 val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
                 val chatId = obj["chatId"]?.jsonPrimitive?.content ?: ""
                 val sessionId = obj["sessionId"]?.jsonPrimitive?.content ?: ""
@@ -145,7 +150,6 @@ internal fun AcpBridge.installFileChangeQueries() {
                     val hasPluginEdits = state != null
                     pushChangesState(chatId, state ?: ChangesState(sessionId, adapterName), hasPluginEdits)
                 }
-            } catch (e: Exception) {
             }
             JBCefJSQuery.Response("ok")
         }
@@ -153,7 +157,7 @@ internal fun AcpBridge.installFileChangeQueries() {
 
     computeFileChangeStatsQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            runCatching {
                 val request = adapterJson.decodeFromString<FileChangeStatsRequestPayload>(payload ?: "{}")
                 if (request.requestId.isNotBlank()) {
                     val files = request.files.mapNotNull { file ->
@@ -173,7 +177,6 @@ internal fun AcpBridge.installFileChangeQueries() {
                     }
                     pushFileChangeStats(FileChangeStatsResultPayload(requestId = request.requestId, files = files))
                 }
-            } catch (_: Exception) {
             }
             JBCefJSQuery.Response("ok")
         }
@@ -181,7 +184,7 @@ internal fun AcpBridge.installFileChangeQueries() {
 
     showDiffQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            runCatching {
                 val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
                 val filePath = obj["filePath"]?.jsonPrimitive?.content ?: ""
                 val status = obj["status"]?.jsonPrimitive?.content ?: "M"
@@ -197,7 +200,6 @@ internal fun AcpBridge.installFileChangeQueries() {
                         AgentDiffViewer.showAgentDiff(service.project, filePath, status, ops)
                     }
                 }
-            } catch (e: Exception) {
             }
             JBCefJSQuery.Response("ok")
         }
@@ -275,39 +277,19 @@ internal fun AcpBridge.installMiscQueries() {
     }
     openFileQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
         addHandler { payload ->
-            try {
+            val request = runCatching {
                 val obj = Json.parseToJsonElement(payload ?: "{}").jsonObject
-                val filePath = obj["filePath"]?.jsonPrimitive?.content ?: ""
-                if (filePath.isNotEmpty()) {
-                    runOnEdt {
-                        try {
-                            val resolved = UndoFileHandler.resolveFilePath(service.project, filePath)
-                            val resolvedFile = File(resolved)
-                            val base = service.project.basePath
-                            val finalFile = if (resolvedFile.isAbsolute) {
-                                resolvedFile
-                            } else if (!base.isNullOrBlank()) {
-                                File(base, resolved)
-                            } else {
-                                resolvedFile
-                            }
+                OpenFileRequest(
+                    filePath = obj["filePath"]?.jsonPrimitive?.content ?: "",
+                    line = obj["line"]?.jsonPrimitive?.intOrNull ?: -1
+                )
+            }.getOrNull()
 
-                            val canonical = try { finalFile.canonicalPath } catch (_: Exception) { finalFile.path }
-
-                            val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(File(canonical))
-                            if (vf != null && vf.exists()) {
-                                val line = obj["line"]?.jsonPrimitive?.intOrNull ?: -1
-                                if (line >= 0) {
-                                    val descriptor = com.intellij.openapi.fileEditor.OpenFileDescriptor(service.project, vf, line, 0)
-                                    FileEditorManager.getInstance(service.project).openEditor(descriptor, true)
-                                } else {
-                                    FileEditorManager.getInstance(service.project).openFile(vf, true)
-                                }
-                            }
-                        } catch (_: Exception) {}
-                    }
+            if (request != null && request.filePath.isNotEmpty()) {
+                runOnEdt {
+                    openRequestedFile(request)
                 }
-            } catch (_: Exception) {}
+            }
             JBCefJSQuery.Response("ok")
         }
     }
@@ -316,9 +298,9 @@ internal fun AcpBridge.installMiscQueries() {
         addHandler { url ->
             if (url != null && url.isNotBlank()) {
                 runOnEdt {
-                    try {
+                    runCatching {
                         com.intellij.ide.BrowserUtil.browse(url)
-                    } catch (_: Exception) {}
+                    }
                 }
             }
             JBCefJSQuery.Response("ok")
@@ -373,4 +355,49 @@ internal fun AcpBridge.installMiscQueries() {
         }
     }
 
+}
+
+private data class UndoSingleFileRequest(
+    val chatId: String,
+    val filePath: String,
+    val status: String,
+    val operations: List<UndoOperation>
+)
+
+private data class UndoAllFilesRequest(
+    val chatId: String,
+    val files: List<Triple<String, String, List<UndoOperation>>>
+)
+
+private data class OpenFileRequest(
+    val filePath: String,
+    val line: Int
+)
+
+private fun AcpBridge.openRequestedFile(request: OpenFileRequest): Boolean {
+    return runCatching {
+        val resolved = UndoFileHandler.resolveFilePath(service.project, request.filePath)
+        val resolvedFile = File(resolved)
+        val base = service.project.basePath
+        val finalFile = if (resolvedFile.isAbsolute) {
+            resolvedFile
+        } else if (!base.isNullOrBlank()) {
+            File(base, resolved)
+        } else {
+            resolvedFile
+        }
+
+        val canonical = runCatching { finalFile.canonicalPath }.getOrElse { finalFile.path }
+        val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(File(canonical))
+            ?.takeIf { it.exists() }
+            ?: return false
+
+        if (request.line >= 0) {
+            val descriptor = com.intellij.openapi.fileEditor.OpenFileDescriptor(service.project, vf, request.line, 0)
+            FileEditorManager.getInstance(service.project).openEditor(descriptor, true)
+        } else {
+            FileEditorManager.getInstance(service.project).openFile(vf, true)
+        }
+        true
+    }.getOrDefault(false)
 }

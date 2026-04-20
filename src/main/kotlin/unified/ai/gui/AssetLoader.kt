@@ -7,26 +7,13 @@ import java.nio.charset.StandardCharsets
  */
 object AssetLoader {
 
-    fun loadAndInlineAssets(resourceClass: Class<*>): String {
-        return try {
-            val indexHtml = readResource(resourceClass, "/webview/index.html")
-            val jsContent = readResource(resourceClass, "/webview/assets/index.js")
-            val cssContent = readResource(resourceClass, "/webview/assets/index.css")
-            
-            // Read fonts as base64 to ensure they load in JCEF
+    private var fontFaceCssCache: String? = null
+
+    fun generateFontFaceCss(resourceClass: Class<*>): String {
+        return fontFaceCssCache ?: run {
             val regularFontBase64 = readBinaryResourceAsBase64(resourceClass, "/fonts/Inter-Regular.woff2")
             val boldFontBase64 = readBinaryResourceAsBase64(resourceClass, "/fonts/Inter-Bold.woff2")
-
-            var html = indexHtml
-
-            // Remove Vite-generated script/link tags
-            html = html.replace(Regex("""<script[^>]*src="\./assets/index\.js"[^>]*>\s*</script>"""), "")
-            html = html.replace(Regex("""<link[^>]*href="\./assets/index\.css"[^>]*>"""), "")
-
-            // Generate dynamic CSS from current theme
-            val themeCss = IdeTheme.generateCssBlock()
-
-            val fontFaceCss = """
+            val css = """
                 @font-face {
                     font-family: 'Inter';
                     src: url(data:font/woff2;base64,$regularFontBase64) format('woff2');
@@ -40,6 +27,27 @@ object AssetLoader {
                     font-style: normal;
                 }
             """.trimIndent()
+            fontFaceCssCache = css
+            css
+        }
+    }
+
+    fun loadAndInlineAssets(resourceClass: Class<*>): String {
+        return try {
+            val indexHtml = readResource(resourceClass, "/webview/index.html")
+            val jsContent = readResource(resourceClass, "/webview/assets/index.js")
+            val cssContent = readResource(resourceClass, "/webview/assets/index.css")
+
+            var html = indexHtml
+
+            // Remove Vite-generated script/link tags
+            html = html.replace(Regex("""<script[^>]*src="\./assets/index\.js"[^>]*>\s*</script>"""), "")
+            html = html.replace(Regex("""<link[^>]*href="\./assets/index\.css"[^>]*>"""), "")
+
+            // Generate dynamic CSS from current theme
+            val themeCss = IdeTheme.generateCssBlock()
+
+            val fontFaceCss = generateFontFaceCss(resourceClass)
 
             val injection = """
                 <style>

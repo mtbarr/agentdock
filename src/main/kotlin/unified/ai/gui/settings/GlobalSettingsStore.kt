@@ -4,6 +4,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import unified.ai.gui.acp.AcpAdapterPaths
 import unified.ai.gui.gitcommit.GitCommitFeatureRuntimeState
+import unified.ai.gui.utils.atomicWriteText
 import java.io.File
 
 object GlobalSettingsStore {
@@ -45,7 +46,7 @@ object GlobalSettingsStore {
         )
         val file = settingsFile()
         file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString(normalized))
+        file.atomicWriteText(json.encodeToString(normalized))
         GitCommitFeatureRuntimeState.setEnabled(normalized.gitCommitGeneration.enabled)
         return normalized
     }

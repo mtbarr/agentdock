@@ -15,7 +15,10 @@
       "win": "node.exe",
       "unix": "node"
     },
-    "entryPath": "node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
+    "entryPath": "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "args": [
+      "--cli"
+    ],
     "resumeArgs": [
       "-r",
       "{sessionId}"

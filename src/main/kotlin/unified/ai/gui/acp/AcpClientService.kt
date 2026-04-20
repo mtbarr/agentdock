@@ -127,12 +127,19 @@ class AcpClientService private constructor(val project: Project) {
         fun stop() {
             val runningProcess = process
             val processHandle = runCatching { runningProcess?.toHandle() }.getOrNull()
-            try {
+            val stopped = runCatching {
                 processHandle?.let { AcpProcessUtils.destroyProcessTree(it) } ?: run {
                     runningProcess?.destroyForcibly()
                     runningProcess?.waitFor(2, TimeUnit.SECONDS)
                 }
-            } catch (_: Exception) {}
+                true
+            }.getOrDefault(false)
+            if (!stopped) {
+                runCatching {
+                    runningProcess?.destroyForcibly()
+                    runningProcess?.waitFor(2, TimeUnit.SECONDS)
+                }
+            }
             process = null
             client = null
             protocol = null

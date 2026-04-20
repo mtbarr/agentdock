@@ -157,9 +157,10 @@ private fun AcpBridge.convertBrokenOtherPatchToolCallJson(rawJson: String): Stri
     }
 
     fun flush() {
-        if (path.isBlank() || mode == null) return
+        val currentMode = mode ?: return
+        if (path.isBlank()) return
         flushHunk()
-        files += PatchFile(path, mode!!, hunks)
+        files += PatchFile(path, currentMode, hunks)
         path = ""
         mode = null
         hunks = mutableListOf()

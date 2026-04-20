@@ -50,7 +50,8 @@ internal object AcpProcessUtils {
         } catch (_: Exception) {
             null
         }
-        if (command != null && normalizeProcessPath(command)?.startsWith(normalizedRoot) == true) {
+        val cmdPath = if (command != null) normalizeProcessPath(command) else null
+        if (cmdPath != null && (cmdPath == normalizedRoot || cmdPath.startsWith("$normalizedRoot/"))) {
             return true
         }
 
@@ -60,7 +61,8 @@ internal object AcpProcessUtils {
             null
         }
         return arguments?.any { arg ->
-            normalizeProcessPath(arg)?.startsWith(normalizedRoot) == true
+            val argPath = normalizeProcessPath(arg)
+            argPath != null && (argPath == normalizedRoot || argPath.startsWith("$normalizedRoot/"))
         } == true
     }
 

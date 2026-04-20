@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import unified.ai.gui.acp.AcpAdapterPaths
+import unified.ai.gui.utils.atomicWriteText
 import java.io.File
 
 @Serializable
@@ -34,7 +35,7 @@ object SystemInstructionsStore {
 
     @Synchronized
     fun save(instructions: List<SystemInstruction>) {
-        configFile.writeText(json.encodeToString(ListSerializer(SystemInstruction.serializer()), instructions))
+        configFile.atomicWriteText(json.encodeToString(ListSerializer(SystemInstruction.serializer()), instructions))
     }
 
     fun loadEnabled(): List<SystemInstruction> {

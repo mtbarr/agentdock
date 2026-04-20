@@ -84,13 +84,13 @@ internal fun parseBlocksPayload(payload: String?): ParsedBlocksPayload {
 
         // 3. If textValue looks like a JSON array of blocks, try to parse it (compatibility with current UI)
         if (textValue.startsWith("[") && textValue.endsWith("]")) {
-            try {
+            runCatching {
                 val rawBlocks = Json.parseToJsonElement(textValue).jsonArray.mapNotNull { it as? JsonObject }
                 val blocks = parseContentBlocks(JsonArray(rawBlocks))
-                if (blocks.isNotEmpty()) {
-                    return ParsedBlocksPayload(chatId = chatId, blocks = blocks, rawBlocks = rawBlocks)
-                }
-            } catch (_: Exception) {}
+                ParsedBlocksPayload(chatId = chatId, blocks = blocks, rawBlocks = rawBlocks)
+            }.getOrNull()?.takeIf { it.blocks.isNotEmpty() }?.let { parsed ->
+                return parsed
+            }
         }
 
         // 4. Final fallback: treat as plain text
@@ -127,7 +127,8 @@ internal fun parseContentBlocks(blocksElement: JsonElement): List<ContentBlock> 
                 val path = blockObj["path"]?.jsonPrimitive?.content
                 val defaultMime = if (type == "video") "video/mp4" else "application/octet-stream"
                 val mimeType = blockObj["mimeType"]?.jsonPrimitive?.content ?: defaultMime
-                val name = blockObj["name"]?.jsonPrimitive?.content ?: type!!
+                val fallbackName = if (type == "video") "video" else "file"
+                val name = blockObj["name"]?.jsonPrimitive?.content ?: fallbackName
                 fileOrVideoBlock(name, mimeType, data, path)
             }
             "code_ref" -> codeRefBlockToText(blockObj)

@@ -145,12 +145,13 @@ export const ACPBridge = {
     };
 
     window.__onAcpLog = (payload) => {
+      const isDev = !!(window as any).__IS_DEV;
       let parsed: unknown = payload.json;
       if (payload.category === 'PROTOCOL') {
         try {
           parsed = JSON.parse(payload.json);
         } catch (_) {}
-        console.log('[ACP JSON]', payload.direction, parsed);
+        if (isDev) console.log('[ACP JSON]', payload.direction, parsed);
 
         const message = parsed as Record<string, any> | null;
         if (message && typeof message === 'object') {
@@ -159,14 +160,14 @@ export const ACPBridge = {
 
           if (payload.direction === 'SENT' && id !== undefined && method) {
             pendingRpcMethodsById.set(id, method);
-            if (method === 'session/load') {
+            if (isDev && method === 'session/load') {
               console.log('[ACP TRACE] session/load started', { id, request: message });
             }
           }
 
           if (payload.direction === 'RECEIVED' && id !== undefined) {
             const pendingMethod = pendingRpcMethodsById.get(id);
-            if (pendingMethod === 'session/load') {
+            if (isDev && pendingMethod === 'session/load') {
               console.log('[ACP TRACE] session/load completed', { id, response: message });
             }
             if (pendingMethod) {
@@ -175,9 +176,9 @@ export const ACPBridge = {
           }
         }
       } else if (payload.category === 'INTERNAL') {
-        console.log('[ACP INTERNAL]', payload.json);
+        if (isDev) console.log('[ACP INTERNAL]', payload.json);
       }
-      
+
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.LOG, { detail: payload }));
     };
 

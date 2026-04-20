@@ -3,6 +3,7 @@ package unified.ai.gui.acp
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import unified.ai.gui.utils.atomicWriteText
 import java.io.File
 
 @Serializable
@@ -42,7 +43,7 @@ object AcpAgentPreferencesStore {
         val normalized = normalize(state)
         val file = stateFile()
         file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString(normalized))
+        file.atomicWriteText(json.encodeToString(normalized))
         normalized
     }
 

@@ -105,7 +105,6 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
                     data: img.data
                   }}
                   onImageClick={onImageClick}
-                  flushLeft={idx === 0}
                 />
               );
             }
@@ -119,7 +118,6 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
                   startLine={codeRef.startLine}
                   endLine={codeRef.endLine}
                   onClick={() => handleOpenFile(codeRef.path, codeRef.startLine)}
-                  flushLeft={idx === 0}
                   showTooltip={false}
                 />
               );

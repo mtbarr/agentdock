@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import unified.ai.gui.acp.AcpAdapterPaths
+import unified.ai.gui.utils.atomicWriteText
 import java.io.File
 
 @Serializable
@@ -59,7 +60,7 @@ object McpConfigStore {
     }
 
     fun save(servers: List<McpServerConfig>) {
-        configFile.writeText(json.encodeToString(ListSerializer(McpServerConfig.serializer()), servers))
+        configFile.atomicWriteText(json.encodeToString(ListSerializer(McpServerConfig.serializer()), servers))
     }
 
     fun loadEnabled(): List<McpServerConfig> = load().filter { it.enabled }

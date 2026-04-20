@@ -29,15 +29,9 @@ import unified.ai.gui.mcp.McpBridge
 import unified.ai.gui.promptlibrary.PromptLibraryBridge
 import unified.ai.gui.settings.SettingsBridge
 import unified.ai.gui.systeminstructions.SystemInstructionsBridge
-import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.fileEditor.FileEditorManager
-import unified.ai.gui.utils.toProjectRelativePath
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.FlowLayout
-import java.awt.datatransfer.DataFlavor
-import java.awt.dnd.*
-import java.io.File
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JProgressBar
@@ -52,11 +46,7 @@ class UnifiedAiGuiToolWindowFactory : ToolWindowFactory, DumbAware {
     private var settingsBridge: SettingsBridge? = null
 
     companion object {
-        // --- DEVELOPMENT TOGGLE ---
-        // Set to true to load from Vite dev server (http://localhost:5173) instead of built resources.
-        // Remember to run 'npm run dev' in the 'frontend' directory.
-        private const val IS_DEV_MODE = true
-        private const val DEV_URL = "http://localhost:5173"
+        private val IS_DEV_MODE = BuildConfig.IS_DEV
     }
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -100,88 +90,7 @@ class UnifiedAiGuiToolWindowFactory : ToolWindowFactory, DumbAware {
                         val browser = JBCefBrowser()
                         ExternalCodeReferenceDispatcher.register(project, browser)
 
-                        val dropTarget = DropTarget(browser.component, object : DropTargetAdapter() {
-                            private fun isAcceptable(dtde: DropTargetDragEvent): Boolean =
-                                dtde.isDataFlavorSupported(DataFlavor.javaFileListFlavor) ||
-                                dtde.isDataFlavorSupported(DataFlavor.stringFlavor)
-
-                            private fun setDragHighlight(on: Boolean) {
-                                val js = if (on)
-                                    "window.dispatchEvent(new CustomEvent('drag-highlight', { detail: { active: true } }));"
-                                else
-                                    "window.dispatchEvent(new CustomEvent('drag-highlight', { detail: { active: false } }));"
-                                browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
-                            }
-
-                            override fun dragEnter(dtde: DropTargetDragEvent) {
-                                if (isAcceptable(dtde)) {
-                                    dtde.acceptDrag(DnDConstants.ACTION_COPY)
-                                    setDragHighlight(true)
-                                } else {
-                                    dtde.rejectDrag()
-                                }
-                            }
-
-                            override fun dragOver(dtde: DropTargetDragEvent) {
-                                if (isAcceptable(dtde)) dtde.acceptDrag(DnDConstants.ACTION_COPY) else dtde.rejectDrag()
-                            }
-
-                            override fun dragExit(dte: DropTargetEvent) {
-                                setDragHighlight(false)
-                            }
-
-                            private fun handleFileDrop(dtde: DropTargetDropEvent) {
-                                dtde.acceptDrop(DnDConstants.ACTION_COPY)
-                                try {
-                                    @Suppress("UNCHECKED_CAST")
-                                    val files = dtde.transferable.getTransferData(DataFlavor.javaFileListFlavor) as List<File>
-                                    files.filter { it.isFile || it.isDirectory }.forEach { file ->
-                                        val reference = ExternalCodeReference(
-                                            path = toProjectRelativePath(project, file.path),
-                                            fileName = file.name
-                                        )
-                                        ExternalCodeReferenceDispatcher.dispatch(project, reference)
-                                    }
-                                    dtde.dropComplete(true)
-                                } catch (_: Exception) {
-                                    dtde.dropComplete(false)
-                                }
-                            }
-
-                            private fun handleTextDrop(dtde: DropTargetDropEvent) {
-                                val editor = FileEditorManager.getInstance(project).selectedTextEditor
-                                if (editor == null || !editor.selectionModel.hasSelection()) {
-                                    dtde.rejectDrop()
-                                    return
-                                }
-                                val virtualFile = FileDocumentManager.getInstance().getFile(editor.document)
-                                if (virtualFile == null) {
-                                    dtde.rejectDrop()
-                                    return
-                                }
-
-                                dtde.acceptDrop(DnDConstants.ACTION_COPY)
-                                val startLine = editor.document.getLineNumber(editor.selectionModel.selectionStart) + 1
-                                val endLine = editor.document.getLineNumber(editor.selectionModel.selectionEnd) + 1
-                                val reference = ExternalCodeReference(
-                                    path = toProjectRelativePath(project, virtualFile.path),
-                                    fileName = virtualFile.name,
-                                    startLine = startLine,
-                                    endLine = endLine
-                                )
-                                ExternalCodeReferenceDispatcher.dispatch(project, reference)
-                                dtde.dropComplete(true)
-                            }
-
-                            override fun drop(dtde: DropTargetDropEvent) {
-                                setDragHighlight(false)
-                                when {
-                                    dtde.isDataFlavorSupported(DataFlavor.javaFileListFlavor) -> handleFileDrop(dtde)
-                                    dtde.isDataFlavorSupported(DataFlavor.stringFlavor) -> handleTextDrop(dtde)
-                                    else -> dtde.rejectDrop()
-                                }
-                            }
-                        })
+                        val dropTarget = JcefDragAndDropSupport.install(project, browser)
 
                         val service = AcpClientService.getInstance(project)
                         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -238,24 +147,6 @@ class UnifiedAiGuiToolWindowFactory : ToolWindowFactory, DumbAware {
                         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
                             override fun onLoadEnd(cefBrowser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
                                 if (frame.isMain) {
-                                    // Inject theme CSS if in dev mode (since it's not inlined in index.html)
-                                    if (IS_DEV_MODE) {
-                                        val themeCss = IdeTheme.generateCssBlock()
-                                        val escapedThemeCss = themeCss.replace("`", "\\`").replace("$", "\\$")
-                                        val themeInjection = """
-                                            (function() {
-                                              let style = document.getElementById('ide-theme-style');
-                                              if (!style) {
-                                                style = document.createElement('style');
-                                                style.id = 'ide-theme-style';
-                                                document.head.appendChild(style);
-                                              }
-                                              style.textContent = `$escapedThemeCss`;
-                                            })();
-                                        """.trimIndent()
-                                        cefBrowser.executeJavaScript(themeInjection, cefBrowser.url, 0)
-                                    }
-
                                     val cursorInjection = """
                                         window.__lastSentCursor = 'default';
                                         document.addEventListener('mousemove', function(e) {
@@ -339,19 +230,7 @@ class UnifiedAiGuiToolWindowFactory : ToolWindowFactory, DumbAware {
         // Reload JCEF when the IntelliJ theme changes (so CSS variables update)
         val connection = ApplicationManager.getApplication().messageBus.connect(browser)
         connection.subscribe(LafManagerListener.TOPIC, LafManagerListener {
-            if (IS_DEV_MODE) {
-                // In dev mode, we just re-run the injection in the current page
-                val themeCss = IdeTheme.generateCssBlock()
-                val escapedThemeCss = themeCss.replace("`", "\\`").replace("$", "\\$")
-                browser.cefBrowser.executeJavaScript("""
-                    (function() {
-                        const style = document.getElementById('ide-theme-style');
-                        if (style) style.textContent = `$escapedThemeCss`;
-                    })();
-                """.trimIndent(), browser.cefBrowser.url, 0)
-            } else {
-                loadContent(browser)
-            }
+            loadContent(browser)
         })
 
         panel.add(browser.component, BorderLayout.CENTER)
@@ -359,13 +238,8 @@ class UnifiedAiGuiToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 
     private fun loadContent(browser: JBCefBrowser) {
-        if (IS_DEV_MODE) {
-            browser.loadURL(DEV_URL)
-        } else {
-            // Load all content as a single HTML block using helper classes
-            val html = AssetLoader.loadAndInlineAssets(javaClass)
-            browser.loadHTML(html)
-        }
+        val html = AssetLoader.loadAndInlineAssets(javaClass)
+        browser.loadHTML(html)
     }
 
     private fun forceBrowserRepaint(browser: JBCefBrowser) {
