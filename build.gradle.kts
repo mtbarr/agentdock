@@ -31,8 +31,8 @@ intellijPlatform {
     buildSearchableOptions = false
     pluginConfiguration {
         version = providers.gradleProperty("pluginVersion")
-        name = "Unified LLM Agents"
-        description = "Unified LLM AI Agents plugin."
+        name = "Unified AI Agent Interface"
+        description = "A unified interface for widely used AI coding agents such as Codex, Claude Code, Copilot, and others, with a rich GUI that follows your JetBrains IDE theme."
         vendor {
             name = "E"
         }

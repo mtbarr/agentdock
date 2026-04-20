@@ -1,36 +1,36 @@
 <idea-plugin>
-    <id>unified.llm.plugin</id>
-    <name>Unified LLM Plugin</name>
+    <id>unified.ai.gui</id>
+    <name>Unified AI Agent Interface</name>
     <vendor>E</vendor>
 
     <description><![CDATA[
-    Unified LLM Plugin - A high-performance AI coding assistant for JetBrains IDEs.
+    A unified interface for widely used AI coding agents such as Codex, Claude Code, Copilot, and others, with a rich GUI that follows your JetBrains IDE theme.
     ]]></description>
 
      <depends>com.intellij.modules.platform</depends>
      <extensions defaultExtensionNs="com.intellij">
-        <postStartupActivity implementation="unified.llm.acp.AcpStartupActivity"/>
-         <toolWindow id="UnifiedLLM" icon="/icons/unified_toolwindow.svg" anchor="right"
-                     factoryClass="unified.llm.UnifiedLlmToolWindowFactory"/>
+        <postStartupActivity implementation="unified.ai.gui.acp.AcpStartupActivity"/>
+         <toolWindow id="Unified AI Agent Interface" icon="/icons/unified_toolwindow.svg" anchor="right"
+                     factoryClass="unified.ai.gui.UnifiedAiGuiToolWindowFactory"/>
      </extensions>
 
     <actions>
-        <action id="UnifiedLLM.AddCodeReferenceToChatAction"
-                class="unified.llm.AddCodeReferenceToChatAction"
+        <action id="UnifiedAIAgentInterface.AddCodeReferenceToChatAction"
+                class="unified.ai.gui.AddCodeReferenceToChatAction"
                 text="Add to Chat"
                 description="Add the selected code range to the chat input"
                 icon="/icons/unified_toolwindow.svg">
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
         </action>
-        <action id="UnifiedLLM.AddFileReferenceToChatAction"
-                class="unified.llm.AddFileReferenceToChatAction"
+        <action id="UnifiedAIAgentInterface.AddFileReferenceToChatAction"
+                class="unified.ai.gui.AddFileReferenceToChatAction"
                 text="Add to Chat"
                 description="Add the selected file reference to the chat"
                 icon="/icons/unified_toolwindow.svg">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="first"/>
         </action>
-        <action id="UnifiedLLM.GenerateGitCommitMessageAction"
-                class="unified.llm.gitcommit.GenerateGitCommitMessageAction"
+        <action id="UnifiedAIAgentInterface.GenerateGitCommitMessageAction"
+                class="unified.ai.gui.gitcommit.GenerateGitCommitMessageAction"
                 text="Generate Commit Message"
                 description="Generate a commit message with the configured AI agent"
                 icon="/icons/unified_toolwindow.svg">

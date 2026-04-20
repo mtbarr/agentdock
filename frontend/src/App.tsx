@@ -126,7 +126,7 @@ function App() {
       setAdaptersResolved(true);
       if (safeAdapters.length > 0) {
         try {
-          localStorage.setItem('unified-llm.adapters', JSON.stringify(safeAdapters));
+          localStorage.setItem('unified-ai-gui.adapters', JSON.stringify(safeAdapters));
         } catch (e) {
           console.warn('[App] Failed to cache adapters:', e);
         }

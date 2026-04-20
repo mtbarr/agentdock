@@ -238,9 +238,8 @@ export function EmptyStateView({
               </>
             ) : adaptersResolved ? (
               <>
-                <h1 className="text-ide-h3">No AI agents are available</h1>
                 <p className="mt-8 max-w-[300px] text-foreground-secondary">
-                  Install at least one AI agent and sign in from Service Providers to start a new chat.
+                  Install at least one AI agent from Service Providers to start a new chat.
                 </p>
                 <div className="mt-6">
                   <Button onClick={onOpenManagement} variant="secondary">Service Providers</Button>
