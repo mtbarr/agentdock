@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Bot, Check, Pencil, Terminal, Trash2, X } from 'lucide-react';
 import type { AgentOption, HistoryDeleteResultPayload, HistorySessionMeta } from '../types/chat';
 import { ACPBridge } from '../utils/bridge';
+import { sanitizeSvg } from '../utils/sanitizeHtml';
 import { Button } from './ui/Button';
 import ConfirmationModal from './ConfirmationModal';
 import { Tooltip } from './chat/shared/Tooltip';
 
-const HISTORY_POLL_INTERVAL_MS = 10000;
+const HISTORY_POLL_INTERVAL_MS = 5000;
 
 interface EmptyStateViewProps {
   availableAgents: AgentOption[];
@@ -26,7 +27,7 @@ function AgentIcon({ agent, size = 'md' }: { agent?: AgentOption; size?: 'md' | 
       return (
         <div
           className={`${sizeClassName} shrink-0 text-foreground [&>svg]:block [&>svg]:h-full [&>svg]:w-full`}
-          dangerouslySetInnerHTML={{ __html: agent.iconPath }}
+          dangerouslySetInnerHTML={{ __html: sanitizeSvg(agent.iconPath) }}
         />
       );
     }
@@ -258,7 +259,8 @@ export function EmptyStateView({
               <button
                 type="button"
                 onClick={onOpenHistory}
-                className="text-ide-small rounded-[4px] p-1 text-link hover:underline focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]"
+                className="text-ide-small rounded-[4px] p-1 text-link hover:underline
+                  focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]"
               >
                 View all
               </button>
@@ -279,7 +281,8 @@ export function EmptyStateView({
                       <div
                         role="button"
                         tabIndex={editingId === conversationId ? -1 : 0}
-                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-[4px] focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-[4px]
+                          focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
                         onClick={() => { if (editingId !== conversationId) onOpenRecentConversation(item); }}
                         onKeyDown={(event) => handleRecentChatKeyDown(
                           event,
@@ -315,7 +318,9 @@ export function EmptyStateView({
                                   event.stopPropagation();
                                   submitRename(item.projectPath, conversationId);
                                 }}
-                                className="rounded border border-[var(--ide-Button-startBorderColor)] bg-background px-1 py-0.5 text-foreground-secondary transition-colors hover:text-primary focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
+                                className="rounded border border-[var(--ide-Button-startBorderColor)] bg-background
+                                  px-1 py-0.5 text-foreground-secondary transition-colors hover:text-primary
+                                  focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
                               >
                                 <Check size={14} />
                               </button>
@@ -325,7 +330,9 @@ export function EmptyStateView({
                                   event.stopPropagation();
                                   setEditingId(null);
                                 }}
-                                className="rounded border border-[var(--ide-Button-startBorderColor)] bg-background px-1 py-0.5 text-foreground-secondary transition-colors hover:text-error focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
+                                className="rounded border border-[var(--ide-Button-startBorderColor)] bg-background
+                                  px-1 py-0.5 text-foreground-secondary transition-colors hover:text-error
+                                  focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
                               >
                                 <X size={14} />
                               </button>
@@ -349,12 +356,14 @@ export function EmptyStateView({
                         <Tooltip variant="minimal" content="Rename chat">
                           <button
                             type="button"
-                            aria-label="Rename chat"
                             onClick={() => {
                               setEditingId(conversationId);
                               setEditTitle(item.title);
                             }}
-                            className="rounded-[4px] p-1 text-foreground-secondary opacity-0 transition-opacity hover:text-primary group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
+                            className="rounded-[4px] p-1 text-foreground-secondary opacity-0 transition-opacity
+                              hover:text-primary group-hover:opacity-100 group-focus-within:opacity-100
+                              focus-visible:opacity-100 focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]
+                              focus-visible:outline-none"
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
@@ -362,9 +371,11 @@ export function EmptyStateView({
                         <Tooltip variant="minimal" content="Delete chat">
                           <button
                             type="button"
-                            aria-label="Delete chat"
                             onClick={() => setPendingDeleteItem(item)}
-                            className="rounded-[4px] p-1 text-foreground-secondary opacity-0 transition-opacity hover:text-error group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
+                            className="rounded-[4px] p-1 text-foreground-secondary opacity-0 transition-opacity
+                              hover:text-error group-hover:opacity-100 group-focus-within:opacity-100
+                              focus-visible:opacity-100 focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]
+                              focus-visible:outline-none"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -373,9 +384,11 @@ export function EmptyStateView({
                           <Tooltip variant="minimal" content="Open chat in CLI">
                             <button
                               type="button"
-                              aria-label="Open chat in CLI"
                               onClick={() => ACPBridge.openHistoryConversationCli(item.projectPath, conversationId)}
-                              className="rounded-[4px] p-1 text-foreground-secondary opacity-0 transition-opacity hover:text-primary group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] focus-visible:outline-none"
+                              className="rounded-[4px] p-1 text-foreground-secondary opacity-0 transition-opacity
+                                hover:text-primary group-hover:opacity-100 group-focus-within:opacity-100
+                                focus-visible:opacity-100 focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]
+                                focus-visible:outline-none"
                             >
                               <Terminal className="h-4 w-4" />
                             </button>

@@ -4,6 +4,7 @@ import { ChevronRight, Wrench } from 'lucide-react';
 import { parseToolStatus, safeParseJson } from '../../../utils/toolCallUtils';
 import { useAutoCollapse } from '../../../hooks/useAutoCollapse';
 import { MarkdownMessage } from '../MarkdownMessage';
+import { sanitizeMarkdownHtml } from '../../../utils/sanitizeHtml';
 import { chatInsetFocusClassName } from '../shared/focusStyles';
 
 interface Props {
@@ -71,6 +72,9 @@ export const OtherToolBlock: React.FC<Props> = ({ block }) => {
     }
     return bodyIsMarkdown ? bodyText : null;
   }, [formattedJsonBody, bodyIsMarkdown, bodyText]);
+  const sanitizedHtmlBody = useMemo(() => (
+    markdownBody ? null : sanitizeMarkdownHtml(bodyText)
+  ), [markdownBody, bodyText]);
 
   const argsText = skillArgs !== undefined
     ? (typeof skillArgs === 'string' ? skillArgs.trim() : JSON.stringify(skillArgs, null, 2))
@@ -117,7 +121,7 @@ export const OtherToolBlock: React.FC<Props> = ({ block }) => {
                 {bodyText && (
                   markdownBody
                     ? <MarkdownMessage content={markdownBody} />
-                    : <div className="text-sm font-mono whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: bodyText }} />
+                    : <div className="text-sm font-mono whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: sanitizedHtmlBody || '' }} />
                 )}
               </div>
             </div>

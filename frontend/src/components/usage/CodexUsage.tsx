@@ -3,7 +3,8 @@ import { UsageMetricRow } from './shared/UsageMetricRow';
 import { clampPercent, formatUsagePercent } from './shared/quotaVisuals';
 import { formatResetAt, hasDisplayableQuotaResetAfterSeconds } from './shared/formatResetAt';
 
-const usageLinkClassName = 'text-link hover:underline focus:outline-none focus-visible:rounded-[3px] focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]';
+const usageLinkClassName = 'text-link hover:underline focus:outline-none focus-visible:rounded-[3px] ' +
+  'focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]';
 
 interface CodexWindow {
   used_percent: number;

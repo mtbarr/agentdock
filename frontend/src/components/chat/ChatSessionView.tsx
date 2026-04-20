@@ -1,8 +1,7 @@
-import { useCallback, useState, useRef, useEffect, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useFileChanges } from '../../hooks/useFileChanges';
 import { AgentOption, FileChangeSummary, HistorySessionMeta, PendingHandoffContext } from '../../types/chat';
-import { ACPBridge } from '../../utils/bridge';
 import { Check, Copy, Download, X } from 'lucide-react';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
@@ -10,7 +9,10 @@ import PermissionBar from './PermissionBar';
 import FileChangesPanel from './FileChangesPanel';
 import ConfirmationModal from '../ConfirmationModal';
 import { Tooltip } from './shared/Tooltip';
-import { buildConversationHandoffFromTranscriptFile, buildConversationHandoffSaveFailureContext, prepareConversationHandoff } from '../../utils/conversationHandoff';
+import { useAgentHandoffRequest } from './session/useAgentHandoffRequest';
+import { useChatInputResize } from './session/useChatInputResize';
+import { useChatSessionNotifications } from './session/useChatSessionNotifications';
+import { useImageOverlayActions } from './session/useImageOverlayActions';
 
 interface ChatSessionProps {
   initialAgentId?: string;
@@ -113,214 +115,46 @@ export default function ChatSessionView({
     }
   }, []);
 
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [overlayActionState, setOverlayActionState] = useState<'downloaded' | 'copied' | null>(null);
-  const lastReportedSessionStateRef = useRef('');
-  const permissionRequestChangeRef = useRef(onPermissionRequestChange);
-  const overlayActionTimerRef = useRef<number | null>(null);
-  const overlayPrimaryActionRef = useRef<HTMLButtonElement | null>(null);
+  const {
+    inputHeight,
+    setContentHeight,
+    startResizing,
+  } = useChatInputResize(attachments);
 
-  const clearOverlayActionState = useCallback(() => {
-    if (overlayActionTimerRef.current !== null) {
-      window.clearTimeout(overlayActionTimerRef.current);
-      overlayActionTimerRef.current = null;
-    }
-    setOverlayActionState(null);
-  }, []);
+  const {
+    selectedImage,
+    setSelectedImage,
+    closeSelectedImage,
+    overlayActionState,
+    overlayPrimaryActionRef,
+    handleDownload,
+    handleCopyImage,
+  } = useImageOverlayActions();
 
-  const flashOverlayActionState = useCallback((state: 'downloaded' | 'copied') => {
-    clearOverlayActionState();
-    setOverlayActionState(state);
-    overlayActionTimerRef.current = window.setTimeout(() => {
-      overlayActionTimerRef.current = null;
-      setOverlayActionState(null);
-    }, 1800);
-  }, [clearOverlayActionState]);
+  const {
+    handleAtBottomChange,
+    handleCanMarkReadChange,
+  } = useChatSessionNotifications({
+    messages,
+    isSending,
+    isHistoryReplaying,
+    permissionRequest,
+    acpSessionId,
+    adapterName,
+    onAssistantActivity,
+    onAtBottomChange,
+    onCanMarkReadChange,
+    onPermissionRequestChange,
+    onSessionStateChange,
+  });
 
-  const handleDownload = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    flashOverlayActionState('downloaded');
-  };
-
-  const handleCopyImage = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!selectedImage || !navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
-      return;
-    }
-
-    try {
-      const response = await fetch(selectedImage);
-      const blob = await response.blob();
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          [blob.type || 'image/png']: blob,
-        }),
-      ]);
-      flashOverlayActionState('copied');
-    } catch (error) {
-      console.warn('[ChatSessionView] Failed to copy image:', error);
-    }
-  }, [flashOverlayActionState, selectedImage]);
-
-  // --- Resizing Logic ---
-  const INPUT_MIN_HEIGHT = 120;
-  const INPUT_MIN_HEIGHT_WITH_ATTACHMENTS = 192;
-  const INPUT_MAX_HEIGHT = 424;
-  const INPUT_DEFAULT_HEIGHT = 180;
-  const INPUT_BOTTOM_BAR_BUFFER = 70;
-  const ATTACHMENT_BAR_HEIGHT = 48;
-  const MAX_HEIGHT_RATIO = 0.8;
-
-  const [inputHeight, setInputHeight] = useState(INPUT_DEFAULT_HEIGHT);
-  const [contentHeight, setContentHeight] = useState(0);
-  const isResizingRef = useRef(false);
-  const [isManualSize, setIsManualSize] = useState(false);
-
-  const handleMouseMoveRef = useRef<((e: MouseEvent) => void) | null>(null);
-  const handleMouseUpRef = useRef<(() => void) | null>(null);
-
-  const stopResizing = useCallback(() => {
-    isResizingRef.current = false;
-    document.body.style.cursor = 'default';
-    if (handleMouseMoveRef.current) {
-      document.removeEventListener('mousemove', handleMouseMoveRef.current);
-    }
-    if (handleMouseUpRef.current) {
-      document.removeEventListener('mouseup', handleMouseUpRef.current);
-    }
-  }, []);
-
-  const startResizing = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isResizingRef.current = true;
-    setIsManualSize(true);
-    document.body.style.cursor = 'row-resize';
-
-    handleMouseMoveRef.current = (ev: MouseEvent) => {
-      if (!isResizingRef.current) return;
-      const newHeight = window.innerHeight - ev.clientY;
-      const maxHeight = window.innerHeight * MAX_HEIGHT_RATIO;
-      const clampedHeight = Math.max(INPUT_MIN_HEIGHT, Math.min(newHeight, maxHeight));
-      setInputHeight(clampedHeight);
-    };
-
-    handleMouseUpRef.current = stopResizing;
-
-    document.addEventListener('mousemove', handleMouseMoveRef.current);
-    document.addEventListener('mouseup', handleMouseUpRef.current);
-  }, [stopResizing]);
-
-  // Auto-sizing logic: Grow and shrink to fit content
-  useEffect(() => {
-    if (isManualSize) return;
-
-    const hasAttachmentBar = attachments.some(a => !a.isInline);
-    const extraHeight = hasAttachmentBar ? ATTACHMENT_BAR_HEIGHT : 0;
-
-    const totalContentNeeded = contentHeight + INPUT_BOTTOM_BAR_BUFFER + extraHeight;
-    const maxHeightLimit = Math.min(INPUT_MAX_HEIGHT, window.innerHeight * MAX_HEIGHT_RATIO);
-    const minTarget = hasAttachmentBar ? INPUT_MIN_HEIGHT_WITH_ATTACHMENTS : INPUT_MIN_HEIGHT;
-    const clampedTarget = Math.max(minTarget, Math.min(totalContentNeeded, maxHeightLimit));
-
-    setInputHeight(clampedTarget);
-  }, [contentHeight, isManualSize, attachments]);
-
-  useEffect(() => {
-    return () => {
-      stopResizing();
-    };
-  }, [stopResizing]);
-
-  const handleAtBottomChange = useCallback((isAtBottom: boolean) => {
-    onAtBottomChange?.(isAtBottom);
-  }, [onAtBottomChange]);
-
-  const handleCanMarkReadChange = useCallback((canMarkRead: boolean) => {
-    onCanMarkReadChange?.(canMarkRead);
-  }, [onCanMarkReadChange]);
-
-  const prevIsSendingRef = useRef(isSending);
-  const pendingAssistantActivityRef = useRef(false);
-  const lastNotifiedAssistantKeyRef = useRef('');
-
-  useEffect(() => {
-    const prev = prevIsSendingRef.current;
-    prevIsSendingRef.current = isSending;
-
-    // Mark unread only after the assistant actually stops producing output.
-    if (!prev || isSending || isHistoryReplaying || messages.length === 0) return;
-
-    const last = messages[messages.length - 1];
-    if (last.role !== 'assistant') return;
-    const hasFinalText = (last.content?.trim().length || 0) > 0;
-    if (!hasFinalText) return;
-
-    const assistantKey = `${last.id}:${last.content?.length || 0}`;
-    if (permissionRequest) {
-      pendingAssistantActivityRef.current = true;
-      lastNotifiedAssistantKeyRef.current = assistantKey;
-      return;
-    }
-
-    if (lastNotifiedAssistantKeyRef.current === assistantKey) return;
-    lastNotifiedAssistantKeyRef.current = assistantKey;
-    onAssistantActivity?.();
-  }, [isSending, isHistoryReplaying, messages, onAssistantActivity, permissionRequest]);
-
-  useEffect(() => {
-    if (permissionRequest || !pendingAssistantActivityRef.current || isSending || isHistoryReplaying || messages.length === 0) return;
-
-    const last = messages[messages.length - 1];
-    if (last.role !== 'assistant') {
-      pendingAssistantActivityRef.current = false;
-      return;
-    }
-
-    const hasFinalText = (last.content?.trim().length || 0) > 0;
-    if (!hasFinalText) {
-      pendingAssistantActivityRef.current = false;
-      return;
-    }
-
-    pendingAssistantActivityRef.current = false;
-    onAssistantActivity?.();
-  }, [permissionRequest, isSending, isHistoryReplaying, messages, onAssistantActivity]);
-
-  useEffect(() => {
-    onPermissionRequestChange?.(!!permissionRequest);
-  }, [permissionRequest, onPermissionRequestChange]);
-
-  useEffect(() => {
-    permissionRequestChangeRef.current = onPermissionRequestChange;
-  }, [onPermissionRequestChange]);
-
-  useEffect(() => {
-    const fingerprint = `${acpSessionId}|${adapterName}`;
-    if (lastReportedSessionStateRef.current === fingerprint) return;
-    lastReportedSessionStateRef.current = fingerprint;
-    onSessionStateChange?.({
-      acpSessionId,
-      adapterName
-    });
-  }, [acpSessionId, adapterName, onSessionStateChange]);
-
-  useEffect(() => {
-    return () => {
-      permissionRequestChangeRef.current?.(false);
-      clearOverlayActionState();
-    };
-  }, [clearOverlayActionState]);
-
-  useEffect(() => {
-    clearOverlayActionState();
-  }, [selectedImage, clearOverlayActionState]);
-
-  useEffect(() => {
-    if (!selectedImage) return;
-    requestAnimationFrame(() => {
-      overlayPrimaryActionRef.current?.focus();
-    });
-  }, [selectedImage]);
+  const handleAgentChange = useAgentHandoffRequest({
+    conversationId,
+    selectedAgentId,
+    messages,
+    fileChanges,
+    onAgentChangeRequest,
+  });
 
   return (
     <div className="flex flex-col h-full relative overflow-hidden bg-background">
@@ -394,28 +228,7 @@ export default function ChatSessionView({
             
             agentOptions={agentOptions}
             selectedAgentId={selectedAgentId}
-            onAgentChange={async (id) => {
-              if (!onAgentChangeRequest || id === selectedAgentId) return;
-
-              const prepared = prepareConversationHandoff(messages, fileChanges);
-              let handoffText = prepared.handoffText;
-
-              if (prepared.exceedsInlineLimit) {
-                try {
-                  const saved = await ACPBridge.saveConversationTranscript(conversationId, prepared.normalizedTranscript);
-                  handoffText = buildConversationHandoffFromTranscriptFile(prepared, saved.filePath || '');
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : String(error);
-                  console.warn('[ChatSessionView] Failed to persist handoff transcript:', error);
-                  handoffText = buildConversationHandoffSaveFailureContext(prepared, message);
-                }
-              }
-
-              onAgentChangeRequest({
-                agentId: id,
-                handoffText,
-              });
-            }}
+            onAgentChange={handleAgentChange}
             
             selectedModelId={selectedModelId}
             onModelChange={handleModelChange}
@@ -442,7 +255,7 @@ export default function ChatSessionView({
         <div 
           className="fixed inset-0 z-[100] bg-black bg-opacity-50 flex items-center
             justify-center p-8 animate-in fade-in duration-200 cursor-zoom-out"
-          onClick={() => setSelectedImage(null)}
+          onClick={closeSelectedImage}
         >
           <div
             className="absolute right-4 top-16 z-10 flex items-center gap-1.5 px-2 py-2"
@@ -454,7 +267,7 @@ export default function ChatSessionView({
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded bg-secondary text-foreground
                 transition-colors hover:bg-hover hover:text-foreground focus:outline-none
-                focus-visible:ring-2focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black"
                 onClick={handleCopyImage}
               >
                 {overlayActionState === 'copied' ? <Check size={13} /> : <Copy size={16} />}
@@ -475,7 +288,7 @@ export default function ChatSessionView({
                 className="flex h-8 w-8 items-center justify-center rounded bg-secondary text-foreground
                 transition-colors hover:bg-hover hover:text-foreground focus:outline-none focus-visible:ring-2
                 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-                onClick={(e) => { e.stopPropagation(); setSelectedImage(null); }}
+                onClick={(e) => { e.stopPropagation(); closeSelectedImage(); }}
               >
                 <X size={14} />
               </button>

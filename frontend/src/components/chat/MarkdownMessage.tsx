@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import hljs from '../../utils/highlight';
 import { openFile } from '../../utils/openFile';
+import { sanitizeMarkdownHtml } from '../../utils/sanitizeHtml';
 import '../../styles/markdown.css';
 
 // Configure marked with highlight.js integration
@@ -36,10 +37,11 @@ export const MarkdownMessage: React.FC<MarkdownMessageProps> = ({ content }) => 
       if (codeBlockMatches && codeBlockMatches.length % 2 !== 0) {
         processed += '\n```';
       }
-      return marked.parse(processed);
+      const parsed = marked.parse(processed);
+      return sanitizeMarkdownHtml(typeof parsed === 'string' ? parsed : '');
     } catch (e) {
       console.error('[MarkdownMessage] Parse error:', e);
-      return content;
+      return sanitizeMarkdownHtml(content);
     }
   }, [content]);
 

@@ -9,10 +9,9 @@ interface AttachmentItemProps {
   att: Attachment;
   onRemove?: (id: string) => void;
   onImageClick?: (src: string) => void;
-  flushLeft?: boolean;
 }
 
-export function AttachmentItem({ att, onRemove, onImageClick, flushLeft = false }: AttachmentItemProps) {
+export function AttachmentItem({ att, onRemove, onImageClick }: AttachmentItemProps) {
   const isImage = att.mimeType.startsWith('image/') && att.data;
 
   const onClick = (e: React.MouseEvent) => {
@@ -23,9 +22,9 @@ export function AttachmentItem({ att, onRemove, onImageClick, flushLeft = false 
   };
 
   return (
-    <div className={`group relative inline-flex min-w-0 max-w-[200px] flex-shrink-0 items-center gap-1.5 mb-1 rounded-[4px] 
-      border border-border bg-background px-2 py-1 transition-all focus-within:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] 
-      ${flushLeft ? 'ml-0 mr-1' : 'mx-1'}`}
+    <div className={`group relative min-h-[22px] inline-flex min-w-0 max-w-[200px] flex-shrink-0 items-center 
+      gap-1.5 rounded-[4px] border border-border bg-background px-2 py-1 mb-1 mx-0.5 transition-all 
+      focus-within:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]`}
     >
       <button type="button" onClick={onClick}
         className={`flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm text-left outline-none

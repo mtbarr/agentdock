@@ -3,6 +3,7 @@ import { ToolCallBlock } from '../../../types/chat';
 import { FileCode, ChevronRight } from 'lucide-react';
 import { diff_match_patch } from 'diff-match-patch';
 import hljs, { getLanguageFromPath } from '../../../utils/highlight';
+import { sanitizeCodeHtml } from '../../../utils/sanitizeHtml';
 import { parseToolStatus } from '../../../utils/toolCallUtils';
 import { useAutoCollapse } from '../../../hooks/useAutoCollapse';
 import '../../../styles/markdown.css';
@@ -19,6 +20,15 @@ interface DiffLine {
   newLine?: number;
   highlightedHtml?: string;
   hunkIndex: number;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export const EditBlock: React.FC<Props> = ({ block }) => {
@@ -65,9 +75,9 @@ export const EditBlock: React.FC<Props> = ({ block }) => {
       splitLines.forEach((line) => {
         let highlightedHtml = line;
         try {
-          highlightedHtml = hljs.highlight(line, { language, ignoreIllegals: true }).value;
+          highlightedHtml = sanitizeCodeHtml(hljs.highlight(line, { language, ignoreIllegals: true }).value);
         } catch {
-          // Fallback to plain text when highlight.js cannot infer the language.
+          highlightedHtml = escapeHtml(line);
         }
 
         if (type === 'added') {

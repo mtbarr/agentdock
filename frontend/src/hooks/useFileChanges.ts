@@ -17,20 +17,28 @@ const APPLIED_STATUSES = new Set(['success', 'completed']);
  * Handles relative vs absolute paths across Windows, Linux, and MacOS.
  */
 function pathsMatch(path1: string, path2: string): boolean {
-  // Normalize: convert backslashes to forward slashes for cross-platform compatibility
-  const normalize = (p: string) => p.replace(/\\/g, '/');
+  const normalize = (path: string) => {
+    const normalized = path
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/\/+/g, '/')
+      .replace(/^\.\//, '')
+      .replace(/\/$/, '');
+    return /^[A-Za-z]:\//.test(normalized) ? normalized.toLowerCase() : normalized;
+  };
+
+  const isAbsolute = (path: string) => /^[A-Za-z]:\//.test(path) || path.startsWith('/');
   const p1 = normalize(path1);
   const p2 = normalize(path2);
-
-  // Exact match
   if (p1 === p2) return true;
 
-  // Check if one path ends with the other (handles absolute vs relative)
-  // Example: "C:/project/src/file.ts" ends with "src/file.ts"
-  if (p1.endsWith('/' + p2)) return true;
-  if (p2.endsWith('/' + p1)) return true;
+  const p1Absolute = isAbsolute(p1);
+  const p2Absolute = isAbsolute(p2);
+  if (p1Absolute === p2Absolute) return false;
 
-  return false;
+  const absolutePath = p1Absolute ? p1 : p2;
+  const relativePath = p1Absolute ? p2 : p1;
+  return relativePath.length > 0 && absolutePath.endsWith(`/${relativePath}`);
 }
 
 export function useFileChanges(

@@ -8,7 +8,6 @@ interface CodeReferenceChipProps {
   endLine?: number;
   onClick?: () => void;
   onRemove?: (e: React.MouseEvent) => void;
-  flushLeft?: boolean;
   showTooltip?: boolean;
   className?: string;
 }
@@ -36,7 +35,6 @@ export function CodeReferenceChip({
   endLine,
   onClick,
   onRemove,
-  flushLeft = false,
   showTooltip = true,
   className = '',
 }: CodeReferenceChipProps) {
@@ -46,18 +44,17 @@ export function CodeReferenceChip({
 
   const chip = (
     <div contentEditable={false}
-      className={`group relative inline-flex min-w-0 max-w-[200px] flex-shrink-0 items-center gap-1.5 mb-1 rounded-[4px] 
-      border border-border bg-background px-2 py-1 transition-all focus-within:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] 
-        ${flushLeft ? 'ml-0 mr-1' : 'mx-1'} ${className}`}
+      className={`group relative min-h-[22px] inline-flex min-w-0 max-w-[200px] flex-shrink-0 items-center 
+      gap-1.5 mb-1 rounded-[4px] border border-border bg-background px-2 py-1 relative transition-all 
+      focus-within:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] ${className}`}
     >
       <button type="button"
         onClick={(e) => {
           e.stopPropagation();
           onClick?.();
         }}
-        className={`flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm text-left outline-none transition-colors
-          focus-visible:text-foreground ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
-        aria-label={`Open reference ${label}`}
+        className={`flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm text-left outline-none 
+          transition-colors focus-visible:text-foreground ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
       >
         <span className="flex h-3 w-3 flex-shrink-0 items-center justify-center overflow-hidden">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-foreground">
