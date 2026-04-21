@@ -59,11 +59,11 @@ const FileChangesPanel = memo(({
           >
             <div className="flex items-center gap-2 flex-1 min-w-0 text-ide-small text-foreground-secondary">
               <FileDiff size={14} />
-              <div className="flex items-center gap-2 min-w-0 mt-0.5">
+              <div className="flex items-center gap-2 min-w-0">
                 <span>{fileChanges.length} {fileChanges.length === 1 ? 'file' : 'files'} changed</span>
                 <div className="flex items-center gap-1.5">
-                  {totalAdditions > 0 && <span className="font-bold text-added">+{totalAdditions}</span>}
-                  {totalDeletions > 0 && <span className="font-bold text-deleted">-{totalDeletions}</span>}
+                  {totalAdditions > 0 && <span className="font-bold text-added leading-none">+{totalAdditions}</span>}
+                  {totalDeletions > 0 && <span className="font-bold text-deleted leading-none">-{totalDeletions}</span>}
                 </div>
               </div>
             </div>
@@ -142,8 +142,8 @@ const FileChangesPanel = memo(({
                         </button>
                       </Tooltip>
                       <div className="flex items-center gap-1 flex-shrink-0 ml-1">
-                        {fc.additions > 0 && <span className="text-sm font-bold text-added">+{fc.additions}</span>}
-                        {fc.deletions > 0 && <span className="text-sm font-bold text-deleted">-{fc.deletions}</span>}
+                        {fc.additions > 0 && <span className="text-sm font-bold text-added leading-none">+{fc.additions}</span>}
+                        {fc.deletions > 0 && <span className="text-sm font-bold text-deleted leading-none">-{fc.deletions}</span>}
                       </div>
                     </div>
 

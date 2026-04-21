@@ -135,9 +135,9 @@ export default function TabBar({
   const titleClassName =
     averageTabWidth < 76 ? 'hidden' :
     averageTabWidth < 92 ? 'max-w-[20px]' :
-    averageTabWidth < 112 ? 'max-w-[35px]' :
-    averageTabWidth < 132 ? 'max-w-[68px]' :
-    averageTabWidth < 156 ? 'max-w-[80px]' :
+    averageTabWidth < 125 ? 'max-w-[35px]' :
+    averageTabWidth < 135 ? 'max-w-[68px]' :
+    averageTabWidth < 165 ? 'max-w-[80px]' :
     'max-w-[120px]';
 
   const findDropTarget = (sourceId: string, clientX: number, clientY: number) => {
@@ -208,7 +208,7 @@ export default function TabBar({
   };
 
   return (
-    <div className="relative z-30 flex h-[36px] bg-background border-t border-b border-[var(--ide-Borders-ContrastBorderColor)] select-none shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
+    <div className="relative z-30 flex h-[40px] bg-background border-t border-b border-[var(--ide-Borders-ContrastBorderColor)] select-none shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
       {/* Tabs List */}
       <div
         ref={tabsListRef}

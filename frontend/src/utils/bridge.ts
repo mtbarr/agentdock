@@ -110,7 +110,8 @@ export const ACPBridge = {
           if (chunk.type === 'tool_call_update' && toolCallId && status && !['pending', 'running', 'in_progress', 'active'].includes(String(status).toLowerCase())) {
             toolCallRawInputById.delete(toolCallId);
           }
-        } catch (_) {
+        } catch (e) {
+          console.warn('[bridge] Failed to process tool call chunk', e);
         }
       }
     };
@@ -254,7 +255,9 @@ export const ACPBridge = {
       let files = [];
       try {
         files = typeof filesJson === "string" ? JSON.parse(filesJson) : filesJson;
-      } catch (e) {}
+      } catch (e) {
+        console.warn('[bridge] Failed to parse files result', e);
+      }
       window.dispatchEvent(new CustomEvent("acp-files-result", { detail: { files } }));
     };
 

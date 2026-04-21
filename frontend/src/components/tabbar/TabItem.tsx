@@ -42,7 +42,7 @@ export function TabItem({
       className={`text-foreground group relative pl-1 pr-2 flex h-full max-w-[180px] shrink items-center rounded-[4px] 
         bg-background cursor-grab active:cursor-grabbing
         ${isActive ? 'text-foreground before:absolute before:inset-0 before:bg-background before:[filter:var(--ide-surface-active-filter)] ' +
-          'after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary' :
+          'after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[3px] after:bg-primary' :
           ''}
       `}
     >
@@ -102,7 +102,6 @@ export function TabItem({
           focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]
           ${isActive ? 'opacity-100' : 'group-hover:opacity-100 group-focus-within:opacity-100'}
         `}
-        aria-label={`Close ${tab.title}`}
       >
         <X size={12} aria-hidden="true" />
       </button>

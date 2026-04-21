@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
+import type { RefObject } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import {
   $createTextNode,
@@ -294,20 +295,113 @@ export function ExternalCodeReferencePlugin({
   return null;
 }
 
-export function AutoHeightPlugin({ onHeightChange }: { onHeightChange: (height: number) => void }) {
+type ScrollSnapshot = {
+  scrollTop: number;
+};
+
+function readScrollSnapshot(container: HTMLDivElement): ScrollSnapshot | null {
+  if (container.scrollHeight <= container.clientHeight + 1) return null;
+
+  return {
+    scrollTop: container.scrollTop,
+  };
+}
+
+function isDeleteInput(event: Event): boolean {
+  if (event instanceof InputEvent) {
+    return event.inputType.startsWith('delete');
+  }
+
+  if (event instanceof KeyboardEvent) {
+    return event.key === 'Backspace' || event.key === 'Delete';
+  }
+
+  return event.type === 'cut';
+}
+
+export function AutoHeightPlugin({
+  onHeightChange,
+  scrollContainerRef,
+}: {
+  onHeightChange: (height: number) => void;
+  scrollContainerRef?: RefObject<HTMLDivElement>;
+}) {
   const [editor] = useLexicalComposerContext();
+  const pendingRestoreRef = useRef<ScrollSnapshot | null>(null);
+  const restoreFrameRef = useRef<number | null>(null);
+
+  const captureDeleteScroll = useCallback((event: Event) => {
+    const container = scrollContainerRef?.current;
+    if (!container || !isDeleteInput(event)) return;
+    pendingRestoreRef.current = readScrollSnapshot(container);
+  }, [scrollContainerRef]);
+
+  const restoreDeleteScroll = useCallback(() => {
+    const container = scrollContainerRef?.current;
+    const snapshot = pendingRestoreRef.current;
+    if (!container || !snapshot) return;
+
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    const nextScrollTop = Math.min(snapshot.scrollTop, maxScrollTop);
+    if (Math.abs(container.scrollTop - nextScrollTop) > 1) {
+      container.scrollTop = nextScrollTop;
+    }
+  }, [scrollContainerRef]);
+
+  const scheduleDeleteScrollRestore = useCallback(() => {
+    if (!pendingRestoreRef.current) return;
+
+    if (restoreFrameRef.current !== null) {
+      cancelAnimationFrame(restoreFrameRef.current);
+    }
+
+    restoreFrameRef.current = requestAnimationFrame(() => {
+      restoreFrameRef.current = null;
+      restoreDeleteScroll();
+
+      restoreFrameRef.current = requestAnimationFrame(() => {
+        restoreFrameRef.current = null;
+        restoreDeleteScroll();
+        pendingRestoreRef.current = null;
+      });
+    });
+  }, [restoreDeleteScroll]);
 
   useEffect(() => {
     const updateHeight = () => {
       const rootElement = editor.getRootElement();
       if (rootElement) {
         onHeightChange(rootElement.scrollHeight);
+        scheduleDeleteScrollRestore();
       }
     };
     
     updateHeight();
     return editor.registerUpdateListener(updateHeight);
-  }, [editor, onHeightChange]);
+  }, [editor, onHeightChange, scheduleDeleteScrollRestore]);
+
+  useEffect(() => {
+    const rootElement = editor.getRootElement();
+    if (!rootElement || !scrollContainerRef?.current) return;
+
+    rootElement.addEventListener('beforeinput', captureDeleteScroll, true);
+    rootElement.addEventListener('keydown', captureDeleteScroll, true);
+    rootElement.addEventListener('cut', captureDeleteScroll, true);
+
+    return () => {
+      rootElement.removeEventListener('beforeinput', captureDeleteScroll, true);
+      rootElement.removeEventListener('keydown', captureDeleteScroll, true);
+      rootElement.removeEventListener('cut', captureDeleteScroll, true);
+    };
+  }, [captureDeleteScroll, editor, scrollContainerRef]);
+
+  useEffect(() => {
+    return () => {
+      if (restoreFrameRef.current !== null) {
+        cancelAnimationFrame(restoreFrameRef.current);
+      }
+    };
+  }, []);
 
   return null;
 }

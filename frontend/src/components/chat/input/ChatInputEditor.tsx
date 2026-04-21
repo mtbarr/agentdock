@@ -100,7 +100,12 @@ export function ChatInputEditor({
             attachments={attachments}
             onAttachmentsChange={onAttachmentsChange}
           />
-          {onHeightChange && <AutoHeightPlugin onHeightChange={onHeightChange} />}
+          {onHeightChange && (
+            <AutoHeightPlugin
+              onHeightChange={onHeightChange}
+              scrollContainerRef={editorContainerRef}
+            />
+          )}
           <ClickToFocusPlugin containerRef={editorContainerRef} />
         </LexicalComposer>
       </ChatInputActionsContext.Provider>

@@ -146,7 +146,7 @@ export function DropdownSelect({
                   'flex w-full items-center whitespace-nowrap rounded-[4px] text-left leading-none my-0.5 px-2 min-h-8',
                   isSelected
                     ? 'bg-accent text-accent-foreground'
-                    : 'text-foreground hover:bg-accent',
+                    : 'text-foreground hover:bg-accent hover:text-accent-foreground',
                   'focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]',
                   optionClassName
                 )}

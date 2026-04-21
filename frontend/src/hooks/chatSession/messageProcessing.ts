@@ -19,7 +19,9 @@ import {
 } from './chunkBlockHelpers';
 import { createToolCallBlocks, isExecuteToolKind, matchesToolCallId } from './toolCallBlocks';
 
-let thinkingCounter = 0;
+function nextThinkingId(): string {
+  return `thinking-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
 
 // Unified chunk processing - one path for both streaming and replay chunks.
 
@@ -111,7 +113,7 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
       } else {
         // Add new thinking entry
         prevEntries.push({
-          toolCallId: `thinking-${++thinkingCounter}`,
+          toolCallId: nextThinkingId(),
           kind: 'thinking',
           text: displayText || '',
           rawJson: ''
@@ -126,7 +128,7 @@ function applyOneChunk(messages: Message[], chunk: ContentChunk): Message[] {
         isStreaming: !chunk.isReplay,
         isReplay: chunk.isReplay,
         entries: [{
-          toolCallId: `thinking-${++thinkingCounter}`,
+          toolCallId: nextThinkingId(),
           kind: 'thinking',
           text: displayText || '',
           rawJson: ''
@@ -163,7 +165,7 @@ function buildBlocks(chunk: ContentChunk): RichContentBlock[] {
         isStreaming: !chunk.isReplay,
         isReplay: chunk.isReplay,
         entries: [{
-          toolCallId: `thinking-${++thinkingCounter}`,
+          toolCallId: nextThinkingId(),
           kind: 'thinking',
           text: chunk.text || '',
           rawJson: ''

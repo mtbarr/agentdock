@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { AgentOption, ChatTab, PendingHandoffContext } from '../types/chat';
 import { AgentManagementView } from './AgentManagement';
 import { DesignSystemView } from './DesignSystem';
@@ -39,8 +40,15 @@ export function AppTabContent({
   onHandoffConsumed,
   onSessionStateChange,
 }: AppTabContentProps) {
+  // Singleton tabs (non-chat) mount lazily on first activation to avoid eager
+  // network requests and polling from tabs the user has not opened yet.
+  // Once mounted they remain in the DOM (keep-alive) like chat tabs.
+  const hasBeenActiveRef = useRef(false);
+  if (isActive) hasBeenActiveRef.current = true;
+
   return (
     <div className={`absolute inset-0 w-full h-full bg-background ${isActive ? 'z-10 visible' : 'z-0 invisible'}`}>
+      {/* Chat tabs always mount immediately — their ACP session may be triggered externally. */}
       {tab.type === 'chat' && (
         <ChatSessionView
           initialAgentId={tab.agentId}
@@ -58,7 +66,7 @@ export function AppTabContent({
           onSessionStateChange={onSessionStateChange}
         />
       )}
-      {tab.type !== 'chat' && (
+      {tab.type !== 'chat' && hasBeenActiveRef.current && (
         <>
           {tab.type === 'management' && <AgentManagementView initialAgents={availableAgents} isActive={isActive} />}
           {tab.type === 'design' && <DesignSystemView />}

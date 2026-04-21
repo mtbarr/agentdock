@@ -53,6 +53,8 @@ export function useFileChanges(
   const [baseToolCallIndex, setBaseToolCallIndex] = useState(0);
   const [hasPluginEdits, setHasPluginEdits] = useState(false);
   const [pendingUndoFilePaths, setPendingUndoFilePaths] = useState<string[] | null>(null);
+  const pendingUndoFilePathsRef = useRef<string[] | null>(null);
+  pendingUndoFilePathsRef.current = pendingUndoFilePaths;
   const initialHasPluginEditsRef = useRef<boolean | null>(null);
   const [loadedSessionKey, setLoadedSessionKey] = useState('');
   const toolCallEventsRef = useRef<ToolCallEvent[]>([]);
@@ -352,7 +354,9 @@ export function useFileChanges(
   useEffect(() => {
     const unsubUndoResult = ACPBridge.onUndoResult((e) => {
       if (e.detail.chatId !== conversationId) return;
-      if (!pendingUndoFilePaths || pendingUndoFilePaths.length === 0) return;
+      // Read via ref so this effect does not re-register on every undo state change.
+      const currentPendingPaths = pendingUndoFilePathsRef.current;
+      if (!currentPendingPaths || currentPendingPaths.length === 0) return;
 
       const successfulFilePaths = e.detail.result.fileResults
         .filter((fileResult) => fileResult.success)
@@ -389,7 +393,7 @@ export function useFileChanges(
     return () => {
       unsubUndoResult();
     };
-  }, [conversationId, sessionId, adapterName, pendingUndoFilePaths, removeDiffsForFiles, upsertProcessedFileState]);
+  }, [conversationId, sessionId, adapterName, removeDiffsForFiles, upsertProcessedFileState]);
 
   return {
     hasPluginEdits: effectiveHasPluginEdits,

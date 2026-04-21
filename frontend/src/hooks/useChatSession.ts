@@ -74,6 +74,29 @@ export function useChatSession(
     markFlushUnscheduled,
   } = useBufferedMessageChunks({ setHistoryMessages, setLiveMessages });
 
+  const finishActivePromptAfterError = useCallback(() => {
+    pendingPromptRef.current = null;
+    setPermissionQueue([]);
+    setIsSending(false);
+
+    setLiveMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage.role !== 'assistant' || lastMessage.metaComplete) return prev;
+
+      const startedAt = startTimeRef.current ?? lastMessage.promptStartedAtMillis;
+      const duration = startedAt ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : lastMessage.duration;
+      return [
+        ...prev.slice(0, -1),
+        {
+          ...lastMessage,
+          duration,
+          metaComplete: true,
+        },
+      ];
+    });
+  }, []);
+
   const consumeHandoff = useCallback(() => {
     const handoffId = pendingHandoffRef.current?.id;
     if (!handoffId) return;
@@ -234,7 +257,9 @@ export function useChatSession(
         }
       }
 
-      // Error is merged into ready block
+      if (s === 'error') {
+        finishActivePromptAfterError();
+      }
 
       if (s === 'ready' && pendingPromptRef.current && typeof window.__sendPrompt === 'function') {
         const blocksToSend = pendingPromptRef.current;
@@ -281,7 +306,7 @@ export function useChatSession(
       unsubMode();
       unsubPermission();
     };
-  }, [conversationId, enqueueChunk, applyBufferedChunks, clearBufferedChunks, markFlushUnscheduled, consumeHandoff]);
+  }, [conversationId, enqueueChunk, applyBufferedChunks, clearBufferedChunks, markFlushUnscheduled, consumeHandoff, finishActivePromptAfterError]);
 
   useEffect(() => {
     if (!isSending || isHistoryReplaying) return;
@@ -368,7 +393,7 @@ export function useChatSession(
     lastMetadataFingerprintRef.current = fingerprint;
   }, [conversationId, status, acpSessionId, selectedAgentId, messages]);
 
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     const text = inputValue.trim();
     if ((!text && attachments.length === 0) || isSending || status === 'prompting') return;
 
@@ -427,7 +452,10 @@ export function useChatSession(
       console.warn('[useChatSession] Failed to send prompt:', e);
       setIsSending(false);
     }
-  };
+  // Refs (pendingHandoffRef, allowMetadataUpdateRef, touchUpdatedAtRef, startTimeRef)
+  // are intentionally excluded — their identity is stable across renders.
+  }, [inputValue, attachments, isSending, status, conversationId, selectedAgentId,
+      adapterDisplayName, selectedModelId, selectedModeId, startSelectedAgent, consumeHandoff]);
 
   const handleStop = () => {
     if (typeof window.__cancelPrompt === 'function') {

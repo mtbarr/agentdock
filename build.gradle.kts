@@ -21,6 +21,7 @@ dependencies {
     }
     implementation("com.agentclientprotocol:acp:0.18.0")
     implementation("io.github.java-diff-utils:java-diff-utils:4.15")
+    testImplementation(kotlin("test-junit"))
 }
 
 kotlin {
@@ -32,8 +33,8 @@ intellijPlatform {
     buildSearchableOptions = false
     pluginConfiguration {
         version = providers.gradleProperty("pluginVersion")
-        name = "Unified AI Agent Interface"
-        description = "A unified interface for widely used AI coding agents such as Codex, Claude Code, Copilot, and others, with a rich GUI that follows your JetBrains IDE theme."
+        name = "AgentDock"
+        description = "Provides widely used AI coding agents such as Codex, Claude Code, Copilot, and others with a rich GUI that follows your JetBrains IDE theme."
         vendor {
             name = "E"
         }
@@ -47,9 +48,9 @@ val generateBuildConfig by tasks.registering {
     val isDev = devMode
     outputs.dir(outputDir)
     doLast {
-        val file = outputDir.get().asFile.resolve("unified/ai/gui/BuildConfig.kt")
+        val file = outputDir.get().asFile.resolve("agentdock/BuildConfig.kt")
         file.parentFile.mkdirs()
-        file.writeText("package unified.ai.gui\n\ninternal object BuildConfig {\n    const val IS_DEV: Boolean = $isDev\n}\n")
+        file.writeText("package agentdock\n\ninternal object BuildConfig {\n    const val IS_DEV: Boolean = $isDev\n}\n")
     }
 }
 

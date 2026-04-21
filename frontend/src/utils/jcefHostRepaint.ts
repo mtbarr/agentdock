@@ -1,80 +1,46 @@
-let repaintScheduled = false;
-let pendingReason = "ui";
+const PERIODIC_INTERVAL_MS = 3000;
+const INACTIVITY_STOP_MS = 10_000;
+
+let periodicTimer: number | null = null;
+let lastActivityAt = 0;
 let coordinatorInstalled = false;
-let lastRepaintAt = 0;
-let trailingTimer: number | null = null;
 
-const REPAINT_THROTTLE_MS = 100;
-
-function flushHostRepaint() {
-  repaintScheduled = false;
-  lastRepaintAt = Date.now();
-
+function triggerRepaint() {
   try {
-    window.__requestHostRepaint?.(pendingReason);
-  } catch (_) {
-    // Ignore repaint bridge errors; this is a best-effort host nudge for JCEF.
-  }
+    window.__requestHostRepaint?.();
+  } catch (_) {}
 }
 
-export function scheduleJcefHostRepaint(reason = "ui") {
-  if (typeof window === "undefined") return;
+function schedulePeriodicRepaint() {
+  periodicTimer = window.setTimeout(() => {
+    periodicTimer = null;
+    if (Date.now() - lastActivityAt > INACTIVITY_STOP_MS) return;
+    triggerRepaint();
+    schedulePeriodicRepaint();
+  }, PERIODIC_INTERVAL_MS);
+}
 
-  pendingReason = reason;
-  const now = Date.now();
-  const elapsed = now - lastRepaintAt;
-
-  if (!repaintScheduled && elapsed >= REPAINT_THROTTLE_MS) {
-    repaintScheduled = true;
-    requestAnimationFrame(() => {
-      flushHostRepaint();
-    });
-    return;
+function recordActivity() {
+  const wasInactive = Date.now() - lastActivityAt > INACTIVITY_STOP_MS;
+  lastActivityAt = Date.now();
+  if (wasInactive && periodicTimer === null) {
+    schedulePeriodicRepaint();
   }
-
-  if (trailingTimer !== null) return;
-
-  const delay = Math.max(0, REPAINT_THROTTLE_MS - elapsed);
-  trailingTimer = window.setTimeout(() => {
-    trailingTimer = null;
-    if (repaintScheduled) return;
-
-    repaintScheduled = true;
-    requestAnimationFrame(() => {
-      flushHostRepaint();
-    });
-  }, delay);
 }
 
 export function installJcefHostRepaintCoordinator() {
   if (typeof window === "undefined" || coordinatorInstalled) return;
   coordinatorInstalled = true;
 
-  const root = document.getElementById("root");
-  const body = document.body;
+  document.addEventListener("mousemove", recordActivity, { passive: true, capture: true });
+  document.addEventListener("keydown", recordActivity, { passive: true, capture: true });
+  new MutationObserver(recordActivity).observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "style"],
+  });
 
-  const schedule = (reason: string) => scheduleJcefHostRepaint(reason);
-
-  const resizeObserver =
-    typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(() => schedule("resize-observer"))
-      : null;
-
-  if (root) {
-    resizeObserver?.observe(root);
-  }
-  if (body) {
-    resizeObserver?.observe(body);
-  }
-
-  const transitionHandler = () => schedule("transition");
-  const animationHandler = () => schedule("animation");
-  const visibilityHandler = () => schedule("visibility");
-
-  document.addEventListener("transitionend", transitionHandler, true);
-  document.addEventListener("animationend", animationHandler, true);
-  document.addEventListener("visibilitychange", visibilityHandler, true);
-  window.addEventListener("pageshow", visibilityHandler, true);
-
-  schedule("coordinator-init");
+  lastActivityAt = Date.now();
+  schedulePeriodicRepaint();
 }

@@ -48,7 +48,7 @@ export function ClaudeUsage({ stacked = false }: { stacked?: boolean }) {
   const usage = data ? parseData(data) : null;
   if (!usage) return null;
 
-  const fiveHour = usage.five_hour && hasDisplayableQuotaReset(usage.five_hour.resets_at) ? usage.five_hour : null;
+  const fiveHour = usage.five_hour && hasDisplayableQuotaReset(usage.five_hour.resets_at) || !usage.five_hour?.resets_at ? usage.five_hour : null;
   const sevenDay = usage.seven_day && hasDisplayableQuotaReset(usage.seven_day.resets_at) ? usage.seven_day : null;
   const hasUsageData = fiveHour || sevenDay;
 

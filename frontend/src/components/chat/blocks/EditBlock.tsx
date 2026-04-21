@@ -161,12 +161,12 @@ export const EditBlock: React.FC<Props> = ({ block }) => {
           {diffData && (
             <div className="flex items-center gap-1.5 ml-1 flex-shrink-0 text-ide-small">
               {diffData.additions > 0 && (
-                <span className="font-bold text-added flex items-center">
+                <span className="font-bold text-added leading-none">
                   +{diffData.additions}
                 </span>
               )}
               {diffData.deletions > 0 && (
-                <span className="font-bold text-deleted flex items-center">
+                <span className="font-bold text-deleted leading-none">
                   -{diffData.deletions}
                 </span>
               )}

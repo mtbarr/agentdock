@@ -33,9 +33,9 @@ export function getUsageBorderClass(value: number | null | undefined): string {
     case 'warning':
       return 'border-warning';
     case 'ok':
-      return 'border-foreground-secondary';
+      return 'border-foreground';
     default:
-      return 'border-foreground-secondary/35';
+      return 'border-foreground-secondary';
   }
 }
 
