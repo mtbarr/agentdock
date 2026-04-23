@@ -75,6 +75,7 @@ internal fun AcpClientService.initializeAdapterInBackground(adapterName: String)
     adapterInitializationScopes[adapterInfo.id] = initScope
     val job = initScope.launch {
         try {
+            AcpAdapterPaths.ensurePatched(adapterInfo.id)
             val sharedProc = replaceSharedProcess(adapterInfo.id)
             withTimeout(ADAPTER_INITIALIZATION_TIMEOUT_MS) {
                 initializeSharedProcessAtStartup(sharedProc, adapterInfo)
