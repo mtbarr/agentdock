@@ -104,7 +104,7 @@
     & h4,
     & h5,
     & h6 {
-        @apply mt-2;
+        @apply mt-6;
         @apply mb-4;
     }
 

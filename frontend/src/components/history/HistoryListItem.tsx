@@ -87,17 +87,16 @@ export function HistoryListItem({
             )}
 
             {otherAgents.length > 0 && (
-              <div className="flex flex-wrap items-center justify-center gap-0.5 w-full">
+              <div className="flex flex-wrap items-center justify-center gap-0.5 py-0.5 w-full">
                 {otherAgents.map((agentId, idx) => {
                   const adapter = adapterDisplay.get(agentId);
                   const iconLabel = adapter?.name || agentId;
                   if (adapter?.iconPath) {
-                    return <img key={idx} src={adapter.iconPath} alt={iconLabel} className="h-4 w-4 object-contain
-                      opacity-80 group-hover:opacity-100 transition-opacity" />;
+                    return <img key={idx} src={adapter.iconPath} className="h-4 w-4 object-contain opacity-80" />;
                   }
                   return (
                     <div key={idx} className="flex h-4 min-w-4 items-center justify-center rounded bg-background
-                      border border-border text-[9px] font-bold uppercase shrink-0 opacity-70 group-hover:opacity-100">
+                      border border-border text-[9px] font-bold uppercase shrink-0 opacity-80">
                       {iconLabel.slice(0, 1)}
                     </div>
                   );

@@ -22,6 +22,7 @@ function App() {
     handleNewTab,
     handleOpenHistory,
     openSingletonTab,
+    handleUserMessageSent,
     handleAssistantActivity,
     handleAtBottomChange,
     handleCanMarkReadChange,
@@ -70,6 +71,7 @@ function App() {
               runnableAgents={runnableAgents}
               pendingHandoff={pendingHandoffsByTab[tab.id]}
               onOpenHistory={handleOpenHistory}
+              onUserMessageSent={() => handleUserMessageSent(tab.id)}
               onAssistantActivity={() => handleAssistantActivity(tab.id)}
               onAtBottomChange={(isAtBottom) => handleAtBottomChange(tab.id, isAtBottom)}
               onCanMarkReadChange={(canMarkRead) => handleCanMarkReadChange(tab.id, canMarkRead)}

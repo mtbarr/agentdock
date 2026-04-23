@@ -54,6 +54,7 @@ export function useAppController() {
     cleanupTabUiState,
     resetTabUiState,
     markTabReadIfAllowed,
+    clearTabUnread,
     handleAssistantActivity,
     handleAtBottomChange,
     handleCanMarkReadChange,
@@ -382,6 +383,10 @@ export function useAppController() {
     markTabReadIfAllowed(id);
   }, [markTabReadIfAllowed]);
 
+  const handleUserMessageSent = useCallback((tabId: string) => {
+    clearTabUnread(tabId);
+  }, [clearTabUnread]);
+
   return {
     tabs,
     activeTabId,
@@ -399,6 +404,7 @@ export function useAppController() {
     handleNewTab,
     handleOpenHistory,
     openSingletonTab,
+    handleUserMessageSent,
     handleAssistantActivity,
     handleAtBottomChange,
     handleCanMarkReadChange,

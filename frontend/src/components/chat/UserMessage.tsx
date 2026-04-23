@@ -169,10 +169,10 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
           <div>
             <div className="relative brightness-[120%]">
               <div ref={contentRef}
-                className={`break-words transition-[max-height] duration-500 ease-in-out overflow-hidden ${
+                className={`break-words transition-[max-height] duration-1000 ease-in-out ${
                   isLargeContent && !isExpanded
-                    ? 'max-h-[220px] [mask-image:linear-gradient(to_bottom,black_calc(100%-64px),transparent)] [-webkit-mask-image:linear-gradient(to_bottom,black_calc(100%-64px),transparent)]'
-                    : 'max-h-[5000px]'
+                    ? 'max-h-[220px] overflow-hidden [mask-image:linear-gradient(to_bottom,black_calc(100%-64px),transparent)] [-webkit-mask-image:linear-gradient(to_bottom,black_calc(100%-64px),transparent)]'
+                    : 'max-h-[5000px] overflow-visible'
                 }`}
                 style={{ maxHeight: isLargeContent ? undefined : 'none' }}
               >

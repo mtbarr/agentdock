@@ -21,6 +21,7 @@ interface ChatSessionProps {
   historySession?: HistorySessionMeta;
   pendingHandoff?: PendingHandoffContext;
   isActive?: boolean;
+  onUserMessageSent?: () => void;
   onAssistantActivity?: () => void;
   onAtBottomChange?: (isAtBottom: boolean) => void;
   onCanMarkReadChange?: (canMarkRead: boolean) => void;
@@ -37,6 +38,7 @@ export default function ChatSessionView({
   historySession,
   pendingHandoff,
   isActive = false,
+  onUserMessageSent,
   onAssistantActivity,
   onAtBottomChange,
   onCanMarkReadChange,
@@ -71,7 +73,15 @@ export default function ChatSessionView({
     adapterName,
     adapterDisplayName,
     adapterIconPath
-  } = useChatSession(conversationId, availableAgents, initialAgentId, historySession, pendingHandoff, onHandoffConsumed);
+  } = useChatSession(
+    conversationId,
+    availableAgents,
+    initialAgentId,
+    historySession,
+    pendingHandoff,
+    onHandoffConsumed,
+    onUserMessageSent
+  );
 
   const {
     hasPluginEdits,

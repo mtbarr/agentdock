@@ -136,8 +136,8 @@ export default function TabBar({
     averageTabWidth < 76 ? 'hidden' :
     averageTabWidth < 92 ? 'max-w-[20px]' :
     averageTabWidth < 125 ? 'max-w-[35px]' :
-    averageTabWidth < 135 ? 'max-w-[68px]' :
-    averageTabWidth < 165 ? 'max-w-[80px]' :
+    averageTabWidth < 140 ? 'max-w-[68px]' :
+    averageTabWidth < 170 ? 'max-w-[80px]' :
     'max-w-[120px]';
 
   const findDropTarget = (sourceId: string, clientX: number, clientY: number) => {

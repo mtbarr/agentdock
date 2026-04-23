@@ -51,6 +51,22 @@ export function useAppTabUiState(activeTabId: string, activeTabIdRef: MutableRef
     }
   }, [tabUi]);
 
+  const clearTabUnread = useCallback((tabId: string) => {
+    setTabUi(prev => {
+      const current = prev[tabId] ?? DEFAULT_TAB_UI;
+      if (prev[tabId] && !current.unread) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [tabId]: {
+          ...current,
+          unread: false,
+        },
+      };
+    });
+  }, []);
+
   const handleAssistantActivity = useCallback((tabId: string) => {
     if (pendingPermissionRef.current[tabId] || tabUiRef.current[tabId]?.warning) {
       setTabUi(prev => prev[tabId]?.unread ? { ...prev, [tabId]: { ...prev[tabId], unread: false } } : prev);
@@ -140,6 +156,7 @@ export function useAppTabUiState(activeTabId: string, activeTabIdRef: MutableRef
     cleanupTabUiStateForIds,
     resetTabUiState,
     markTabReadIfAllowed,
+    clearTabUnread,
     handleAssistantActivity,
     handleAtBottomChange,
     handleCanMarkReadChange,

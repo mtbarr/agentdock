@@ -1,46 +1,45 @@
-const PERIODIC_INTERVAL_MS = 3000;
-const INACTIVITY_STOP_MS = 10_000;
+const FIRST_REPAINT_DELAY_MS = 500;
+const SECOND_REPAINT_DELAY_MS = 3000;
 
-let periodicTimer: number | null = null;
-let lastActivityAt = 0;
+let firstRepaintTimer: number | null = null;
+let secondRepaintTimer: number | null = null;
 let coordinatorInstalled = false;
 
-function triggerRepaint() {
+function clearScheduledRepaints() {
+  if (firstRepaintTimer !== null) {
+    window.clearTimeout(firstRepaintTimer);
+    firstRepaintTimer = null;
+  }
+
+  if (secondRepaintTimer !== null) {
+    window.clearTimeout(secondRepaintTimer);
+    secondRepaintTimer = null;
+  }
+}
+
+function triggerRepaint(reason: string) {
   try {
-    window.__requestHostRepaint?.();
+    window.__requestHostRepaint?.(reason);
   } catch (_) {}
 }
 
-function schedulePeriodicRepaint() {
-  periodicTimer = window.setTimeout(() => {
-    periodicTimer = null;
-    if (Date.now() - lastActivityAt > INACTIVITY_STOP_MS) return;
-    triggerRepaint();
-    schedulePeriodicRepaint();
-  }, PERIODIC_INTERVAL_MS);
-}
+function scheduleClickRepaints() {
+  clearScheduledRepaints();
 
-function recordActivity() {
-  const wasInactive = Date.now() - lastActivityAt > INACTIVITY_STOP_MS;
-  lastActivityAt = Date.now();
-  if (wasInactive && periodicTimer === null) {
-    schedulePeriodicRepaint();
-  }
+  firstRepaintTimer = window.setTimeout(() => {
+    firstRepaintTimer = null;
+    triggerRepaint(`click:${FIRST_REPAINT_DELAY_MS}ms`);
+  }, FIRST_REPAINT_DELAY_MS);
+
+  secondRepaintTimer = window.setTimeout(() => {
+    secondRepaintTimer = null;
+    triggerRepaint(`click:${SECOND_REPAINT_DELAY_MS}ms`);
+  }, SECOND_REPAINT_DELAY_MS);
 }
 
 export function installJcefHostRepaintCoordinator() {
   if (typeof window === "undefined" || coordinatorInstalled) return;
   coordinatorInstalled = true;
 
-  document.addEventListener("mousemove", recordActivity, { passive: true, capture: true });
-  document.addEventListener("keydown", recordActivity, { passive: true, capture: true });
-  new MutationObserver(recordActivity).observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["class", "style"],
-  });
-
-  lastActivityAt = Date.now();
-  schedulePeriodicRepaint();
+  document.addEventListener("click", scheduleClickRepaints, { passive: true, capture: true });
 }

@@ -35,7 +35,8 @@ export function useChatSession(
   initialAgentId?: string,
   historySession?: HistorySessionMeta,
   pendingHandoff?: PendingHandoffContext,
-  onHandoffConsumed?: (handoffId: string) => void
+  onHandoffConsumed?: (handoffId: string) => void,
+  onUserMessageSent?: () => void
 ) {
   const [historyMessages, setHistoryMessages] = useState<Message[]>([]);
   const [liveMessages, setLiveMessages] = useState<Message[]>([]);
@@ -407,6 +408,7 @@ export function useChatSession(
 
     allowMetadataUpdateRef.current = true;
     touchUpdatedAtRef.current = true;
+    onUserMessageSent?.();
     setIsSending(true);
     const userMessage: Message = {
       id: nextMessageId('user'),
@@ -455,7 +457,7 @@ export function useChatSession(
   // Refs (pendingHandoffRef, allowMetadataUpdateRef, touchUpdatedAtRef, startTimeRef)
   // are intentionally excluded — their identity is stable across renders.
   }, [inputValue, attachments, isSending, status, conversationId, selectedAgentId,
-      adapterDisplayName, selectedModelId, selectedModeId, startSelectedAgent, consumeHandoff]);
+      adapterDisplayName, selectedModelId, selectedModeId, startSelectedAgent, consumeHandoff, onUserMessageSent]);
 
   const handleStop = () => {
     if (typeof window.__cancelPrompt === 'function') {
