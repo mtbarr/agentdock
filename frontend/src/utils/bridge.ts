@@ -16,6 +16,7 @@ import { McpServerConfig } from '../types/mcp';
 import { PromptLibraryItem } from '../types/promptLibrary';
 import { SystemInstruction } from '../types/systemInstructions';
 import {
+  AdapterDeletedEvent,
   AdaptersEvent,
   AudioRecordingStateEvent,
   AudioTranscriptionFeatureEvent,
@@ -244,6 +245,10 @@ export const ACPBridge = {
 
     window.__onGlobalSettings = (payload) => {
       window.dispatchEvent(new CustomEvent(EVENT_NAMES.GLOBAL_SETTINGS, { detail: { payload } }));
+    };
+
+    window.__onAdapterDeleted = (adapterId) => {
+      window.dispatchEvent(new CustomEvent(EVENT_NAMES.ADAPTER_DELETED, { detail: { adapterId } }));
     };
 
     window.__onFilesResult = (filesJson) => {
@@ -559,4 +564,6 @@ export const ACPBridge = {
   },
 
   onGlobalSettings: (callback: (e: CustomEvent<GlobalSettingsEvent>) => void) => onBridgeEvent(EVENT_NAMES.GLOBAL_SETTINGS, callback),
+
+  onAdapterDeleted: (callback: (e: CustomEvent<AdapterDeletedEvent>) => void) => onBridgeEvent(EVENT_NAMES.ADAPTER_DELETED, callback),
 };

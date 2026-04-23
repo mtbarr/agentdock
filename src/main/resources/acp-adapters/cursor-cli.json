@@ -4,7 +4,7 @@
   "iconPath": "/icons/cursor.svg",
   "iconPathLight": "/icons/cursor-light.svg",
   "iconPathDark": "/icons/cursor-dark.svg",
-  "supportsSessionList": false,
+  "supportsSessionList": true,
   "distribution": {
     "type": "archive",
     "version": "2026.04.16-2d20146",

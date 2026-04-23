@@ -281,7 +281,8 @@ internal fun AcpBridge.installAdapterQueries() {
 
                         if (success) {
                             downloadStatuses.remove(adapterId)
-                            setDownloadProbeState(adapterId, target, downloaded = true)
+                            val installedVersion = AcpAdapterPaths.installedVersion(adapterId, target)
+                            setDownloadProbeState(adapterId, target, downloaded = true, installedVersion = installedVersion)
                             service.initializeAdapterInBackground(adapterId)
                             pushAdapters()
                         } else {
@@ -312,6 +313,12 @@ internal fun AcpBridge.installAdapterQueries() {
                     if (deleted) {
                         downloadStatuses.remove(adapterId)
                         setDownloadProbeState(adapterId, AcpAdapterPaths.getExecutionTarget(), downloaded = false)
+                        runOnEdt {
+                            browser.cefBrowser.executeJavaScript(
+                                "if(window.__onAdapterDeleted) window.__onAdapterDeleted(${jsStringLiteral(adapterId)});",
+                                browser.cefBrowser.url, 0
+                            )
+                        }
                     } else {
                         downloadStatuses[adapterId] = "Error: Unable to remove adapter files"
                     }

@@ -126,7 +126,7 @@ internal object HistorySyncService {
                     availableByKey[key]?.title?.takeIf { it.isNotBlank() }
                 }
                 val needsTitleUpdate = syncedTitle != null
-                    && (conversation.title.isBlank() || conversation.title == "Untitled Session")
+                    && !conversation.titleUserSet
                     && syncedTitle != conversation.title
                 val updatedConversation = if (needsTitleUpdate) {
                     changed = true

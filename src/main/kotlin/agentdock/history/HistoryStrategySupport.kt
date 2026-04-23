@@ -131,10 +131,12 @@ internal fun resolveHistoryPathTemplate(template: String, projectPath: String?, 
     val home = System.getProperty("user.home")
     val canonicalProject = canonicalHistoryProjectPath(projectPath)
     val windowsProject = normalizeWindowsHistoryPath(canonicalProject)
+    val isWindows = File.separatorChar == '\\'
+    val hashProject = if (isWindows) windowsProject else canonicalProject
     val slug = historyProjectPathSlug(windowsProject)
     val slugCollapsed = historyProjectPathSlugCollapsed(windowsProject)
-    val hashSha256 = historyHashSha256(windowsProject)
-    val hashMd5 = historyHashMd5(windowsProject)
+    val hashSha256 = historyHashSha256(hashProject)
+    val hashMd5 = historyHashMd5(hashProject)
 
     val resolved = template
         .replace("~", home)

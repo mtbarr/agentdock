@@ -325,7 +325,7 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
                 updateAdapterInitializationState(
                     requestedAdapterName,
                     AcpClientService.AdapterInitializationStatus.Initializing,
-                    detail = "Waiting for ACP initialize... ($attempts/$maxAttempts)"
+                    detail = "Waiting for ACP initialize... (attempt $attempts)"
                 )
                 withTimeout(10_000L) {
                     c.initialize(ClientInfo(LATEST_PROTOCOL_VERSION, ClientCapabilities()))

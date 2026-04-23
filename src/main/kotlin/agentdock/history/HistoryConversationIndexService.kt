@@ -100,6 +100,7 @@ internal object HistoryConversationIndexService {
                 normalizedTitle.isNotBlank() -> normalizedTitle
                 else -> "Untitled Session"
             },
+            titleUserSet = mergedConversation?.titleUserSet ?: false,
             promptCount = mergePromptCounts(mergedConversation?.promptCount, promptCount),
             transcriptPath = mergedConversation?.transcriptPath,
             sessions = updatedSessions
@@ -248,7 +249,7 @@ internal object HistoryConversationIndexService {
         val rewritten = existing.map { conversation ->
             if (conversation.id == cleanConversationId) {
                 updated = true
-                conversation.copy(title = normalizedTitle)
+                conversation.copy(title = normalizedTitle, titleUserSet = true)
             } else {
                 conversation
             }
@@ -295,6 +296,7 @@ internal object HistoryConversationIndexService {
                 right.title.isNotBlank() -> right.title
                 else -> ""
             },
+            titleUserSet = left.titleUserSet || right.titleUserSet,
             promptCount = mergePromptCounts(left.promptCount, right.promptCount),
             transcriptPath = when {
                 !left.transcriptPath.isNullOrBlank() -> left.transcriptPath

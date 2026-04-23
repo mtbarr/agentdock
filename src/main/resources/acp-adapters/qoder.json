@@ -21,7 +21,11 @@
     "executable": {
       "win": "node_modules/.bin/qodercli.cmd",
       "unix": "node_modules/.bin/qodercli"
-    }
+    },
+    "resumeArgs": [
+      "-r",
+      "{sessionId}"
+    ]
   },
   "authConfig": {
     "uiMode": "manage_terminal",

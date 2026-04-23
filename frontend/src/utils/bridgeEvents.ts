@@ -44,8 +44,10 @@ export interface AudioTranscriptionResultEvent { payload: AudioTranscriptionResu
 export interface AudioRecordingStateEvent { payload: AudioRecordingStatePayload; }
 export interface AudioTranscriptionSettingsEvent { settings: AudioTranscriptionSettings; }
 export interface GlobalSettingsEvent { payload: GlobalSettingsPayload; }
+export interface AdapterDeletedEvent { adapterId: string; }
 
 export const EVENT_NAMES = {
+  ADAPTER_DELETED: 'acp-adapter-deleted',
   CONTENT_CHUNK: 'acp-content-chunk',
   MCP_SERVERS: 'mcp-servers',
   PROMPT_LIBRARY: 'prompt-library',

@@ -99,6 +99,7 @@ internal data class HistorySessionIndexEntry(
 internal data class HistoryConversationIndexEntry(
     val id: String,
     val title: String = "",
+    val titleUserSet: Boolean = false,
     val promptCount: Int? = null,
     val transcriptPath: String? = null,
     val sessions: List<HistorySessionIndexEntry> = emptyList()

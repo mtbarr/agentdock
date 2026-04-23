@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChatTab,
   HistorySessionMeta,
@@ -78,6 +78,49 @@ export function useAppController() {
   }, [cleanupTabUiState]);
 
   useHistoryTitleSync(setTabs);
+
+  useEffect(() => {
+    return ACPBridge.onHistoryDeleteResult((e) => {
+      const result = e.detail.result;
+      const failedIds = new Set((result.failures ?? []).map(f => f.conversationId));
+      const deletedIds = new Set(
+        (result.requestedConversationIds ?? []).filter(id => !failedIds.has(id))
+      );
+      if (deletedIds.size === 0) return;
+      setTabs(prev => {
+        const toClose = prev.filter(tab => {
+          if (tab.type !== 'chat') return false;
+          const convId = tab.historySession?.conversationId ?? tab.conversationId;
+          return deletedIds.has(convId);
+        });
+        if (toClose.length === 0) return prev;
+        toClose.forEach(tab => {
+          try { window.__stopAgent?.(tab.conversationId); } catch (_) {}
+          cleanupTabUi(tab.id);
+        });
+        return prev.filter(tab => !toClose.some(c => c.id === tab.id));
+      });
+    });
+  }, [cleanupTabUi]);
+
+  useEffect(() => {
+    return ACPBridge.onAdapterDeleted((e) => {
+      const deletedId = e.detail.adapterId;
+      setTabs(prev => {
+        const toClose = prev.filter(tab => {
+          if (tab.type !== 'chat') return false;
+          const currentAdapter = tabSessionState[tab.id]?.adapterName;
+          return currentAdapter ? currentAdapter === deletedId : tab.agentId === deletedId;
+        });
+        if (toClose.length === 0) return prev;
+        toClose.forEach(tab => {
+          try { window.__stopAgent?.(tab.conversationId); } catch (_) {}
+          cleanupTabUi(tab.id);
+        });
+        return prev.filter(tab => !toClose.some(c => c.id === tab.id));
+      });
+    });
+  }, [cleanupTabUi, tabSessionState]);
 
   const runnableAgents = useMemo(() => availableAgents.filter(isAgentRunnable), [availableAgents]);
   const agentAvailabilityResolved = useMemo(

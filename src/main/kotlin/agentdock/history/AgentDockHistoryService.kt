@@ -65,7 +65,13 @@ object AgentDockHistoryService {
         if (!hasConversationInCurrentEnvironment(cleanProjectPath, cleanConversationId)) return null
         val replayFile = HistoryReplayStore.resolveFreshConversationReplayFile(cleanProjectPath, cleanConversationId)
             ?: return null
-        return HistoryReplayStore.readConversationData(replayFile)
+        val data = HistoryReplayStore.readConversationData(replayFile) ?: return null
+        val lastPrompt = data.sessions.lastOrNull()?.prompts?.lastOrNull()
+        if (lastPrompt != null && lastPrompt.assistantMeta == null) {
+            runCatching { replayFile.delete() }
+            return null
+        }
+        return data
     }
 
     fun saveConversationReplay(projectPath: String?, conversationId: String, data: ConversationReplayData): Boolean {

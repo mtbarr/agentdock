@@ -25,6 +25,10 @@
     "executable": {
       "win": "node_modules/.bin/kilo.cmd",
       "unix": "node_modules/.bin/kilo"
-    }
+    },
+    "resumeArgs": [
+      "--session",
+      "{sessionId}"
+    ]
   }
 }

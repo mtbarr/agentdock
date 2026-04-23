@@ -190,6 +190,7 @@ internal fun AcpBridge.injectReadySignal(cefBrowser: CefBrowser) {
         };
         window.__downloadAgent = window.__downloadAgent || function(id) {};
         window.__deleteAgent = window.__deleteAgent || function(id) {};
+        window.__onAdapterDeleted = window.__onAdapterDeleted || function(id) {};
         window.__updateAgent = window.__updateAgent || function(id) {};
         window.__loginAgent = window.__loginAgent || function(id) {};
         window.__logoutAgent = window.__logoutAgent || function(id) {};

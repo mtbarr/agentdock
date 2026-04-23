@@ -156,10 +156,14 @@ internal object SessionListDeleteSupport {
 
     private fun resolveCursorSourceFilePath(projectPath: String, sessionId: String): String {
         val files = findMatchingHistoryFiles(resolveHistoryPathTemplate("~/.cursor/chats/{projectHashMd5}/*/store.db", projectPath))
-        return files.firstOrNull { file ->
+        val chatFile = files.firstOrNull { file ->
             val sessionDir = file.parentFile ?: return@firstOrNull false
             sessionDir.name == sessionId
-        }?.absolutePath.orEmpty()
+        }
+        if (chatFile != null) return chatFile.absolutePath
+
+        val acpSessionDb = File(System.getProperty("user.home"), ".cursor/acp-sessions/$sessionId/store.db")
+        return if (acpSessionDb.exists()) acpSessionDb.absolutePath else ""
     }
 
     private fun deleteCursorSession(sourceFilePath: String?): Boolean {
