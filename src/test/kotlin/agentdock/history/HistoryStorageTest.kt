@@ -49,4 +49,20 @@ class HistoryStorageTest {
         assertFalse(saved)
         assertFalse(projectDir.parentFile.resolve("outside.json").exists())
     }
+
+    @Test
+    fun `agentdock project slug keeps existing Windows separator shape`() {
+        assertEquals(
+            "C--www-jetbrains-unified-llm-plugin",
+            HistoryStorage.agentDockProjectSlug("C:\\www\\jetbrains\\unified_llm_plugin")
+        )
+    }
+
+    @Test
+    fun `agentdock project slug does not start with dash for unix absolute paths`() {
+        assertEquals(
+            "home-vboxuser-WebstormProjects-untitled",
+            HistoryStorage.agentDockProjectSlug("/home/vboxuser/WebstormProjects/untitled")
+        )
+    }
 }

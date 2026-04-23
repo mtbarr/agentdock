@@ -93,14 +93,15 @@ object AcpAdapterPaths {
             }
             AcpExecutionTarget.WSL -> {
                 val runtimeDir = resolveDownloadPath(adapterInfo, target, wslHomeDirOverride)
-                val runtimeDirFile = wslPathToWindowsFile(runtimeDir, distroNameOverride) ?: return false
-                if (!runtimeDirFile.isDirectory) return false
+                if (!wslPathMatches(runtimeDir, "-d")) return false
                 val launchPath = resolveAdapterLaunchPath(runtimeDir, adapterInfo, target) ?: return false
-                val launchFile = wslPathToWindowsFile(launchPath, distroNameOverride) ?: return false
-                when (adapterInfo.distribution.type) {
-                    AcpAdapterConfig.DistributionType.ARCHIVE -> launchFile.isFile
-                    AcpAdapterConfig.DistributionType.NPM -> File(runtimeDirFile, "node_modules").isDirectory && launchFile.isFile
+                val hasLaunchTarget = when (adapterInfo.distribution.type) {
+                    AcpAdapterConfig.DistributionType.ARCHIVE -> wslPathMatches(launchPath, "-f")
+                    AcpAdapterConfig.DistributionType.NPM ->
+                        wslPathMatches("${runtimeDir.trimEnd('/')}/node_modules", "-d") &&
+                            wslPathMatches(launchPath, "-f")
                 }
+                hasLaunchTarget
             }
         }
     }
@@ -171,6 +172,9 @@ object AcpAdapterPaths {
                 if (!success) return false
                 applyPatches(targetDir, resolvedAdapterInfo, statusCallback)
                 val downloaded = isDownloaded(resolvedAdapterInfo.id, target)
+                if (!downloaded) {
+                    statusCallback?.invoke(missingLaunchTargetError(targetDir.absolutePath, resolvedAdapterInfo, target))
+                }
                 if (downloaded) writeInstallMetadata(targetDir, resolvedAdapterInfo.distribution.version)
                 downloaded
             }
@@ -185,6 +189,9 @@ object AcpAdapterPaths {
                 if (!success) return false
                 applyWslAdapterPatches(runtimeDir, resolvedAdapterInfo, statusCallback)
                 val downloaded = isDownloaded(resolvedAdapterInfo.id, target)
+                if (!downloaded) {
+                    statusCallback?.invoke(missingLaunchTargetError(runtimeDir, resolvedAdapterInfo, target))
+                }
                 if (downloaded) {
                     val runtimeDirFile = wslPathToWindowsFile(runtimeDir)
                         ?: throw IllegalStateException("Unable to resolve WSL runtime dir")
@@ -235,4 +242,22 @@ object AcpAdapterPaths {
         projectPath: String? = null,
         target: AcpExecutionTarget = currentTarget()
     ): List<String> = buildAdapterLaunchCommand(adapterRootPath, adapterInfo, projectPath, target)
+
+    private fun missingLaunchTargetError(
+        runtimeDir: String,
+        adapterInfo: AcpAdapterConfig.AdapterInfo,
+        target: AcpExecutionTarget
+    ): String {
+        val launchPath = resolveAdapterLaunchPath(runtimeDir, adapterInfo, target)
+            ?: return "Error: ${adapterInfo.name} installed, but no launch executable is configured for this platform"
+        return "Error: ${adapterInfo.name} installed, but launch executable was not found: $launchPath"
+    }
+
+    private fun wslPathMatches(path: String, testFlag: String): Boolean {
+        val result = AcpExecutionMode.runWslShell(
+            "test $testFlag ${quoteUnixShellArg(path)}",
+            timeoutSeconds = 15
+        ) ?: return false
+        return result.exitCode == 0
+    }
 }

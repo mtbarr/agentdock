@@ -19,8 +19,14 @@ internal object HistoryStorage {
 
     fun projectIndexFile(projectPath: String): File {
         val baseDir = File(AcpAdapterPaths.getBaseRuntimeDir(), "projects")
-        val slug = historyProjectPathSlug(projectPath.replace("/", "\\"))
+        val slug = agentDockProjectSlug(projectPath)
         return File(File(baseDir, slug), "index.json")
+    }
+
+    internal fun agentDockProjectSlug(projectPath: String): String {
+        return historyProjectPathSlug(projectPath)
+            .trim('-')
+            .ifBlank { "project" }
     }
 
     fun projectConversationsDir(projectPath: String): File {

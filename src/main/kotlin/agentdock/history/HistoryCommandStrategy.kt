@@ -4,6 +4,7 @@ import agentdock.acp.AcpAdapterPaths
 import agentdock.acp.AcpExecutionMode
 import agentdock.acp.AcpExecutionTarget
 import agentdock.acp.buildAdapterCliCommandParts
+import agentdock.acp.isWindowsLocalTarget
 import java.io.File
 
 internal fun runAgentHistoryCliCommand(
@@ -15,7 +16,15 @@ internal fun runAgentHistoryCliCommand(
     return when (AcpAdapterPaths.getExecutionTarget()) {
         AcpExecutionTarget.LOCAL -> {
             runCatching {
-                val process = ProcessBuilder(commandParts)
+                val localCommandParts = if (
+                    isWindowsLocalTarget(AcpExecutionTarget.LOCAL) &&
+                    commandParts.firstOrNull()?.let { it.endsWith(".cmd", true) || it.endsWith(".bat", true) } == true
+                ) {
+                    listOf("cmd.exe", "/c") + commandParts
+                } else {
+                    commandParts
+                }
+                val process = ProcessBuilder(localCommandParts)
                     .directory(File(projectPath))
                     .redirectErrorStream(true)
                     .start()

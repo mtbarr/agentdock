@@ -236,11 +236,16 @@ object AcpAuthService {
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         authConfig: AcpAdapterConfig.AuthConfig
     ): List<String>? {
+        val target = AcpAdapterPaths.getExecutionTarget()
         if (authConfig.command.isNotEmpty()) {
-            val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            return if (isWindows) {
+            return if (isWindowsLocalTarget(target)) {
                 authConfig.command.mapIndexed { i, s ->
-                    if (i == 0 && (s == "npx" || s == "npm" || s == "node")) "$s.cmd" else s
+                    when {
+                        i != 0 -> s
+                        s == "node" -> "node.exe"
+                        s == "npm" || s == "npx" -> "$s.cmd"
+                        else -> s
+                    }
                 }
             } else {
                 authConfig.command.toList()
@@ -250,25 +255,25 @@ object AcpAuthService {
         val authNpmPackage = authConfig.authNpmPackage
         if (!authNpmPackage.isNullOrBlank()) {
             val binaryName = authNpmPackage.substringAfterLast('/')
-            val downloadPath = AcpAdapterPaths.getDownloadPath(adapterInfo.id)
+            val downloadPath = AcpAdapterPaths.getDownloadPath(adapterInfo.id, target)
             if (downloadPath.isEmpty()) return null
-            val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            val binPath = if (isWindows) {
+            val binPath = if (isWindowsLocalTarget(target)) {
                 "$downloadPath${File.separator}node_modules${File.separator}.bin${File.separator}$binaryName.cmd"
-            } else {
+            } else if (target == AcpExecutionTarget.WSL) {
                 "$downloadPath/node_modules/.bin/$binaryName"
+            } else {
+                File(downloadPath, "node_modules${File.separator}.bin${File.separator}$binaryName").absolutePath
             }
             return listOf(binPath)
         }
 
         val script = resolveScriptPath(adapterInfo, authConfig.authScript) ?: return null
         val cmd = mutableListOf<String>()
-        val os = System.getProperty("os.name").lowercase()
 
-        if (os.contains("win") && (script.first.endsWith(".cmd", true) || script.first.endsWith(".bat", true))) {
+        if (isWindowsLocalTarget(target) && (script.first.endsWith(".cmd", true) || script.first.endsWith(".bat", true))) {
             cmd.addAll(listOf("cmd.exe", "/c", script.first))
         } else {
-            if (script.second) cmd.add(findNodeExecutable())
+            if (script.second) cmd.add(findNodeExecutable(target))
             cmd.add(script.first)
         }
         return cmd
@@ -300,7 +305,7 @@ object AcpAuthService {
 
         var relPath = authScript
         if (relPath.contains("node_modules/.bin/") || relPath.contains("node_modules\\.bin\\")) {
-            if (target == AcpExecutionTarget.LOCAL && !relPath.endsWith(".cmd") && !relPath.endsWith(".bat")) {
+            if (isWindowsLocalTarget(target) && !relPath.endsWith(".cmd") && !relPath.endsWith(".bat")) {
                 relPath += ".cmd"
             }
         }
@@ -350,8 +355,12 @@ object AcpAuthService {
         return resolveWorkingDir(adapterInfo, projectPath, AcpExecutionTarget.LOCAL)?.let(::File)
     }
 
-    private fun findNodeExecutable(): String {
-        return if (AcpAdapterPaths.getExecutionTarget() == AcpExecutionTarget.LOCAL) "node.exe" else "node"
+    private fun findNodeExecutable(target: AcpExecutionTarget): String {
+        return if (isWindowsLocalTarget(target)) {
+            "node.exe"
+        } else {
+            "node"
+        }
     }
 
     private fun parseAuthenticatedFromStatusOutput(output: String): Boolean? {

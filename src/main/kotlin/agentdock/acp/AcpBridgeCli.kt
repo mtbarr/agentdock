@@ -202,7 +202,7 @@ internal fun buildAdapterCliCommandParts(
     val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterId, target)
     if (!AcpAdapterPaths.isDownloaded(adapterId, target)) return null
 
-    val executable = if (target == AcpExecutionTarget.WSL) cli.executable.unix else cli.executable.win
+    val executable = platformBinaryForTarget(cli.executable, target)
     val entryPath = cli.entryPath?.takeIf { it.isNotBlank() }
     if (executable.isNullOrBlank()) return null
 

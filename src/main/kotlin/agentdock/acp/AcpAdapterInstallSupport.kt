@@ -100,7 +100,7 @@ internal fun downloadArchiveDistributionLocal(
                     """
                     set -e
                     temp_file=${quoteUnixShellArg("${targetDir.absolutePath}/tool-download.${runtime.archiveExt}")}
-                    curl -fSL ${quoteUnixShellArg(downloadUrl)} -o "${'$'}temp_file"
+                    curl -fsSL ${quoteUnixShellArg(downloadUrl)} -o "${'$'}temp_file"
                     first_entry=${'$'}(tar -tzf "${'$'}temp_file" | sed -n '1p')
                     case "${'$'}first_entry" in
                       */*) tar --strip-components=1 -xzf "${'$'}temp_file" -C ${quoteUnixShellArg(targetDir.absolutePath)} ;;
@@ -113,11 +113,13 @@ internal fun downloadArchiveDistributionLocal(
             )
             if (exitCode != 0) return false
 
-            statusCallback?.invoke("Ensuring executables...")
-            targetDir.listFiles()?.filter { !it.isDirectory }?.forEach { it.setExecutable(true) }
         }
 
         flattenConfiguredExtractSubdir(targetDir, adapterInfo)
+        if (runtime.platform != "windows") {
+            statusCallback?.invoke("Ensuring executables...")
+            ensureExtractedFilesExecutable(targetDir)
+        }
         tempFile.delete()
         val authNpmPackage = adapterInfo.authConfig?.authNpmPackage
         if (!authNpmPackage.isNullOrBlank()) {
@@ -158,7 +160,7 @@ internal fun downloadArchiveDistributionInWsl(
         set -e
         rm -rf ${quoteUnixShellArg(targetDir)}
         mkdir -p ${quoteUnixShellArg(targetDir)}
-        curl -fSL ${quoteUnixShellArg(downloadUrl)} -o ${quoteUnixShellArg(tempFile)}
+        curl -fsSL ${quoteUnixShellArg(downloadUrl)} -o ${quoteUnixShellArg(tempFile)}
         first_entry=${'$'}(tar -tzf ${quoteUnixShellArg(tempFile)} | sed -n '1p')
         case "${'$'}first_entry" in
           */*) tar --strip-components=1 -xzf ${quoteUnixShellArg(tempFile)} -C ${quoteUnixShellArg(targetDir)} ;;
@@ -286,11 +288,25 @@ private fun flattenConfiguredExtractSubdir(targetDir: File, adapterInfo: AcpAdap
     nestedDir.deleteRecursively()
 }
 
+private fun ensureExtractedFilesExecutable(targetDir: File) {
+    targetDir.walkTopDown()
+        .filter { it.isFile }
+        .forEach { it.setExecutable(true) }
+}
+
 private fun runArchiveCommand(builder: ProcessBuilder, statusCallback: ((String) -> Unit)? = null): Int {
     val process = builder.redirectErrorStream(true).start()
+    val recentOutput = java.util.Collections.synchronizedList(mutableListOf<String>())
     val outputDrainer = Thread {
         process.inputStream.bufferedReader().useLines { lines ->
-            lines.forEach { line -> if (line.isNotBlank()) statusCallback?.invoke(line.trim()) }
+            lines.forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.isNotBlank()) {
+                    recentOutput.add(trimmed)
+                    if (recentOutput.size > 8) recentOutput.removeAt(0)
+                    statusCallback?.invoke(trimmed)
+                }
+            }
         }
     }
     outputDrainer.isDaemon = true
@@ -305,7 +321,18 @@ private fun runArchiveCommand(builder: ProcessBuilder, statusCallback: ((String)
     }
 
     outputDrainer.join(1000)
-    return process.exitValue()
+    val exitCode = process.exitValue()
+    if (exitCode != 0) {
+        val detail = recentOutput.joinToString("\n").takeIf { it.isNotBlank() }
+        statusCallback?.invoke(
+            if (detail == null) {
+                "Error: Command failed with exit code $exitCode"
+            } else {
+                "Error: Command failed with exit code $exitCode\n$detail"
+            }
+        )
+    }
+    return exitCode
 }
 
 private fun buildFlattenExtractSubdirScript(targetDir: String, extractSubdir: String?): String {

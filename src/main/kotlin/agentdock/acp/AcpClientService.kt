@@ -169,6 +169,7 @@ class AcpClientService private constructor(val project: Project) {
     internal val adapterInitializationScopes = ConcurrentHashMap<String, CoroutineScope>()
     internal val adapterInitializationState = ConcurrentHashMap<String, AdapterInitializationStatus>()
     internal val adapterInitializationErrors = ConcurrentHashMap<String, String>()
+    internal val adapterInitializationDetails = ConcurrentHashMap<String, String>()
     internal val adapterRuntimeMetadataMap = ConcurrentHashMap<String, AdapterRuntimeMetadata>()
     internal val availableCommandsByAdapter = ConcurrentHashMap<String, List<AvailableCommandPayload>>()
     internal val systemInstructionsInjectedSessionIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -183,6 +184,7 @@ class AcpClientService private constructor(val project: Project) {
         return adapterInitializationState[adapterName] ?: AdapterInitializationStatus.NotStarted
     }
     fun adapterInitializationError(adapterName: String): String? = adapterInitializationErrors[adapterName]
+    fun adapterInitializationDetail(adapterName: String): String? = adapterInitializationDetails[adapterName]
     fun adapterRuntimeMetadata(adapterName: String): AdapterRuntimeMetadata? = adapterRuntimeMetadataMap[adapterName]
     internal fun availableCommands(adapterName: String): List<AvailableCommandPayload> = availableCommandsByAdapter[adapterName] ?: emptyList()
     internal fun allAvailableCommands(): Map<String, List<AvailableCommandPayload>> = availableCommandsByAdapter.toMap()
@@ -199,13 +201,19 @@ class AcpClientService private constructor(val project: Project) {
     internal fun updateAdapterInitializationState(
         adapterName: String,
         state: AdapterInitializationStatus,
-        error: String? = null
+        error: String? = null,
+        detail: String? = null
     ) {
         adapterInitializationState[adapterName] = state
         if (error.isNullOrBlank()) {
             adapterInitializationErrors.remove(adapterName)
         } else {
             adapterInitializationErrors[adapterName] = error
+        }
+        if (state == AdapterInitializationStatus.Initializing && !detail.isNullOrBlank()) {
+            adapterInitializationDetails[adapterName] = detail
+        } else if (state != AdapterInitializationStatus.Initializing) {
+            adapterInitializationDetails.remove(adapterName)
         }
         runCatching { adapterInitializationStateHandler?.invoke(adapterName, state, error) }
     }

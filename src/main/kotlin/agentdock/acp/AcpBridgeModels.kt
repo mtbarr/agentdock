@@ -40,6 +40,7 @@ internal data class AdapterPayload(
     val authenticating: Boolean,
     val authUiMode: String,
     val initializing: Boolean,
+    val initializationDetail: String,
     val initializationError: String,
     val ready: Boolean? = null,
     val readyKnown: Boolean = false,
@@ -53,7 +54,7 @@ internal data class AdapterPayload(
     val downloadStatus: String,
     val disabledModels: List<String>,
     val cliAvailable: Boolean,
-    val executionTarget: String = "windows"
+    val executionTarget: String = "local"
 )
 
 @Serializable

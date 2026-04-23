@@ -65,7 +65,11 @@ internal fun AcpClientService.initializeAdapterInBackground(adapterName: String)
     adapterInitialization.remove(adapterInfo.id)
     val deferred = CompletableDeferred<Unit>()
     adapterInitialization[adapterInfo.id] = deferred
-    updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.Initializing)
+    updateAdapterInitializationState(
+        adapterInfo.id,
+        AcpClientService.AdapterInitializationStatus.Initializing,
+        detail = "Queued for startup..."
+    )
 
     val initScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     adapterInitializationScopes[adapterInfo.id] = initScope
@@ -134,7 +138,11 @@ internal suspend fun AcpClientService.initializeAdapterIfEligible(adapterName: S
     }
 
     val deferred = adapterInitialization.computeIfAbsent(adapterInfo.id) { CompletableDeferred<Unit>() }
-    updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.Initializing)
+    updateAdapterInitializationState(
+        adapterInfo.id,
+        AcpClientService.AdapterInitializationStatus.Initializing,
+        detail = "Queued for startup..."
+    )
     try {
         val sharedProc = replaceSharedProcess(adapterInfo.id)
         withTimeout(ADAPTER_INITIALIZATION_TIMEOUT_MS) {
@@ -186,7 +194,11 @@ internal suspend fun AcpClientService.ensureSharedProcessStarted(
     val isHealthy = sharedProc.isHealthy()
 
     if (!isHealthy) {
-        updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.Initializing)
+        updateAdapterInitializationState(
+            adapterInfo.id,
+            AcpClientService.AdapterInitializationStatus.Initializing,
+            detail = "Starting adapter process..."
+        )
 
         // Ensure all patches are applied before starting the process
         AcpAdapterPaths.ensurePatched(adapterInfo.id)
@@ -223,11 +235,23 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
         val target = AcpAdapterPaths.getExecutionTarget()
         val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterInfo.id, target)
 
+        updateAdapterInitializationState(
+            requestedAdapterName,
+            AcpClientService.AdapterInitializationStatus.Initializing,
+            detail = "Resolving launch command..."
+        )
+
         val command = AcpAdapterPaths.buildLaunchCommand(
             adapterRootPath = adapterRoot,
             adapterInfo = adapterInfo,
             projectPath = project.basePath,
             target = target
+        )
+
+        updateAdapterInitializationState(
+            requestedAdapterName,
+            AcpClientService.AdapterInitializationStatus.Initializing,
+            detail = "Starting adapter process..."
         )
 
         val commandLine = com.intellij.execution.configurations.GeneralCommandLine(command)
@@ -237,6 +261,11 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
 
         val proc = withContext(Dispatchers.IO) { commandLine.createProcess() }
         sharedProc.process = proc
+        updateAdapterInitializationState(
+            requestedAdapterName,
+            AcpClientService.AdapterInitializationStatus.Initializing,
+            detail = "Opening ACP stdio transport..."
+        )
         val startupOutput = Collections.synchronizedList(mutableListOf<String>())
 
         Thread {
@@ -279,6 +308,11 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
         val c = Client(prot)
         sharedProc.client = c
         prot.start()
+        updateAdapterInitializationState(
+            requestedAdapterName,
+            AcpClientService.AdapterInitializationStatus.Initializing,
+            detail = "Waiting for ACP initialize..."
+        )
 
         var initialized = false
         var attempts = 0
@@ -288,6 +322,11 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
         while (!initialized && attempts < maxAttempts) {
             try {
                 attempts++
+                updateAdapterInitializationState(
+                    requestedAdapterName,
+                    AcpClientService.AdapterInitializationStatus.Initializing,
+                    detail = "Waiting for ACP initialize... ($attempts/$maxAttempts)"
+                )
                 withTimeout(10_000L) {
                     c.initialize(ClientInfo(LATEST_PROTOCOL_VERSION, ClientCapabilities()))
                 }
@@ -310,6 +349,11 @@ internal suspend fun AcpClientService.initializeSharedProcessAtStartup(
         }
         runCatching { ensureAsyncSessionUpdates(sharedProc) }
         try {
+            updateAdapterInitializationState(
+                requestedAdapterName,
+                AcpClientService.AdapterInitializationStatus.Initializing,
+                detail = "Fetching models and modes..."
+            )
             val metadataResult = fetchAdapterRuntimeMetadata(c, adapterInfo)
             adapterRuntimeMetadataMap[requestedAdapterName] = metadataResult.metadata
             AgentDockHistoryService.registerEphemeralSession(project.basePath, requestedAdapterName, metadataResult.sessionId)

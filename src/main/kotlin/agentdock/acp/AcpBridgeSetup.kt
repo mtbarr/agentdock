@@ -285,7 +285,9 @@ internal fun AcpBridge.installAdapterQueries() {
                             service.initializeAdapterInBackground(adapterId)
                             pushAdapters()
                         } else {
-                            downloadStatuses[adapterId] = "Error: Download failed"
+                            downloadStatuses.compute(adapterId) { _, previous ->
+                                previous?.takeIf { it.startsWith("Error:") } ?: "Error: Download failed"
+                            }
                             pushAdapters()
                         }
                     } catch (e: Exception) {
@@ -366,7 +368,9 @@ internal fun AcpBridge.installAdapterQueries() {
                             setDownloadProbeState(adapterId, target, downloaded = true, installedVersion = latestVersion)
                             service.initializeAdapterInBackground(adapterId)
                         } else {
-                            downloadStatuses[adapterId] = "Error: Update failed"
+                            downloadStatuses.compute(adapterId) { _, previous ->
+                                previous?.takeIf { it.startsWith("Error:") } ?: "Error: Update failed"
+                            }
                         }
                     } catch (e: Exception) {
                         downloadStatuses[adapterId] = "Error: ${e.message}"

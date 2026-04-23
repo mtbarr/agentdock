@@ -125,6 +125,7 @@ export interface AgentOption {
   authenticating?: boolean;
   authUiMode?: 'login_logout' | 'manage_terminal';
   initializing?: boolean;
+  initializationDetail?: string;
   initializationError?: string;
   ready?: boolean;
   readyKnown?: boolean;
@@ -135,7 +136,7 @@ export interface AgentOption {
   updateKnown?: boolean;
   updateAvailable?: boolean;
   cliAvailable?: boolean;
-  executionTarget?: 'windows' | 'wsl';
+  executionTarget?: 'local' | 'wsl';
 }
 
 export function isAgentRunnable(agent: AgentOption): boolean {
@@ -443,7 +444,7 @@ export interface GlobalSettingsPayload {
 }
 
 export interface ExecutionTargetSwitchPayload {
-  executionTarget: 'windows' | 'wsl';
+  executionTarget: 'local' | 'wsl';
 }
 
 declare global {

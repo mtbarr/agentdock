@@ -89,6 +89,7 @@ private fun AcpBridge.buildAdapterPayload(
     val isAuthenticating = AcpAuthService.isAuthenticating(info.id)
     val cliAvailable = downloaded == true && info.cli != null && cli.isIdeTerminalAvailable()
     val rawInitError = service.adapterInitializationError(info.id) ?: ""
+    val initializationDetail = if (isInitializing) service.adapterInitializationDetail(info.id).orEmpty() else ""
     val authRequiredByInit = rawInitError.startsWith("[AUTH_REQUIRED]")
     val initError = if (authRequiredByInit) "" else rawInitError
 
@@ -183,6 +184,7 @@ private fun AcpBridge.buildAdapterPayload(
         authenticating = isAuthenticating,
         authUiMode = authUiMode,
         initializing = isInitializing,
+        initializationDetail = initializationDetail,
         initializationError = initError,
         ready = isReady,
         readyKnown = readyKnown,
@@ -196,7 +198,7 @@ private fun AcpBridge.buildAdapterPayload(
         downloadStatus = dlStatus,
         disabledModels = info.disabledModels,
         cliAvailable = cliAvailable,
-        executionTarget = if (isWslMode) "wsl" else "windows"
+        executionTarget = target.name.lowercase()
     )
 }
 

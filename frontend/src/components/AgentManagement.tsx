@@ -277,6 +277,7 @@ export function AgentManagementView({
             const isManageAuth = authUiMode === 'manage_terminal';
             const isLast = index === agents.length - 1;
             const isStarting = !!agent.initializing;
+            const initializationDetail = agent.initializationDetail?.trim();
             const isAuthKnown = isManageAuth || agent.hasAuthentication !== true || agent.authKnown === true;
             const canResolveStatus = isDownloaded && agent.readyKnown === true && isAuthKnown;
             const isStatusUnknown = isDownloaded && !isStarting && !canResolveStatus;
@@ -319,6 +320,14 @@ export function AgentManagementView({
                         <span className="shrink-0">Status:</span>
                         {isStatusUnknown ? (<LoadingSpinner className="w-3 h-3" />) : (
                           <span className={`${statusClass} font-semibold`}>{statusLabel}</span>
+                        )}
+                        {isStarting && initializationDetail && (
+                          <span
+                            className="min-w-0 truncate text-foreground-secondary"
+                            title={initializationDetail}
+                          >
+                            {initializationDetail}
+                          </span>
                         )}
                       </div>
                     )}

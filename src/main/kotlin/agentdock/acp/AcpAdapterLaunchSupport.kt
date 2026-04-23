@@ -4,6 +4,16 @@ import java.io.File
 
 private const val DEFAULT_NPM_LAUNCH_PATH = "dist/index.js"
 
+internal fun isWindowsLocalTarget(target: AcpExecutionTarget): Boolean =
+    target == AcpExecutionTarget.LOCAL && AcpExecutionMode.isWindowsHost()
+
+internal fun platformBinaryForTarget(
+    binary: AcpAdapterConfig.PlatformBinary?,
+    target: AcpExecutionTarget
+): String? {
+    return if (isWindowsLocalTarget(target)) binary?.win else binary?.unix
+}
+
 internal fun resolveTargetDependenciesPath(
     target: AcpExecutionTarget,
     wslHomeDirOverride: String? = null
@@ -40,7 +50,7 @@ internal fun resolveAdapterLaunchFile(
     if (target == AcpExecutionTarget.WSL) return null
     return when (adapterInfo.distribution.type) {
         AcpAdapterConfig.DistributionType.ARCHIVE -> {
-            val binName = adapterInfo.distribution.binaryName?.win
+            val binName = platformBinaryForTarget(adapterInfo.distribution.binaryName, target)
             if (binName.isNullOrBlank()) null else File(adapterRoot, binName)
         }
         AcpAdapterConfig.DistributionType.NPM -> {
@@ -57,11 +67,7 @@ internal fun resolveAdapterLaunchPath(
 ): String? {
     return when (adapterInfo.distribution.type) {
         AcpAdapterConfig.DistributionType.ARCHIVE -> {
-            val binName = if (target == AcpExecutionTarget.WSL) {
-                adapterInfo.distribution.binaryName?.unix
-            } else {
-                adapterInfo.distribution.binaryName?.win
-            }
+            val binName = platformBinaryForTarget(adapterInfo.distribution.binaryName, target)
             binName?.takeIf { it.isNotBlank() }?.let { joinAdapterPath(adapterRootPath, it, target) }
         }
         AcpAdapterConfig.DistributionType.NPM -> {
@@ -88,7 +94,9 @@ internal fun buildAdapterLaunchCommand(
                 name.endsWith(".ps1") -> mutableListOf(
                     "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launchFile.absolutePath
                 )
-                name.endsWith(".js") || name.endsWith(".mjs") -> mutableListOf("node.exe", launchFile.absolutePath)
+                name.endsWith(".js") || name.endsWith(".mjs") -> {
+                    mutableListOf(if (AcpExecutionMode.isWindowsHost()) "node.exe" else "node", launchFile.absolutePath)
+                }
                 else -> mutableListOf(launchFile.absolutePath)
             }
             base.addAll(adapterInfo.args)
@@ -137,11 +145,7 @@ private fun resolveNpmLaunchRelativePath(
     adapterInfo: AcpAdapterConfig.AdapterInfo,
     target: AcpExecutionTarget
 ): String {
-    val launchBinary = if (target == AcpExecutionTarget.WSL) {
-        adapterInfo.launchBinary?.unix
-    } else {
-        adapterInfo.launchBinary?.win
-    }?.trim().orEmpty()
+    val launchBinary = platformBinaryForTarget(adapterInfo.launchBinary, target).orEmpty().trim()
     if (launchBinary.isNotEmpty()) return launchBinary
 
     val launchPath = adapterInfo.launchPath.ifBlank { DEFAULT_NPM_LAUNCH_PATH }

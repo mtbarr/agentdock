@@ -98,10 +98,7 @@ internal object AcpUsageDataFetcher {
         val adapterRoot = AcpAdapterPaths.getDownloadPath(adapterId, target)
         if (!AcpAdapterPaths.isDownloaded(adapterId, target)) return ""
 
-        val executable = when (target) {
-            AcpExecutionTarget.LOCAL -> cli.executable.win
-            AcpExecutionTarget.WSL -> cli.executable.unix
-        }?.takeIf { it.isNotBlank() } ?: return ""
+        val executable = platformBinaryForTarget(cli.executable, target)?.takeIf { it.isNotBlank() } ?: return ""
 
         val commandParts = mutableListOf(resolveCliPath(adapterRoot, executable, target))
         cli.entryPath?.takeIf { it.isNotBlank() }?.let { commandParts += resolveCliPath(adapterRoot, it, target) }

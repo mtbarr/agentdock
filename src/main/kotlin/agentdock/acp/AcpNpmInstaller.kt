@@ -24,20 +24,34 @@ object AcpNpmInstaller {
                 .redirectErrorStream(true)
                 .start()
 
+            val recentOutput = ArrayDeque<String>()
             installProc.inputStream.bufferedReader().use { reader ->
                 while (true) {
                     val line = reader.readLine() ?: break
-                    if (line.contains("added", ignoreCase = true)
+                    val trimmed = line.trim()
+                    if (trimmed.isNotBlank()) {
+                        recentOutput.addLast(trimmed)
+                        if (recentOutput.size > 12) recentOutput.removeFirst()
+                    }
+                    if (trimmed.contains("added", ignoreCase = true)
                         || line.contains("tarball", ignoreCase = true)
                         || line.contains("install", ignoreCase = true)
                     ) {
-                        statusCallback?.invoke("NPM: $line")
+                        statusCallback?.invoke("NPM: $trimmed")
                     }
                 }
             }
 
-            installProc.waitFor() == 0
-        } catch (_: Exception) {
+            val exitCode = installProc.waitFor()
+            if (exitCode == 0) {
+                true
+            } else {
+                val detail = recentOutput.joinToString("\n").ifBlank { "npm install failed" }
+                statusCallback?.invoke("Error: npm install failed with exit code $exitCode\n$detail")
+                false
+            }
+        } catch (e: Exception) {
+            statusCallback?.invoke("Error: ${e.message ?: "npm install failed"}")
             false
         }
     }
