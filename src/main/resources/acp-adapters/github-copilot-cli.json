@@ -6,7 +6,7 @@
   "iconPathDark": "/icons/copilot-dark.svg",
   "distribution": {
     "type": "npm",
-    "version": "latest",
+    "version": "1.0.36",
     "packageName": "@github/copilot"
   },
   "launchPath": "index.js",

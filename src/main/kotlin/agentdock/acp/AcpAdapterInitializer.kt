@@ -207,7 +207,16 @@ internal suspend fun AcpClientService.ensureSharedProcessStarted(
         // Ensure all patches are applied before starting the process
         AcpAdapterPaths.ensurePatched(adapterInfo.id)
 
-        initializeSharedProcessAtStartup(sharedProc, adapterInfo)
+        try {
+            initializeSharedProcessAtStartup(sharedProc, adapterInfo)
+        } catch (e: Exception) {
+            if (e is CancellationException && e !is TimeoutCancellationException) {
+                updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.NotStarted)
+            } else {
+                updateAdapterInitializationState(adapterInfo.id, AcpClientService.AdapterInitializationStatus.Failed, formatAcpError(e))
+            }
+            throw e
+        }
         adapterInitialization.computeIfAbsent(adapterInfo.id) { CompletableDeferred<Unit>() }.also { deferred ->
             if (!deferred.isCompleted) deferred.complete(Unit)
         }

@@ -1,9 +1,12 @@
-const FIRST_REPAINT_DELAY_MS = 500;
-const SECOND_REPAINT_DELAY_MS = 3000;
+const FIRST_REPAINT_DELAY_MS = 150;
+const SECOND_REPAINT_DELAY_MS = 2000;
+const LIVE_PROMPT_REPAINT_INTERVAL_MS = 3000;
 
 let firstRepaintTimer: number | null = null;
 let secondRepaintTimer: number | null = null;
+let livePromptRepaintTimer: number | null = null;
 let coordinatorInstalled = false;
+const livePromptRepaintRequests = new Set<symbol>();
 
 function clearScheduledRepaints() {
   if (firstRepaintTimer !== null) {
@@ -21,6 +24,21 @@ function triggerRepaint(reason: string) {
   try {
     window.__requestHostRepaint?.(reason);
   } catch (_) {}
+}
+
+function stopLivePromptRepaintsIfIdle() {
+  if (livePromptRepaintRequests.size > 0 || livePromptRepaintTimer === null) return;
+  window.clearInterval(livePromptRepaintTimer);
+  livePromptRepaintTimer = null;
+}
+
+function startLivePromptRepaints() {
+  triggerRepaint('live-prompt:start');
+
+  if (livePromptRepaintTimer !== null) return;
+  livePromptRepaintTimer = window.setInterval(() => {
+    triggerRepaint(`live-prompt:${LIVE_PROMPT_REPAINT_INTERVAL_MS}ms`);
+  }, LIVE_PROMPT_REPAINT_INTERVAL_MS);
 }
 
 function scheduleClickRepaints() {
@@ -42,4 +60,17 @@ export function installJcefHostRepaintCoordinator() {
   coordinatorInstalled = true;
 
   document.addEventListener("click", scheduleClickRepaints, { passive: true, capture: true });
+}
+
+export function acquireJcefLivePromptRepaint() {
+  if (typeof window === "undefined") return () => {};
+
+  const requestId = Symbol('live-prompt-repaint');
+  livePromptRepaintRequests.add(requestId);
+  startLivePromptRepaints();
+
+  return () => {
+    livePromptRepaintRequests.delete(requestId);
+    stopLivePromptRepaintsIfIdle();
+  };
 }

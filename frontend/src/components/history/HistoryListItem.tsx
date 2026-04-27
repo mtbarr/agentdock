@@ -79,7 +79,7 @@ export function HistoryListItem({
         >
           <div className="flex flex-col items-center shrink-0 gap-0.5 pt-0.5 mx-0.5 max-[350px]:hidden">
             {mainAgent?.iconPath ? (
-              <img src={mainAgent.iconPath} alt={mainLabel} className="h-7 w-7 object-contain opacity-80" />
+              <img src={mainAgent.iconPath} alt={mainLabel} className="h-7 w-7 object-contain opacity-75" />
             ) : (
               <div className="flex items-center justify-center rounded bg-background border border-border font-bold uppercase shrink-0 h-8 w-8 text-base">
                 {mainLabel.slice(0, 1)}

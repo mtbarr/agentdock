@@ -56,7 +56,7 @@ export function SplitButton({
   }, [menuOpen]);
 
   return (
-    <div ref={rootRef} className="relative inline-flex flex-col items-start hover:!brightness-110">
+    <div ref={rootRef} className="relative inline-flex flex-col items-start">
       <div className="inline-flex overflow-hidden rounded-[4px] border border-[var(--ide-Button-startBorderColor)] bg-primary
         focus-within:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_0_0_1px_var(--ide-Button-default-focusColor)]">
         <button

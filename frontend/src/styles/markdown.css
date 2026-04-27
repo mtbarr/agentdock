@@ -162,7 +162,7 @@
     }
 
     & blockquote {
-        @apply border-l-4 border-primary pl-4 italic my-3;
+        @apply border-l-2 border-border pl-4 italic my-3;
     }
 
     & table {

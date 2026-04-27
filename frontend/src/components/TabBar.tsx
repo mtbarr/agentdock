@@ -208,18 +208,17 @@ export default function TabBar({
   };
 
   return (
-    <div className="relative z-30 flex h-[40px] bg-background border-t border-b border-[var(--ide-Borders-ContrastBorderColor)] select-none shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
+    <div className="relative z-30 flex h-[40px] bg-background border-t border-b
+      border-[var(--ide-Borders-ContrastBorderColor)] select-none shadow-[0_2px_8px_rgba(0,0,0,0.05)]">
       {/* Tabs List */}
-      <div
-        ref={tabsListRef}
-        role="tablist"
+      <div ref={tabsListRef} role="tablist"
         className="flex min-w-0 flex-1 overflow-x-auto scroll-smooth [&::-webkit-scrollbar]:h-1.5"
       >
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           const flags = tabUi[tab.id];
-          const hasWarning = !!flags?.warning;
-          const hasUnread = !!flags?.unread;
+          const hasWarning = flags?.warning;
+          const hasUnread = flags?.unread;
           return (
             <TabItem
               key={tab.id}
@@ -249,7 +248,9 @@ export default function TabBar({
           onClick={onNewTab}
           onFocus={() => setTabFocusedControl(lastInteractionWasTabRef.current ? 'new' : null)}
           onBlur={() => setTabFocusedControl((current) => current === 'new' ? null : current)}
-          className={`flex items-center justify-center w-[28px] h-[24px] rounded bg-background hover:text-foreground hover:bg-hover transition-[filter,color] focus:outline-none ${tabFocusedControl === 'new' ? 'shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]' : ''}`}
+          className={`flex items-center justify-center w-[28px] h-[24px] rounded bg-background hover:text-foreground 
+            hover:bg-hover transition-[filter,color] focus:outline-none 
+            ${tabFocusedControl === 'new' ? 'shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]' : ''}`}
         >
           <Plus size={14} strokeWidth={2.5} aria-hidden="true" />
         </button>
@@ -278,7 +279,10 @@ export default function TabBar({
                 setMenuOpen(true);
               }
             }}
-            className={`flex items-center justify-center w-[24px] h-[24px] rounded bg-background hover:text-foreground hover:bg-hover transition-colors focus:outline-none ${menuOpen ? 'bg-hover text-foreground' : ''} ${tabFocusedControl === 'menu' ? 'shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]' : ''}`}
+            className={`flex items-center justify-center w-[24px] h-[24px] rounded bg-background 
+              hover:text-foreground hover:bg-hover transition-colors focus:outline-none 
+              ${menuOpen ? 'bg-hover text-foreground' : ''} 
+              ${tabFocusedControl === 'menu' ? 'shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]' : ''}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
           >
@@ -327,7 +331,9 @@ export default function TabBar({
                 setHamburgerMenuOpen(true);
               }
             }}
-            className={`flex items-center justify-center w-[28px] h-[24px] rounded bg-background transition-colors focus:outline-none ${hamburgerMenuOpen ? 'bg-hover text-foreground' : 'hover:text-foreground hover:bg-hover'} ${tabFocusedControl === 'hamburger' ? 'shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]' : ''}`}
+            className={`flex items-center justify-center w-[28px] h-[24px] rounded bg-background transition-colors 
+              focus:outline-none ${hamburgerMenuOpen ? 'bg-hover text-foreground' : 'hover:text-foreground hover:bg-hover'} 
+              ${tabFocusedControl === 'hamburger' ? 'shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]' : ''}`}
             aria-haspopup="menu"
             aria-expanded={hamburgerMenuOpen}
           >

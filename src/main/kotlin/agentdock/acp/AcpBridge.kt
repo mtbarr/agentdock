@@ -65,6 +65,8 @@ class AcpBridge(
     internal val authStates = ConcurrentHashMap<String, Boolean>()
     internal val updateCheckJobs = ConcurrentHashMap<String, Job>()
     internal val latestVersionStates = ConcurrentHashMap<String, String>()
+    internal val agentVersionJobs = ConcurrentHashMap<String, Job>()
+    internal val agentVersionStates = ConcurrentHashMap<String, String>()
     internal val replaySeqByChatId = ConcurrentHashMap<String, Int>()
     internal val livePromptCaptures = ConcurrentHashMap<String, LivePromptCapture>()
     internal val historyReplayCaptures = ConcurrentHashMap<String, HistoryReplayCapture>()

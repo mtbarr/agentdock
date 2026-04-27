@@ -27,6 +27,12 @@ object AcpAdapterConfig {
     )
 
     @Serializable
+    data class AgentVersionConfig(
+        val args: List<String>,
+        val pattern: String? = null
+    )
+
+    @Serializable
     data class AuthConfig(
         val authScript: String? = null,
         val uiMode: String = "login_logout",
@@ -98,6 +104,7 @@ object AcpAdapterConfig {
         val args: List<String> = emptyList(),
         val patches: List<String> = emptyList(),
         val authConfig: AuthConfig? = null,
+        val agentVersionConfig: AgentVersionConfig? = null,
         val cli: CliConfig? = null,
         /**
          * How to handle model changes mid-session:

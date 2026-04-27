@@ -7,7 +7,7 @@
   "supportsSessionList": false,
   "distribution": {
     "type": "npm",
-    "version": "latest",
+    "version": "0.1.43",
     "packageName": "@qoder-ai/qodercli"
   },
   "launchBinary": {

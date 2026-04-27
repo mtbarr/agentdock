@@ -58,8 +58,7 @@
   }
 
   input:focus, select:focus, textarea:focus {
-    border-color: var(--ide-TextField-focusedBorderColor);
-    box-shadow: 0 0 0 1px var(--ide-Button-default-focusColor);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ide-Button-default-focusColor) 70%, transparent);
     outline: none;
   }
 
@@ -139,6 +138,11 @@
 
   *::-webkit-scrollbar-corner {
     background: transparent;
+  }
+  
+  .user-message-bubble .code-refrence-chip {
+    margin: 2px;
+    top: -2px;
   }
 }
 

@@ -1,8 +1,9 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useChatSession } from '../../hooks/useChatSession';
 import { useFileChanges } from '../../hooks/useFileChanges';
 import { AgentOption, FileChangeSummary, HistorySessionMeta, PendingHandoffContext } from '../../types/chat';
 import { Check, Copy, Download, X } from 'lucide-react';
+import { acquireJcefLivePromptRepaint } from '../../utils/jcefHostRepaint';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import PermissionBar from './PermissionBar';
@@ -158,6 +159,11 @@ export default function ChatSessionView({
     onSessionStateChange,
   });
 
+  useEffect(() => {
+    if (!isActive || isHistoryReplaying || status !== 'prompting') return;
+    return acquireJcefLivePromptRepaint();
+  }, [isActive, isHistoryReplaying, status]);
+
   const handleAgentChange = useAgentHandoffRequest({
     conversationId,
     selectedAgentId,
@@ -187,7 +193,7 @@ export default function ChatSessionView({
         </div>
       </div>
 
-      <div className="flex flex-col shrink-0 relative z-20 shadow-[0_-2px_8px_rgba(0,0,0,0.08)] bg-background">
+      <div className="flex flex-col shrink-0 relative z-20 shadow-[0_-2px_8px_rgba(0,0,0,0.05)] bg-background">
         <FileChangesPanel
           hasPluginEdits={hasPluginEdits}
           fileChanges={fileChanges}
@@ -215,11 +221,10 @@ export default function ChatSessionView({
         >
           <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px]
             bg-[var(--ide-Borders-ContrastBorderColor)] transition-[background-color,box-shadow] duration-500
-            delay-150 ease-out group-hover:bg-[var(--ide-Button-default-focusColor)]
-            group-hover:shadow-[0_0_4px_color-mix(in_srgb,var(--ide-Button-default-focusColor),transparent_55%)]" />
+            delay-150 ease-out group-hover:bg-[var(--ide-Button-default-focusColor)] group-hover:opacity-70" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-20 h-[2px]
             bg-[var(--ide-Borders-ContrastBorderColor)] rounded-full transition-[background-color,box-shadow]
-            duration-500 delay-150 ease-out group-hover:bg-[var(--ide-Button-default-focusColor)]
+            duration-500 delay-150 ease-out group-hover:bg-[var(--ide-Button-default-focusColor)] group-hover:opacity-70
             group-hover:shadow-[0_0_6px_color-mix(in_srgb,var(--ide-Button-default-focusColor),transparent_45%)]" />
         </div>
 

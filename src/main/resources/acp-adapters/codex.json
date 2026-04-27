@@ -20,11 +20,15 @@
     }
   },
   "disabledModels": [
+    "-5.3",
     "-5.1",
-    "-5.2",
-    "mini"
+    "-5.2"
   ],
   "disabledModes": [],
+  "agentVersionConfig": {
+    "args": ["--version"],
+    "pattern": "(\\d+\\.\\d+[\\d.\\-]*)"
+  },
   "authConfig": {
     "uiMode": "login_logout",
     "loginMode": "background",

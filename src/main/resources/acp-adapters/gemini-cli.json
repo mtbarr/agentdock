@@ -1,6 +1,6 @@
 {
   "id": "gemini-cli",
-  "name": "Gemini",
+  "name": "Gemini CLI",
   "iconPath": "/icons/gemini.svg",
   "supportsSessionList": false,
   "distribution": {

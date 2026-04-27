@@ -5,8 +5,20 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import agentdock.IdeTheme
 import agentdock.utils.escapeForJsString
+import java.io.File
+import java.util.concurrent.TimeUnit
 
 private fun downloadProbeKey(target: AcpExecutionTarget, adapterId: String) = "${target.name}:$adapterId"
+
+private fun parseAgentVersion(config: AcpAdapterConfig.AgentVersionConfig, output: String): String? {
+    if (output.isBlank()) return null
+    val pattern = config.pattern
+    if (!pattern.isNullOrBlank()) {
+        val match = Regex(pattern).find(output) ?: return null
+        return (match.groups[1]?.value ?: match.value).takeIf { it.isNotBlank() }
+    }
+    return Regex("""(\d+\.\d+[\d.\-]*)""").find(output)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+}
 
 private fun AcpAdapterConfig.AdapterInfo.resolveIconPath(): String? {
     val themePath = if (IdeTheme.isDarkTheme()) iconPathDark else iconPathLight
@@ -73,6 +85,8 @@ private fun AcpBridge.buildAdapterPayload(
     val isDownloading = dlStatus.isNotEmpty() && !dlStatus.startsWith("Error")
     val hasAuthentication = info.authConfig != null
     val installedVersion = probeState?.installedVersion
+    val rawAgentVersion = agentVersionStates[info.id]
+    val agentVersion = rawAgentVersion?.takeIf { it != installedVersion }
     val updateSupported = downloaded == true && AcpAdapterUpdates.isUpdateCheckSupported(info)
     val updateKey = "${target.name}:${info.id}"
     val updateChecking = updateCheckJobs[updateKey]?.isActive == true
@@ -179,6 +193,7 @@ private fun AcpBridge.buildAdapterPayload(
         ready = isReady,
         readyKnown = readyKnown,
         installedVersion = installedVersion,
+        agentVersion = agentVersion,
         latestVersion = latestVersion,
         updateSupported = updateSupported,
         updateChecking = updateChecking,
@@ -283,6 +298,41 @@ internal fun AcpBridge.pushAdapters(includeRuntimeChecks: Boolean = true) {
                 pushAdapters()
             }
         }
+
+        unique.values.forEach { info ->
+            if (!includeRuntimeChecks) return@forEach
+            if (info.agentVersionConfig == null) return@forEach
+            if (agentVersionJobs[info.id]?.isActive == true) return@forEach
+            val adapterPayload = adapters.firstOrNull { it.id == info.id }
+            if (adapterPayload?.downloaded != true) return@forEach
+            val isDownloading = adapterPayload.downloadStatus.isNotEmpty() && !adapterPayload.downloadStatus.startsWith("Error")
+            if (isDownloading) return@forEach
+            if (!agentVersionStates[info.id].isNullOrBlank()) return@forEach
+            agentVersionJobs[info.id] = scope.launch(Dispatchers.IO) {
+                try {
+                    val cmd = AcpAuthService.buildAgentVersionCommand(info)
+                    if (!cmd.isNullOrEmpty()) {
+                        val downloadPath = AcpAdapterPaths.getDownloadPath(info.id, target)
+                        val workDir = if (downloadPath.isNotBlank()) File(downloadPath) else null
+                        val proc = ProcessBuilder(cmd)
+                            .also { pb -> if (workDir != null) pb.directory(workDir) }
+                            .redirectErrorStream(true)
+                            .start()
+                        val output = proc.inputStream.bufferedReader().use { it.readText() }.trim()
+                        val finished = proc.waitFor(10L, TimeUnit.SECONDS)
+                        if (!finished) proc.destroyForcibly()
+                        else {
+                            val version = parseAgentVersion(info.agentVersionConfig, output)
+                            if (!version.isNullOrBlank()) agentVersionStates[info.id] = version
+                        }
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    agentVersionJobs.remove(info.id)
+                }
+                pushAdapters()
+            }
+        }
     } catch (_: Exception) {
     }
 }
@@ -297,6 +347,9 @@ internal fun AcpBridge.resetAuthStatusRefreshState() {
     updateCheckJobs.values.forEach { it.cancel() }
     updateCheckJobs.clear()
     latestVersionStates.clear()
+    agentVersionJobs.values.forEach { it.cancel() }
+    agentVersionJobs.clear()
+    agentVersionStates.clear()
     authActionJobs.values.forEach { it.cancel() }
     authActionJobs.clear()
     downloadStatuses.clear()
@@ -316,4 +369,6 @@ internal fun AcpBridge.resetDownloadProbeState(adapterId: String? = null) {
         downloadProbeJobs.remove(key)?.cancel()
         downloadProbeStates.remove(key)
     }
+    agentVersionJobs.remove(adapterId)?.cancel()
+    agentVersionStates.remove(adapterId)
 }

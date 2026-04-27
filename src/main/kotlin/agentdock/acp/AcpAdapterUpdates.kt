@@ -17,6 +17,7 @@ internal object AcpAdapterUpdates {
         .build()
 
     fun isUpdateCheckSupported(adapterInfo: AcpAdapterConfig.AdapterInfo): Boolean {
+        if (adapterInfo.distribution.version.firstOrNull()?.isDigit() == true) return false
         return when (adapterInfo.distribution.type) {
             AcpAdapterConfig.DistributionType.NPM -> !adapterInfo.distribution.packageName.isNullOrBlank()
             AcpAdapterConfig.DistributionType.ARCHIVE -> adapterInfo.distribution.updateSource != null

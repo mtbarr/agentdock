@@ -111,7 +111,8 @@ object IdeTheme {
         // 6. Dynamic background variations
         val isDark = isDarkTheme()
         sb.append("  --ide-theme-is-dark: ${if (isDark) "1" else "0"};\n")
-        val defaultUserMessageBackground = if (isDark) Color(0x25, 0x32, 0x4d) else Color(0xe1, 0xea, 0xfd)
+        val blueUserMessageBackground = if (isDark) Color(0x25, 0x32, 0x4d) else Color(225, 235, 253, 220)
+        val defaultUserMessageBackground = if (isDark) Color(100, 100, 100, 65) else Color(100, 100, 100, 18)
 
         // Secondary: use editor background if different from panel, otherwise calculate
         val secondaryBackground = if (areColorsSimilar(baseBackground, editorBackground)) {
@@ -123,8 +124,9 @@ object IdeTheme {
         }
         sb.append("  --ide-background-secondary: ${toCssColor(secondaryBackground)};\n")
         sb.append("  --ide-user-message-default-bg: ${toCssColor(defaultUserMessageBackground)};\n")
-        sb.append("  --ide-surface-hover-filter: ${if (isDark) "brightness(1.3)" else "brightness(0.98)"};\n")
-        sb.append("  --ide-surface-active-filter: ${if (isDark) "brightness(1.3)" else "brightness(0.98)"};\n")
+        sb.append("  --ide-user-message-blue-bg: ${toCssColor(blueUserMessageBackground)};\n")
+        sb.append("  --ide-surface-hover-filter: ${if (isDark) "brightness(1.2)" else "brightness(0.96)"};\n")
+        sb.append("  --ide-surface-active-filter: ${if (isDark) "brightness(1.2)" else "brightness(0.96)"};\n")
 
         // 7. Dynamic border color (must be different from both backgrounds)
         val originalBorder = uiColor(
@@ -142,7 +144,15 @@ object IdeTheme {
             originalBorder
         }
         sb.append("  --ide-Borders-color: ${toCssColor(borderColor)};\n")
-        val contrastBorderColor = uiColor("Borders.ContrastBorderColor", borderColor)
+        val rawContrastBorderColor: Color? = UIManager.getColor("Borders.ContrastBorderColor")
+        val contrastBorderColor = if (
+            rawContrastBorderColor == null ||
+            areColorsSimilar(rawContrastBorderColor, baseBackground)
+        ) {
+            uiColor("Button.startBorderColor", borderColor)
+        } else {
+            rawContrastBorderColor
+        }
         sb.append("  --ide-Borders-ContrastBorderColor: ${toCssColor(contrastBorderColor)};\n")
 
         // Scrollbar color based on border
@@ -152,6 +162,7 @@ object IdeTheme {
         val userMessageStyle = GlobalSettingsStore.userMessageBackgroundStyle()
         val userMessageBackgroundVar = when (userMessageStyle) {
             "default" -> "--ide-user-message-default-bg"
+            "blue" -> "--ide-user-message-blue-bg"
             "background-secondary" -> "--ide-background-secondary"
             "primary" -> "--ide-Button-default-startBackground"
             "secondary" -> "--ide-Button-startBackground"

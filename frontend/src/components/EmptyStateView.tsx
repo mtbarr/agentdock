@@ -21,7 +21,7 @@ interface EmptyStateViewProps {
 }
 
 function AgentIcon({ agent, size = 'md' }: { agent?: AgentOption; size?: 'md' | 'lg' }) {
-  const sizeClassName = size === 'lg' ? 'h-9 w-9' : 'h-full w-full';
+  const sizeClassName = size === 'lg' ? 'h-8 w-8' : 'h-full w-full';
 
   if (agent?.iconPath) {
     if (agent.iconPath.startsWith('<svg')) {
@@ -235,23 +235,25 @@ export function EmptyStateView({
       ) : (
         <>
           <div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col px-4 pb-4 sm:px-6">
-            <div className="flex flex-1 items-center justify-center pt-12 pb-16">
+            <div className="flex flex-1 items-center justify-center pt-8 pb-16">
               <div className="flex flex-col items-center text-center">
                 {runnableAgents.length > 0 ? (
                   <>
-                    <h1 className="text-ide-h3 font-medium">Select an AI agent to start a new chat</h1>
+                    <div className="text-ide-medium mb-8">Select an AI agent to start a new chat</div>
 
-                    <div className="mt-8 inline-grid w-fit gap-3 self-center">
+                    <div className="flex flex-wrap items-center justify-center gap-3">
                       {runnableAgents.map((agent) => (
-                        <Button
-                          key={agent.id}
-                          onClick={() => onStartWithAgent(agent.id)}
-                          variant="secondary"
-                          className="w-full min-w-0 pl-[0.78em] text-ide-small font-semibold [&>span:first-child]:w-auto"
-                          leftIcon={<AgentIcon agent={agent} />}
-                        >
-                          {agent.name}
-                        </Button>
+                        <Tooltip key={agent.id} content={agent.name} variant="minimal">
+                          <button
+                            type="button"
+                            onClick={() => onStartWithAgent(agent.id)}
+                            className="flex h-14 w-14 items-center justify-center opacity-80 rounded-xl border
+                              border-[var(--ide-Button-startBorderColor)] bg-background transition-colors duration-150
+                              hover:bg-hover focus:outline-none focus:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]"
+                          >
+                            <AgentIcon agent={agent} size="lg" />
+                          </button>
+                        </Tooltip>
                       ))}
                     </div>
                   </>

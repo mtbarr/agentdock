@@ -167,7 +167,7 @@ function toUserBlock(block: ReplayContentBlock): RichContentBlock | null {
       return { type: 'text', text };
     }
     case 'image':
-      return { type: 'image', data: block.data || '', mimeType: block.mimeType || '' };
+      return { type: 'image', data: block.data || '', mimeType: block.mimeType || '', isInline: block.isInline };
     case 'audio':
       return { type: 'audio', data: block.data || '', mimeType: block.mimeType || '' };
     case 'video':

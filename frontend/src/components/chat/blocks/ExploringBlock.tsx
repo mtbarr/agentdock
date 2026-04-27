@@ -132,7 +132,7 @@ export const ExploringBlock: React.FC<Props> = ({ block, isActivePrompt = false 
         className={`flex items-center gap-1.5 max-w-full mb-2 ${chatFocusClassName}`}
       >
         <span className="truncate">{label}</span>
-        <span className={`transition-transform duration-200 mt-[-2px] ${isExpanded ? 'rotate-90' : ''}`}>
+        <span className={`transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
           <ChevronRight size={14} />
         </span>
       </button>

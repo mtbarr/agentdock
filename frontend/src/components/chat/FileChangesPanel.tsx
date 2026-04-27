@@ -60,7 +60,7 @@ const FileChangesPanel = memo(({
             <div className="flex items-center gap-2 flex-1 min-w-0 text-ide-small text-foreground-secondary">
               <FileDiff size={14} />
               <div className="flex items-center gap-2 min-w-0">
-                <span>{fileChanges.length} {fileChanges.length === 1 ? 'file' : 'files'} changed</span>
+                <span className="relative top-[1px]">{fileChanges.length} {fileChanges.length === 1 ? 'file' : 'files'} changed</span>
                 <div className="flex items-center gap-1.5">
                   {totalAdditions > 0 && <span className="font-bold text-added leading-none">+{totalAdditions}</span>}
                   {totalDeletions > 0 && <span className="font-bold text-deleted leading-none">-{totalDeletions}</span>}

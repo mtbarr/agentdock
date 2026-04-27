@@ -47,6 +47,12 @@ object AcpAuthService {
             ?: "background"
     }
 
+    fun buildAgentVersionCommand(adapterInfo: AcpAdapterConfig.AdapterInfo): List<String>? {
+        val versionConfig = adapterInfo.agentVersionConfig ?: return null
+        val authConfig = adapterInfo.authConfig ?: return null
+        return buildCommand(adapterInfo, authConfig, versionConfig.args)
+    }
+
     fun buildLoginCommand(adapterName: String): List<String>? {
         val adapterInfo = runCatching { AcpAdapterConfig.getAdapterInfo(adapterName) }.getOrNull() ?: return null
         val authConfig = adapterInfo.authConfig ?: return null

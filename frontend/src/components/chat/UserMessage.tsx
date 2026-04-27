@@ -133,13 +133,13 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
   const renderTrailingAttachments = () => {
     if (trailing.length === 0) return null;
     return (
-      <div className="flex flex-wrap pt-3 pb-2 block w-full">
+      <div className="flex flex-wrap pt-2 block w-full">
         {trailing.map((block, idx) => {
           if (block.type === 'file') {
             const fb = block as FileBlock;
             return (
               <AttachmentItem key={`trail-${idx}`}
-                att={{ id: `trail-${idx}`, name: fb.name, mimeType: fb.mimeType, data: fb.data }}
+                att={{ id: `trail-${idx}`, name: fb.name, mimeType: fb.mimeType, data: fb.data, path: fb.path }}
                 onImageClick={onImageClick}
               />
             );
@@ -163,11 +163,11 @@ export const UserMessage = memo(({ message, onImageClick, promptNumber }: UserMe
   return (
     <div className="flex flex-col mb-8 animate-in fade-in slide-in-from-bottom-2">
       <div className="flex justify-end relative">
-        <div className="user-message-bubble bg-accent rounded-[6px] group max-w-[85%] px-3 py-2 text-foreground"
+        <div className="user-message-bubble bg-accent rounded-[6px] group max-w-[85%] px-4 pt-3 pb-2 text-foreground"
           style={{backgroundColor: 'var(--user-message-bg)',}}
         >
           <div>
-            <div className="relative brightness-[120%]">
+            <div className="relative brightness-[110%]">
               <div ref={contentRef}
                 className={`break-words transition-[max-height] duration-1000 ease-in-out ${
                   isLargeContent && !isExpanded

@@ -130,6 +130,7 @@ export interface AgentOption {
   ready?: boolean;
   readyKnown?: boolean;
   installedVersion?: string;
+  agentVersion?: string;
   latestVersion?: string;
   updateSupported?: boolean;
   updateChecking?: boolean;
@@ -241,6 +242,7 @@ export interface ReplayContentBlock {
   path?: string;
   name?: string;
   mimeType?: string;
+  isInline?: boolean;
   startLine?: number;
   endLine?: number;
   toolCallId?: string;
@@ -432,7 +434,7 @@ export interface GitCommitGenerationSettings {
 export interface GlobalSettings {
   audioNotificationsEnabled: boolean;
   uiFontSizeOffsetPx: number;
-  userMessageBackgroundStyle: 'default' | 'background-secondary' | 'primary' | 'secondary' | 'accent' | 'input' | 'editor-bg';
+  userMessageBackgroundStyle: 'default' | 'blue' | 'background-secondary' | 'primary' | 'secondary' | 'accent' | 'input' | 'editor-bg';
   audioTranscription: AudioTranscriptionSettings;
   gitCommitGeneration: GitCommitGenerationSettings;
 }

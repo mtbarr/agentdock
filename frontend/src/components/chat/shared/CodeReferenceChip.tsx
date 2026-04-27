@@ -35,8 +35,7 @@ export function CodeReferenceChip({
   endLine,
   onClick,
   onRemove,
-  showTooltip = true,
-  className = '',
+  showTooltip = true
 }: CodeReferenceChipProps) {
   const lines = formatLines(startLine, endLine);
   const label = lines ? `${fileName}:${lines}` : fileName;
@@ -44,9 +43,9 @@ export function CodeReferenceChip({
 
   const chip = (
     <div contentEditable={false}
-      className={`group relative min-h-[22px] inline-flex min-w-0 max-w-[200px] flex-shrink-0 items-center 
-      gap-1.5 mb-1 rounded-[4px] border border-border bg-background px-2 py-1 relative transition-all 
-      focus-within:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] ${className}`}
+      className={`code-refrence-chip inline-flex min-h-[22px] items-center gap-1.5 px-2 py-1 rounded-[6px] border bg-background
+        border-[var(--ide-Button-startBorderColor)] mt-[-0.4rem] relative top-[2px] align-middle transition-all group 
+        focus-within:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)] mx-0.5`}
     >
       <button type="button"
         onClick={(e) => {

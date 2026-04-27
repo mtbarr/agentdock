@@ -24,7 +24,7 @@ const baseClassName = [
 ].join(' ');
 
 const variantClassNames: Record<ButtonVariant, string> = {
-  primary: 'bg-primary text-[var(--ide-Button-default-foreground)] hover:!brightness-110',
+  primary: 'bg-primary text-[var(--ide-Button-default-foreground)]',
   secondary: 'bg-secondary text-[var(--ide-Button-foreground)]',
   install: 'text-success border-[#57965c]',
   accentOutline: 'bg-input text-[var(--ide-Hyperlink-linkColor)]',

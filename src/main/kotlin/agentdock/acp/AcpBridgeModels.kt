@@ -45,6 +45,7 @@ internal data class AdapterPayload(
     val ready: Boolean? = null,
     val readyKnown: Boolean = false,
     val installedVersion: String? = null,
+    val agentVersion: String? = null,
     val latestVersion: String? = null,
     val updateSupported: Boolean = false,
     val updateChecking: Boolean = false,

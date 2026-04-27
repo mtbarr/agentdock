@@ -36,6 +36,7 @@ function mergeAgentSnapshot(previous: AgentOption | undefined, next: AgentOption
   const keepCliAvailability = keepDownloadSnapshot && previous.cliAvailable === true && next.cliAvailable !== true;
   const keepUpdateSupport = keepDownloadSnapshot && previous.updateSupported === true && next.updateSupported !== true;
   const keepInstalledVersion = (keepDownloadSnapshot || next.downloaded === true) && !next.installedVersion && !!previous.installedVersion;
+  const keepAgentVersion = (keepDownloadSnapshot || next.downloaded === true) && !next.downloading && !next.agentVersion && !!previous.agentVersion;
   const keepLatestVersion = (keepDownloadSnapshot || keepUpdateSnapshot) && !next.latestVersion && !!previous.latestVersion;
   const keepDownloadPath = (keepDownloadSnapshot || next.downloaded === true) && !next.downloadPath && !!previous.downloadPath;
 
@@ -48,6 +49,7 @@ function mergeAgentSnapshot(previous: AgentOption | undefined, next: AgentOption
     downloaded: keepDownloadSnapshot ? previous.downloaded : next.downloaded,
     downloadPath: keepDownloadPath ? previous.downloadPath : next.downloadPath,
     installedVersion: keepInstalledVersion ? previous.installedVersion : next.installedVersion,
+    agentVersion: keepAgentVersion ? previous.agentVersion : next.agentVersion,
     readyKnown: keepReadySnapshot ? previous.readyKnown : next.readyKnown,
     ready: keepReadySnapshot ? previous.ready : next.ready,
     authKnown: keepAuthSnapshot ? previous.authKnown : next.authKnown,
@@ -272,11 +274,12 @@ export function AgentManagementView({
             const isAuthKnown = isManageAuth || agent.hasAuthentication !== true || agent.authKnown === true;
             const canResolveStatus = isDownloaded && agent.readyKnown === true && isAuthKnown;
             const isStatusUnknown = isDownloaded && !isStarting && !canResolveStatus;
-            const canUpdate = isDownloaded && agent.updateAvailable === true;
+            const canUpdate = isDownloaded && agent.updateAvailable === true && !isInstalling;
+            const agentVersionSuffix = agent.agentVersion ? ` (v${agent.agentVersion})` : '';
             const versionLabel = agent.installedVersion
               ? (canUpdate && agent.latestVersion
-                  ? `v${agent.installedVersion} -> v${agent.latestVersion}`
-                  : `v${agent.installedVersion}`)
+                  ? `v${agent.installedVersion}${agentVersionSuffix} -> v${agent.latestVersion}`
+                  : `v${agent.installedVersion}${agentVersionSuffix}`)
               : null;
             const statusLabel = isStarting
               ? 'Starting'
@@ -297,7 +300,7 @@ export function AgentManagementView({
               <div key={agent.id} className={`flex group ${!isLast ? 'border-b border-border' : ''}`}>
                 <div className="flex items-start gap-3 w-full px-2 py-1">
                   <div className="flex flex-col items-center shrink-0 w-10 min-w-10 py-4">
-                    <img src={agent.iconPath} className="h-8 w-8 object-contain opacity-80" />
+                    <img src={agent.iconPath} className="h-8 w-8 object-contain opacity-75" />
                   </div>
 
                   <div className="min-w-0 flex-1 self-center py-2 text-ide-small text-foreground-secondary">

@@ -64,6 +64,7 @@ const userMessageBackgroundOptions: Array<{
   toneClass: string;
 }> = [
   { id: 'default', background: 'var(--ide-user-message-default-bg)', toneClass: 'bg-[var(--ide-user-message-default-bg)]' },
+  { id: 'blue', background: 'var(--ide-user-message-blue-bg)', toneClass: 'bg-[var(--ide-user-message-blue-bg)]' },
   { id: 'background-secondary', background: 'var(--ide-background-secondary)', toneClass: 'bg-background-secondary' },
   { id: 'primary', background: 'var(--ide-Button-default-startBackground)', toneClass: 'bg-primary' },
   { id: 'secondary', background: 'var(--ide-Button-startBackground)', toneClass: 'bg-secondary' },

@@ -1,8 +1,11 @@
+import { openFile } from '../../../utils/openFile';
+
 interface Attachment {
   id: string;
   name: string;
   mimeType: string;
   data?: string;
+  path?: string;
 }
 
 interface AttachmentItemProps {
@@ -13,22 +16,25 @@ interface AttachmentItemProps {
 
 export function AttachmentItem({ att, onRemove, onImageClick }: AttachmentItemProps) {
   const isImage = att.mimeType.startsWith('image/') && att.data;
+  const isClickable = isImage || !!att.path;
 
   const onClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isImage && onImageClick) {
       onImageClick(`data:${att.mimeType};base64,${att.data}`);
+    } else if (att.path) {
+      openFile(att.path);
     }
   };
 
   return (
     <div className={`group relative min-h-[22px] inline-flex min-w-0 max-w-[200px] flex-shrink-0 items-center 
-      gap-1.5 rounded-[4px] border border-border bg-background px-2 py-1 mb-1 mx-0.5 transition-all 
+      gap-1.5 rounded-[6px] border border-[var(--ide-Button-startBorderColor)] bg-background px-2 py-1 mb-1 mx-0.5 transition-all 
       focus-within:shadow-[0_0_0_1px_var(--ide-Button-default-focusColor)]`}
     >
       <button type="button" onClick={onClick}
         className={`flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm text-left outline-none
-          transition-colors focus-visible:text-foreground ${isImage ? 'cursor-pointer' : 'cursor-default'}`}
+          transition-colors focus-visible:text-foreground ${isClickable ? 'cursor-pointer' : 'cursor-default'}`}
       >
         <div className="flex-shrink-0 w-3 h-3 flex items-center justify-center overflow-hidden">
           {isImage ? (
@@ -38,7 +44,7 @@ export function AttachmentItem({ att, onRemove, onImageClick }: AttachmentItemPr
           )}
         </div>
 
-        <span className="text-xs font-medium text-foreground truncate">{att.name}</span>
+        <span className="text-xs font-medium text-foreground truncate relative top-[1px]">{att.name}</span>
       </button>
 
       {onRemove && (

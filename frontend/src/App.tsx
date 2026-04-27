@@ -10,6 +10,7 @@ function App() {
   useEffect(() => {
     const userMessageBgMap: Record<string, string> = {
       'default': 'var(--ide-user-message-default-bg)',
+      'blue': 'var(--ide-user-message-blue-bg)',
       'background-secondary': 'var(--ide-background-secondary)',
       'primary': 'var(--ide-Button-default-startBackground)',
       'secondary': 'var(--ide-Button-startBackground)',
