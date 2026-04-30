@@ -23,6 +23,7 @@ import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
 import agentdock.acp.AcpClientService
 import agentdock.acp.AcpBridge
+import agentdock.acp.pushAdapters
 import agentdock.acp.injectDebugApi
 import agentdock.acp.injectReadySignal
 import agentdock.acp.shutdown
@@ -216,7 +217,7 @@ class AgentDockToolWindowFactory : ToolWindowFactory, DumbAware {
 
                         // Swap placeholder with real browser
                         rootPanel.removeAll()
-                        rootPanel.add(createBrowserPanel(browser), BorderLayout.CENTER)
+                        rootPanel.add(createBrowserPanel(browser, acpBridge), BorderLayout.CENTER)
                         rootPanel.revalidate()
                         rootPanel.repaint()
 
@@ -242,15 +243,20 @@ class AgentDockToolWindowFactory : ToolWindowFactory, DumbAware {
         ProxySettings.getInstance().getProxyConfiguration()
     }
 
-    private fun createBrowserPanel(browser: JBCefBrowser): JPanel {
+    private fun createBrowserPanel(browser: JBCefBrowser, acpBridge: AcpBridge): JPanel {
         val panel = JPanel(BorderLayout())
 
         loadContent(browser)
 
-        // Reload JCEF when the IntelliJ theme changes (so CSS variables update)
+        // Update CSS variables when the IntelliJ theme changes (without reloading the page,
+        // which would steal focus and cause the tool window to reopen).
         val connection = ApplicationManager.getApplication().messageBus.connect(browser)
         connection.subscribe(LafManagerListener.TOPIC, LafManagerListener {
-            loadContent(browser)
+            val script = IdeTheme.generateCssUpdateScript()
+            ApplicationManager.getApplication().invokeLater({
+                browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url ?: "", 0)
+            }, ModalityState.any())
+            acpBridge.pushAdapters()
         })
 
         panel.add(browser.component, BorderLayout.CENTER)

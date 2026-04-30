@@ -36,6 +36,11 @@ object IdeTheme {
         "Hyperlink" to UiComponentDef(listOf("linkColor"))
     )
 
+    fun generateCssUpdateScript(): String {
+        val cssBlock = generateCssBlock().replace("`", "\\`")
+        return "document.getElementById('ide-theme-style').textContent=`$cssBlock`;"
+    }
+
     fun generateCssBlock(): String {
         val sb = StringBuilder()
         sb.append(":root {\n")

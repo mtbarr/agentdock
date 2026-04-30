@@ -52,8 +52,10 @@ object AssetLoader {
             val injection = """
                 <style>
                 $fontFaceCss
-                $themeCss
                 $cssContent
+                </style>
+                <style id="ide-theme-style">
+                $themeCss
                 </style>
                 <script type="module">
                 $jsContent
