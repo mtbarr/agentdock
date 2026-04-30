@@ -142,8 +142,8 @@ const FileChangesPanel = memo(({
                         </button>
                       </Tooltip>
                       <div className="flex items-center gap-1 flex-shrink-0 ml-1">
-                        {fc.additions > 0 && <span className="text-sm font-bold text-added leading-none">+{fc.additions}</span>}
-                        {fc.deletions > 0 && <span className="text-sm font-bold text-deleted leading-none">-{fc.deletions}</span>}
+                        {fc.additions > 0 && <span className="text-sm font-bold text-added leading-none relative top-[1px]">+{fc.additions}</span>}
+                        {fc.deletions > 0 && <span className="text-sm font-bold text-deleted leading-none relative top-[1px]">-{fc.deletions}</span>}
                       </div>
                     </div>
 

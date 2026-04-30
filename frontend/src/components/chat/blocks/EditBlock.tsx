@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { ToolCallBlock } from '../../../types/chat';
-import { FileCode, ChevronRight } from 'lucide-react';
+import { FileCode, ChevronRight, FileDiff } from 'lucide-react';
 import { diff_match_patch } from 'diff-match-patch';
 import hljs, { getLanguageFromPath } from '../../../utils/highlight';
 import { sanitizeCodeHtml } from '../../../utils/sanitizeHtml';
@@ -8,6 +8,7 @@ import { parseToolStatus } from '../../../utils/toolCallUtils';
 import { useAutoCollapse } from '../../../hooks/useAutoCollapse';
 import '../../../styles/markdown.css';
 import { chatFocusClassName, chatInsetFocusClassName } from '../shared/focusStyles';
+import { Tooltip } from '../shared/Tooltip';
 
 interface Props {
   block: ToolCallBlock;
@@ -132,6 +133,16 @@ export const EditBlock: React.FC<Props> = ({ block }) => {
     }
   };
 
+  const handleShowDiff = () => {
+    if (!diffData || typeof window.__showDiff !== 'function') return;
+    const content = block.entry.content;
+    if (!content || !Array.isArray(content)) return;
+    const operations = content
+      .filter((item) => item?.type === 'diff' || (item?.path !== undefined && item?.newText !== undefined))
+      .map((item) => ({ oldText: item.oldText ?? '', newText: item.newText ?? '' }));
+    window.__showDiff(JSON.stringify({ filePath: diffData.filePath, status: 'M', operations }));
+  };
+
   const handleOpenFileKeyDown: React.KeyboardEventHandler<HTMLSpanElement> = (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
@@ -174,6 +185,17 @@ export const EditBlock: React.FC<Props> = ({ block }) => {
           )}
         </div>
         <div className="flex-shrink-0 flex items-center gap-2">
+          {diffData && isFinished && (
+            <Tooltip variant="minimal" content="View diff in editor">
+              <button
+                type="button"
+                className={`p-1 text-foreground-secondary hover:text-foreground rounded transition-colors ${chatFocusClassName}`}
+                onClick={(e) => { e.stopPropagation(); handleShowDiff(); }}
+              >
+                <FileDiff size={14} />
+              </button>
+            </Tooltip>
+          )}
           {(isPending || isError) && (
             <div
               className={`w-2.5 h-2.5 rounded-full ${
