@@ -81,6 +81,12 @@ internal fun AcpBridge.pushToolCallChunk(chatId: String, rawJson: String, isRepl
     val kind = parsed?.get("kind")?.jsonPrimitive?.contentOrNull ?: ""
     val title = parsed?.get("title")?.jsonPrimitive?.contentOrNull ?: ""
     val status = parsed?.get("status")?.jsonPrimitive?.contentOrNull ?: ""
+    if (kind == "read" && toolCallId.isNotBlank()) {
+        parsed?.readToolPath()?.let { readToolCallPaths["$chatId:$toolCallId"] = it }
+    }
+    if (kind == "search" && toolCallId.isNotBlank()) {
+        parsed?.searchToolInput()?.let { searchToolCallInputs["$chatId:$toolCallId"] = it }
+    }
 
     val json = buildJsonObject {
         put("chatId", chatId)
@@ -99,7 +105,9 @@ internal fun AcpBridge.pushToolCallChunk(chatId: String, rawJson: String, isRepl
 
 internal fun AcpBridge.pushToolCallUpdateChunk(chatId: String, toolCallId: String, rawJson: String, isReplay: Boolean = false) {
     val replaySeq = nextReplaySeq(chatId, isReplay)
-    val displayRawJson = compactToolRawJsonForDisplay(rawJson)
+    val readToolPath = readToolCallPaths["$chatId:$toolCallId"]
+    val searchToolInput = searchToolCallInputs["$chatId:$toolCallId"]
+    val displayRawJson = compactToolRawJsonForDisplay(rawJson, readToolPath, searchToolInput)
     val parsed = try { Json.parseToJsonElement(displayRawJson).jsonObject } catch (e: Exception) {
         LOG.debug("Failed to parse tool call update JSON", e)
         null
@@ -121,6 +129,26 @@ internal fun AcpBridge.pushToolCallUpdateChunk(chatId: String, toolCallId: Strin
         if (replaySeq != null) put("replaySeq", replaySeq)
     }.toString()
     dispatchContentChunkJson(json)
+}
+
+private fun JsonObject.readToolPath(): String? {
+    val rawInput = this["rawInput"] as? JsonObject
+    rawInput?.get("path")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+    rawInput?.get("filePath")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+    val locations = this["locations"] as? JsonArray
+    return (locations?.firstOrNull() as? JsonObject)
+        ?.get("path")
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun JsonObject.searchToolInput(): JsonObject? {
+    val rawInput = this["rawInput"] as? JsonObject ?: return null
+    val query = rawInput["query"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val pattern = rawInput["pattern"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    if (query == null && pattern == null) return null
+    return rawInput
 }
 
 internal fun AcpBridge.recordUsageUpdate(
