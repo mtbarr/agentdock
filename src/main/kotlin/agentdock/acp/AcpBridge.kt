@@ -32,6 +32,7 @@ class AcpBridge(
     internal var loadConversationQuery: JBCefJSQuery? = null
     internal var recoverRuntimeQuery: JBCefJSQuery? = null
     internal var downloadAgentQuery: JBCefJSQuery? = null
+    internal var cancelAgentInstallQuery: JBCefJSQuery? = null
     internal var deleteAgentQuery: JBCefJSQuery? = null
     internal var updateAgentQuery: JBCefJSQuery? = null
     internal var toggleAgentEnabledQuery: JBCefJSQuery? = null
@@ -59,6 +60,8 @@ class AcpBridge(
     internal val promptJobs = ConcurrentHashMap<String, Job>()
     internal val lastStatusByChatId = ConcurrentHashMap<String, String>()
     internal val downloadStatuses = ConcurrentHashMap<String, String>()
+    internal val adapterInstallJobs = ConcurrentHashMap<String, Job>()
+    internal val adapterInstallCancellations = ConcurrentHashMap<String, AcpAdapterInstallCancellation>()
     internal val downloadProbeJobs = ConcurrentHashMap<String, Job>()
     internal val downloadProbeStates = ConcurrentHashMap<String, AdapterDownloadProbeState>()
     internal val authActionJobs = ConcurrentHashMap<String, Job>()

@@ -456,6 +456,7 @@ declare global {
     __cancelPrompt?: (conversationId: string, requestId?: string) => void;
     __stopAgent?: (conversationId: string) => void;
     __downloadAgent?: (adapterId: string) => void;
+    __cancelAgentInstall?: (adapterId: string) => void;
     __deleteAgent?: (adapterId: string) => void;
     __updateAgent?: (adapterId: string) => void;
     __requestHistoryList?: (projectPath?: string) => void;

@@ -109,21 +109,26 @@ object AcpAdapterPaths {
         adapterInfo: AcpAdapterConfig.AdapterInfo,
         statusCallback: ((String) -> Unit)? = null,
         target: AcpExecutionTarget = currentTarget(),
-        versionOverride: String? = null
+        versionOverride: String? = null,
+        cancellation: AcpAdapterInstallCancellation? = null
     ): Boolean {
+        cancellation?.throwIfCancelled()
         val baseAdapterInfo = versionOverride?.trim()?.takeIf { it.isNotEmpty() }?.let {
             adapterInfo.withDistributionVersion(it)
         } ?: adapterInfo
         val resolvedAdapterInfo = resolveInstallAdapterInfo(baseAdapterInfo, statusCallback) ?: return false
+        cancellation?.throwIfCancelled()
         prepareAdapterTargetDir(targetDir)
         val success = when (resolvedAdapterInfo.distribution.type) {
             AcpAdapterConfig.DistributionType.ARCHIVE ->
-                downloadArchiveDistribution(targetDir, resolvedAdapterInfo, statusCallback)
+                downloadArchiveDistribution(targetDir, resolvedAdapterInfo, statusCallback, cancellation)
             AcpAdapterConfig.DistributionType.NPM ->
-                AcpNpmInstaller.downloadFromNpm(targetDir, resolvedAdapterInfo, statusCallback)
+                AcpNpmInstaller.downloadFromNpm(targetDir, resolvedAdapterInfo, statusCallback, cancellation)
         }
+        cancellation?.throwIfCancelled()
         if (!success) return false
         applyPatches(targetDir, resolvedAdapterInfo, statusCallback)
+        cancellation?.throwIfCancelled()
         val downloaded = isDownloaded(resolvedAdapterInfo.id, target)
         if (!downloaded) {
             statusCallback?.invoke(missingLaunchTargetError(targetDir.absolutePath, resolvedAdapterInfo, target))
@@ -132,11 +137,12 @@ object AcpAdapterPaths {
         return downloaded
     }
 
-    fun downloadArchiveDistribution(
+    internal fun downloadArchiveDistribution(
         targetDir: File,
         adapterInfo: AcpAdapterConfig.AdapterInfo,
-        statusCallback: ((String) -> Unit)? = null
-    ): Boolean = downloadArchiveDistributionLocal(targetDir, adapterInfo, statusCallback)
+        statusCallback: ((String) -> Unit)? = null,
+        cancellation: AcpAdapterInstallCancellation? = null
+    ): Boolean = downloadArchiveDistributionLocal(targetDir, adapterInfo, statusCallback, cancellation)
 
     fun resolveAdapterName(adapterName: String?): String {
         val explicit = adapterName?.trim().takeUnless { it.isNullOrEmpty() }

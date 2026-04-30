@@ -209,6 +209,15 @@ export function AgentManagementView({
     }
   };
 
+  const handleCancelInstall = (id: string) => {
+    ACPBridge.cancelAgentInstall(id);
+    setAgents(prev => prev.map(a => (
+      a.id === id
+        ? { ...a, downloading: true, downloadStatus: 'Cancelling...' }
+        : a
+    )));
+  };
+
   const handleAuth = (agent: AgentOption) => {
     if (authIds.has(agent.id) || agent.authenticating || agent.authLoading) return;
     setAuthIds(prev => new Set(prev).add(agent.id));
@@ -408,19 +417,24 @@ export function AgentManagementView({
                   </div>
 
                   <div className="flex items-center py-4 whitespace-nowrap">
-                    {!isDownloadedKnown ? (
+                    {isInstalling ? (
+                      <Button
+                        onClick={() => handleCancelInstall(agent.id)}
+                        variant="accentOutline"
+                      >
+                        Cancel
+                      </Button>
+                    ) : !isDownloadedKnown ? (
                       <div className="text-foreground-secondary">
                         <LoadingSpinner className="w-4 h-4" />
                       </div>
                     ) : !isDownloaded ? (
-                      !isInstalling && (
-                        <Button
-                          onClick={() => handleDownload(agent.id)}
-                          variant="install"
-                        >
-                          Install
-                        </Button>
-                      )
+                      <Button
+                        onClick={() => handleDownload(agent.id)}
+                        variant="install"
+                      >
+                        Install
+                      </Button>
                     ) : (
                       <>
                         {canUpdate ? (

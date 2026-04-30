@@ -21,6 +21,7 @@ internal object HistoryConversationIndexService {
         }
     }
 
+    @Synchronized
     fun upsertRuntimeSessionMetadata(
         projectPath: String?,
         conversationId: String,
@@ -112,6 +113,7 @@ internal object HistoryConversationIndexService {
         return true
     }
 
+    @Synchronized
     fun saveConversationTranscript(projectPath: String?, conversationId: String, transcriptText: String): String? {
         val cleanProjectPath = canonicalHistoryProjectPath(projectPath)
         val cleanConversationId = runCatching {
@@ -144,6 +146,7 @@ internal object HistoryConversationIndexService {
         return transcriptFile.absolutePath
     }
 
+    @Synchronized
     fun appendSessionToConversation(
         projectPath: String?,
         previousSessionId: String,
@@ -234,6 +237,7 @@ internal object HistoryConversationIndexService {
         return true
     }
 
+    @Synchronized
     fun renameConversation(projectPath: String?, conversationId: String, newTitle: String): Boolean {
         val cleanProjectPath = canonicalHistoryProjectPath(projectPath)
         val cleanConversationId = runCatching {

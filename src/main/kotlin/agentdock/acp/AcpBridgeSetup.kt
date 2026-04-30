@@ -260,7 +260,14 @@ internal fun AcpBridge.installAdapterQueries() {
         addHandler { payload ->
             val adapterId = parseIdOnlyPayload(payload)
             if (adapterId != null) {
-                scope.launch(Dispatchers.IO) {
+                if (adapterInstallJobs[adapterId]?.isActive == true) {
+                    return@addHandler JBCefJSQuery.Response("ok")
+                }
+                val cancellation = AcpAdapterInstallCancellation()
+                adapterInstallCancellations[adapterId] = cancellation
+                val job = scope.launch(Dispatchers.IO) {
+                    val target = AcpAdapterPaths.getExecutionTarget()
+                    var replacingRuntime = false
                     try {
                         downloadStatuses[adapterId] = "Starting download..."
                         resetDownloadProbeState(adapterId)
@@ -270,14 +277,20 @@ internal fun AcpBridge.installAdapterQueries() {
                         latestVersionStates.remove(adapterId)
                         val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterId)
                         val targetDir = File(AcpAdapterPaths.getDependenciesDir(), adapterInfo.id)
-                        val target = AcpAdapterPaths.getExecutionTarget()
 
                         val statusCallback = { status: String ->
                             downloadStatuses[adapterId] = status
                             pushAdapters()
                         }
 
-                        val success = AcpAdapterPaths.installAdapterRuntime(targetDir, adapterInfo, statusCallback, target)
+                        replacingRuntime = true
+                        val success = AcpAdapterPaths.installAdapterRuntime(
+                            targetDir = targetDir,
+                            adapterInfo = adapterInfo,
+                            statusCallback = statusCallback,
+                            target = target,
+                            cancellation = cancellation
+                        )
 
                         if (success) {
                             downloadStatuses.remove(adapterId)
@@ -291,11 +304,34 @@ internal fun AcpBridge.installAdapterQueries() {
                             }
                             pushAdapters()
                         }
+                    } catch (_: CancellationException) {
+                        downloadStatuses.remove(adapterId)
+                        if (replacingRuntime) {
+                            runCatching { AcpAdapterPaths.deleteAdapter(adapterId, target) }
+                        }
+                        resetDownloadProbeState(adapterId)
                     } catch (e: Exception) {
                         downloadStatuses[adapterId] = "Error: ${e.message}"
+                    } finally {
+                        adapterInstallJobs.remove(adapterId)
+                        adapterInstallCancellations.remove(adapterId)
                         pushAdapters()
                     }
                 }
+                adapterInstallJobs[adapterId] = job
+            }
+            JBCefJSQuery.Response("ok")
+        }
+    }
+
+    cancelAgentInstallQuery = JBCefJSQuery.create(browser as com.intellij.ui.jcef.JBCefBrowserBase).apply {
+        addHandler { payload ->
+            val adapterId = parseIdOnlyPayload(payload)
+            if (adapterId != null) {
+                downloadStatuses[adapterId] = "Cancelling..."
+                adapterInstallCancellations.remove(adapterId)?.cancel()
+                adapterInstallJobs.remove(adapterId)?.cancel(CancellationException("Adapter installation cancelled"))
+                pushAdapters()
             }
             JBCefJSQuery.Response("ok")
         }
@@ -333,7 +369,13 @@ internal fun AcpBridge.installAdapterQueries() {
         addHandler { payload ->
             val adapterId = parseIdOnlyPayload(payload)
             if (adapterId != null) {
-                scope.launch(Dispatchers.IO) {
+                if (adapterInstallJobs[adapterId]?.isActive == true) {
+                    return@addHandler JBCefJSQuery.Response("ok")
+                }
+                val cancellation = AcpAdapterInstallCancellation()
+                adapterInstallCancellations[adapterId] = cancellation
+                val job = scope.launch(Dispatchers.IO) {
+                    var replacingRuntime = false
                     try {
                         val adapterInfo = AcpAdapterPaths.getAdapterInfo(adapterId)
                         if (!AcpAdapterUpdates.isUpdateCheckSupported(adapterInfo)) {
@@ -343,6 +385,7 @@ internal fun AcpBridge.installAdapterQueries() {
                         val latestVersion = latestVersionStates[adapterId]
                             ?: AcpAdapterUpdates.latestAvailableVersion(adapterInfo)
                             ?: throw IllegalStateException("Unable to resolve latest version")
+                        cancellation.throwIfCancelled()
                         latestVersionStates[adapterId] = latestVersion
 
                         downloadStatuses[adapterId] = "Updating to $latestVersion..."
@@ -356,6 +399,7 @@ internal fun AcpBridge.installAdapterQueries() {
                         if (!deleted) {
                             throw IllegalStateException("Unable to remove old adapter files")
                         }
+                        replacingRuntime = true
 
                         val statusCallback = { status: String ->
                             downloadStatuses[adapterId] = status
@@ -367,7 +411,8 @@ internal fun AcpBridge.installAdapterQueries() {
                             adapterInfo = adapterInfo,
                             statusCallback = statusCallback,
                             target = target,
-                            versionOverride = latestVersion
+                            versionOverride = latestVersion,
+                            cancellation = cancellation
                         )
 
                         if (success) {
@@ -379,12 +424,21 @@ internal fun AcpBridge.installAdapterQueries() {
                                 previous?.takeIf { it.startsWith("Error:") } ?: "Error: Update failed"
                             }
                         }
+                    } catch (_: CancellationException) {
+                        downloadStatuses.remove(adapterId)
+                        if (replacingRuntime) {
+                            runCatching { AcpAdapterPaths.deleteAdapter(adapterId, AcpAdapterPaths.getExecutionTarget()) }
+                        }
+                        resetDownloadProbeState(adapterId)
                     } catch (e: Exception) {
                         downloadStatuses[adapterId] = "Error: ${e.message}"
                     } finally {
+                        adapterInstallJobs.remove(adapterId)
+                        adapterInstallCancellations.remove(adapterId)
                         pushAdapters()
                     }
                 }
+                adapterInstallJobs[adapterId] = job
             }
             JBCefJSQuery.Response("ok")
         }

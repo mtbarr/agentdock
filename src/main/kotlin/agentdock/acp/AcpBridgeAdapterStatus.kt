@@ -352,6 +352,10 @@ internal fun AcpBridge.resetAuthStatusRefreshState() {
     agentVersionStates.clear()
     authActionJobs.values.forEach { it.cancel() }
     authActionJobs.clear()
+    adapterInstallCancellations.values.forEach { it.cancel() }
+    adapterInstallCancellations.clear()
+    adapterInstallJobs.values.forEach { it.cancel() }
+    adapterInstallJobs.clear()
     downloadStatuses.clear()
     AcpAuthService.resetTransientState()
 }

@@ -2,6 +2,7 @@ package agentdock.acp
 
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -50,7 +51,8 @@ internal fun resolveInstallAdapterInfo(
 internal fun downloadArchiveDistributionLocal(
     targetDir: File,
     adapterInfo: AcpAdapterConfig.AdapterInfo,
-    statusCallback: ((String) -> Unit)? = null
+    statusCallback: ((String) -> Unit)? = null,
+    cancellation: AcpAdapterInstallCancellation? = null
 ): Boolean {
     val runtime = detectRuntimePlatform(AcpExecutionTarget.LOCAL)
     targetDir.mkdirs()
@@ -64,6 +66,7 @@ internal fun downloadArchiveDistributionLocal(
     val tempFile = File(targetDir, "tool-download.${runtime.archiveExt}")
 
     return try {
+        cancellation?.throwIfCancelled()
         statusCallback?.invoke("Downloading ${adapterInfo.name}...")
         if (runtime.platform == "windows") {
             statusCallback?.invoke("Downloading package...")
@@ -75,7 +78,8 @@ internal fun downloadArchiveDistributionLocal(
                     "-Command",
                     "\$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '$downloadUrl' -OutFile '${tempFile.absolutePath}'"
                 ),
-                statusCallback
+                statusCallback,
+                cancellation
             )
             if (downloadExitCode != 0) return false
 
@@ -88,7 +92,8 @@ internal fun downloadArchiveDistributionLocal(
                     "-Command",
                     "\$ProgressPreference = 'SilentlyContinue'; Expand-Archive -Path '${tempFile.absolutePath}' -DestinationPath '${targetDir.absolutePath}' -Force"
                 ),
-                statusCallback
+                statusCallback,
+                cancellation
             )
             if (extractExitCode != 0) return false
         } else {
@@ -109,12 +114,14 @@ internal fun downloadArchiveDistributionLocal(
                     rm -f "${'$'}temp_file"
                     """.trimIndent()
                 ),
-                statusCallback
+                statusCallback,
+                cancellation
             )
             if (exitCode != 0) return false
 
         }
 
+        cancellation?.throwIfCancelled()
         flattenConfiguredExtractSubdir(targetDir, adapterInfo)
         if (runtime.platform != "windows") {
             statusCallback?.invoke("Ensuring executables...")
@@ -123,12 +130,14 @@ internal fun downloadArchiveDistributionLocal(
         tempFile.delete()
         val authNpmPackage = adapterInfo.authConfig?.authNpmPackage
         if (!authNpmPackage.isNullOrBlank()) {
+            cancellation?.throwIfCancelled()
             statusCallback?.invoke("Installing auth tools...")
             val npm = if (runtime.platform == "windows") "npm.cmd" else "npm"
             val authInstallExitCode = runArchiveCommand(
                 ProcessBuilder(npm, "install", "--prefix", targetDir.absolutePath, "$authNpmPackage@latest")
                     .directory(targetDir),
-                statusCallback
+                statusCallback,
+                cancellation
             )
             if (authInstallExitCode != 0) {
                 statusCallback?.invoke("Error: Auth tools installation failed")
@@ -137,6 +146,9 @@ internal fun downloadArchiveDistributionLocal(
         }
         statusCallback?.invoke("${adapterInfo.name} installed successfully.")
         true
+    } catch (e: CancellationException) {
+        tempFile.delete()
+        throw e
     } catch (e: Exception) {
         statusCallback?.invoke("Error: ${e.message}")
         false
@@ -228,8 +240,14 @@ private fun ensureExtractedFilesExecutable(targetDir: File) {
         .forEach { it.setExecutable(true) }
 }
 
-private fun runArchiveCommand(builder: ProcessBuilder, statusCallback: ((String) -> Unit)? = null): Int {
+private fun runArchiveCommand(
+    builder: ProcessBuilder,
+    statusCallback: ((String) -> Unit)? = null,
+    cancellation: AcpAdapterInstallCancellation? = null
+): Int {
+    cancellation?.throwIfCancelled()
     val process = builder.redirectErrorStream(true).start()
+    cancellation?.register(process)
     val recentOutput = java.util.Collections.synchronizedList(mutableListOf<String>())
     val outputDrainer = Thread {
         process.inputStream.bufferedReader().useLines { lines ->
@@ -246,14 +264,27 @@ private fun runArchiveCommand(builder: ProcessBuilder, statusCallback: ((String)
     outputDrainer.isDaemon = true
     outputDrainer.start()
 
-    val finished = process.waitFor(ARCHIVE_COMMAND_TIMEOUT_MINUTES, TimeUnit.MINUTES)
-    if (!finished) {
+    try {
+        val deadlineNanos = System.nanoTime() + TimeUnit.MINUTES.toNanos(ARCHIVE_COMMAND_TIMEOUT_MINUTES)
+        while (true) {
+            cancellation?.throwIfCancelled()
+            if (process.waitFor(250, TimeUnit.MILLISECONDS)) break
+            if (System.nanoTime() >= deadlineNanos) {
+                process.destroyForcibly()
+                outputDrainer.join(1000)
+                statusCallback?.invoke("Error: Command timed out")
+                return -1
+            }
+        }
+    } catch (e: CancellationException) {
         process.destroyForcibly()
         outputDrainer.join(1000)
-        statusCallback?.invoke("Error: Command timed out")
-        return -1
+        throw e
+    } finally {
+        cancellation?.unregister(process)
     }
 
+    cancellation?.throwIfCancelled()
     outputDrainer.join(1000)
     val exitCode = process.exitValue()
     if (exitCode != 0) {
