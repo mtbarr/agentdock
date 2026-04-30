@@ -23,7 +23,7 @@ object IdeTheme {
     private val uiComponents = linkedMapOf(
         "Panel" to UiComponentDef(listOf("background", "foreground")),
         "Label" to UiComponentDef(listOf("background", "foreground", "disabledForeground", "infoForeground", "errorForeground", "warningForeground")),
-        "Button" to UiComponentDef(listOf("startBackground", "endBackground", "foreground", "startBorderColor", "borderColor", "disabledText", "disabledBorderColor", "focusedBorderColor")),
+        "Button" to UiComponentDef(listOf("startBackground", "endBackground", "foreground", "borderColor", "disabledText", "disabledBorderColor", "focusedBorderColor")),
         "TextField" to UiComponentDef(listOf("background", "foreground", "borderColor", "caretForeground", "selectionBackground", "selectionForeground", "focusedBorderColor")),
         "List" to UiComponentDef(listOf("background", "foreground", "selectionBackground", "selectionForeground", "selectionInactiveBackground", "hoverBackground")),
         "Table" to UiComponentDef(listOf("background", "gridColor", "selectionBackground", "foreground")),
@@ -47,10 +47,7 @@ object IdeTheme {
         for ((component, def) in uiComponents) {
             for (prop in def.colorProps) {
                 val uiKey = "$component.$prop"
-                val fallback = when (uiKey) {
-                    "Button.startBorderColor" -> uiColor("Button.borderColor", Color(0, 0, 0, 0))
-                    else -> Color(0, 0, 0, 0)
-                }
+                val fallback = Color(0, 0, 0, 0)
                 val originalColor = UIManager.getColor(uiKey) ?: JBColor.namedColor(uiKey, fallback)
                 val color = if (
                     uiKey == "List.hoverBackground" &&
@@ -133,12 +130,13 @@ object IdeTheme {
             "Borders.color",
             adjustBrightness(baseBackground, if (isDark) 1.25 else 0.85)
         )
-        val borderColor = if (areColorsSimilar(originalBorder, baseBackground) ||
+        val borderColor = if (isTransparent(originalBorder) ||
+                             areColorsSimilar(originalBorder, baseBackground) ||
                              areColorsSimilar(originalBorder, secondaryBackground)) {
             // Border is too similar to backgrounds - adjust it
             // In dark theme: make lighter than both backgrounds
             // In light theme: make darker than both backgrounds
-            adjustBrightness(baseBackground, if (isDark) 1.25 else 0.85)
+            adjustBrightness(baseBackground, if (isDark) 1.9 else 0.85)
         } else {
             // Border is distinct - use original
             originalBorder
@@ -147,13 +145,22 @@ object IdeTheme {
         val rawContrastBorderColor: Color? = UIManager.getColor("Borders.ContrastBorderColor")
         val contrastBorderColor = if (
             rawContrastBorderColor == null ||
+            isTransparent(rawContrastBorderColor) ||
             areColorsSimilar(rawContrastBorderColor, baseBackground)
         ) {
-            uiColor("Button.startBorderColor", borderColor)
+            borderColor
         } else {
             rawContrastBorderColor
         }
         sb.append("  --ide-Borders-ContrastBorderColor: ${toCssColor(contrastBorderColor)};\n")
+        val rawButtonStartBorderColor = uiColor("Button.startBorderColor", Color(0, 0, 0, 0))
+        val buttonStartBorderColor = if (isTransparent(rawButtonStartBorderColor) ||
+                                         areColorsSimilar(rawButtonStartBorderColor, baseBackground)) {
+            adjustBrightness(borderColor, if (isDark) 1.25 else 0.8)
+        } else {
+            rawButtonStartBorderColor
+        }
+        sb.append("  --ide-Button-startBorderColor: ${toCssColor(buttonStartBorderColor)};\n")
 
         // Scrollbar color based on border
         val scrollbarColor = adjustBrightness(borderColor, if (isDark) 1.15 else 0.90)
