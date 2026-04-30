@@ -317,7 +317,8 @@ internal fun AcpBridge.installMiscQueries() {
                             val size = ioFile.length()
                             val name = file.name
                             val mimeType = java.net.URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream"
-                            val base64 = if (size < 2 * 1024 * 1024) {
+                            val canInline = mimeType.startsWith("image/") || mimeType.startsWith("video/")
+                            val base64 = if (canInline && size < 2 * 1024 * 1024) {
                                 try {
                                     java.util.Base64.getEncoder().encodeToString(ioFile.readBytes())
                                 } catch (e: Exception) {
@@ -332,10 +333,9 @@ internal fun AcpBridge.installMiscQueries() {
                                 put("id", fileId)
                                 put("name", name)
                                 put("mimeType", mimeType)
+                                put("path", file.path)
                                 if (base64 != null) {
                                     put("data", base64)
-                                } else {
-                                    put("path", file.path)
                                 }
                             }.toString()
                         }

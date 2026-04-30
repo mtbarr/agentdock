@@ -27,7 +27,7 @@ export interface ChatAttachment {
 export interface TextBlock { type: 'text'; text: string; }
 export interface ImageBlock { type: 'image'; data: string; mimeType: string; isInline?: boolean; }
 export interface AudioBlock { type: 'audio'; data: string; mimeType: string; isInline?: boolean; }
-export interface VideoBlock { type: 'video'; data: string; mimeType: string; isInline?: boolean; }
+export interface VideoBlock { type: 'video'; data: string; mimeType: string; name?: string; path?: string; isInline?: boolean; }
 export interface FileBlock { type: 'file'; name: string; mimeType: string; data?: string; path?: string; isInline?: boolean; }
 export interface CodeReferenceBlock {
   type: 'code_ref';

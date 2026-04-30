@@ -46,6 +46,15 @@ export function buildPromptBlocks(inputValue: string, attachments: ChatAttachmen
     if (!usedAttachmentIds.has(att.id) && att.attachmentType !== 'code_ref') {
       if (att.mimeType.startsWith('image/') && att.data) {
         blocks.push({ type: 'image', data: att.data, mimeType: att.mimeType, isInline: false });
+      } else if (att.mimeType.startsWith('video/') && att.data) {
+        blocks.push({
+          type: 'video',
+          name: att.name,
+          data: att.data,
+          path: att.path,
+          mimeType: att.mimeType,
+          isInline: false
+        });
       } else if (att.mimeType.startsWith('audio/') && att.data) {
         blocks.push({ type: 'audio', data: att.data, mimeType: att.mimeType, isInline: false });
       } else {
